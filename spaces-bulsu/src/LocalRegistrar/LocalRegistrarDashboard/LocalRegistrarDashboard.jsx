@@ -161,11 +161,6 @@ export default function LocalRegistrarDashboard() {
         </div>
 
         <div className="stat-card">
-          <h2>{qrGenerated}</h2>
-          <p>QR Generated</p>
-        </div>
-
-        <div className="stat-card">
           <h2>{actionsToday}</h2>
           <p>Actions Today</p>
         </div>
