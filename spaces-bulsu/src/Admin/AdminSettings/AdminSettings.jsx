@@ -19,6 +19,12 @@ import {
   CODE_LENGTH,
   CODE_TTL_MIN,
 } from "../../utils/verification";
+import {
+  getPushEnabled,
+  setPushEnabled as persistPushEnabled,
+  getBrowserPermission,
+  requestPushPermission,
+} from "../../utils/pushNotifications";
 
 const functions = getFunctions();
 const deleteUserFn = httpsCallable(functions, "deleteUser");
@@ -98,6 +104,12 @@ export default function AdminSettings() {
   const [pwCode, setPwCode] = useState(Array(CODE_LENGTH).fill(""));
   const [pwResendIn, setPwResendIn] = useState(0);
 
+  // ── Push notification toggle ───────────────────────────────────
+  const [pushEnabled, setPushEnabledState] = useState(() => getPushEnabled());
+  const [browserPermission, setBrowserPermission] = useState(() =>
+    getBrowserPermission()
+  );
+
   const [showEmailModal, setShowEmailModal]   = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [emailForm, setEmailForm]   = useState({ currentPassword: "", newEmail: "" });
@@ -134,6 +146,18 @@ export default function AdminSettings() {
       finally { setLoading(false); }
     });
     return () => unsub();
+  }, []);
+
+  // ── Sync browser permission state on mount + when user returns to tab ──
+  useEffect(() => {
+    const sync = () => setBrowserPermission(getBrowserPermission());
+    sync();
+    window.addEventListener("focus", sync);
+    document.addEventListener("visibilitychange", sync);
+    return () => {
+      window.removeEventListener("focus", sync);
+      document.removeEventListener("visibilitychange", sync);
+    };
   }, []);
 
   useEffect(() => {
@@ -180,6 +204,65 @@ export default function AdminSettings() {
     setDeleteStep(1);
     setDeleteAcknowledged(false);
   };
+
+  // ══════════════════════════════════════════════════════════════
+  // PUSH NOTIFICATION TOGGLE
+  // ══════════════════════════════════════════════════════════════
+  const handlePushToggle = async (e) => {
+    const wantsOn = e.target.checked;
+
+    if (wantsOn) {
+      const perm = await requestPushPermission();
+      setBrowserPermission(perm);
+
+      if (perm === "unsupported") {
+        showToast(
+          "error",
+          "Not Supported",
+          "Your browser doesn't support push notifications."
+        );
+        return;
+      }
+
+      if (perm === "denied") {
+        showToast(
+          "error",
+          "Notifications Blocked",
+          "Your browser has blocked notifications. Enable them in your browser site settings to receive alerts."
+        );
+        return;
+      }
+
+      if (perm === "granted") {
+        persistPushEnabled(true);
+        setPushEnabledState(true);
+        showToast(
+          "success",
+          "Notifications Enabled",
+          "You'll now receive real-time alerts for reservations, approvals, and conflicts."
+        );
+      }
+      return;
+    }
+
+    persistPushEnabled(false);
+    setPushEnabledState(false);
+    showToast(
+      "success",
+      "Notifications Disabled",
+      "Push notifications have been turned off."
+    );
+  };
+
+  // Helper for the sub-text under the toggle
+  const pushSubText = (() => {
+    if (browserPermission === "unsupported") return "Not supported on this browser";
+    if (browserPermission === "denied") return "Blocked by browser — check site settings";
+    if (browserPermission === "default" && pushEnabled === false)
+      return "Click toggle to allow alerts";
+    if (pushEnabled) return "Real-time alerts are ON";
+    return "Turned off";
+  })();
 
   const handlePasswordStepOne = async (e) => {
     e.preventDefault();
@@ -531,14 +614,22 @@ export default function AdminSettings() {
             </div>
 
             <div className="fs-card fs-card-flush">
+              {/* ✅ WORKING PUSH NOTIFICATIONS TOGGLE */}
               <div className="fs-list-row">
                 <i className="fa-solid fa-bell fs-row-icon accent"></i>
                 <div className="fs-row-text">
                   <span className="fs-row-title accent">Push Notifications</span>
-                  <span className="fs-row-sub">Real time alerts</span>
+                  <span className={`fs-row-sub ${browserPermission === "denied" ? "warn" : ""}`}>
+                    {pushSubText}
+                  </span>
                 </div>
-                <label className="fs-switch">
-                  <input type="checkbox" defaultChecked />
+                <label className={`fs-switch ${browserPermission === "unsupported" ? "is-disabled" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={pushEnabled}
+                    onChange={handlePushToggle}
+                    disabled={browserPermission === "unsupported" || busy}
+                  />
                   <span className="fs-switch-slider"></span>
                 </label>
               </div>

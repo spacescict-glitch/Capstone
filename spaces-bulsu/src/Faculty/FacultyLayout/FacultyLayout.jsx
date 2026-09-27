@@ -15,6 +15,7 @@ import {
 } from "firebase/firestore";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import NotificationCard from "../../Components/NotificationCard/Notification";
+import { fireNewNotifications } from "../../utils/pushNotifications";
 
 export default function FacultyLayout() {
   const navigate = useNavigate();
@@ -69,9 +70,14 @@ export default function FacultyLayout() {
       const unsubscribeNotif = onSnapshot(
         q,
         (snapshot) => {
-          setNotifications(
-            snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
-          );
+          const list = snapshot.docs.map((doc) => ({
+            id: doc.id,
+            ...doc.data(),
+          }));
+          setNotifications(list);
+
+          // 🔔 Fire real browser push for any NEW notifications
+          fireNewNotifications(list);
         },
         (error) => console.error("❌ Notifications query failed:", error.code, error.message)
       );

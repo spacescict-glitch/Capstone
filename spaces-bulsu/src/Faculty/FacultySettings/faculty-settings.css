@@ -1015,3 +1015,20 @@
 .fs-modal-btn i {
   margin-right: 6px;
 }
+
+/* ══════════════ PUSH TOGGLE — disabled + warning states ══════════════ */
+
+.fs-switch.is-disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.fs-switch input:disabled + .fs-switch-slider {
+  cursor: not-allowed;
+  background-color: #d1d5db;
+}
+
+.fs-row-sub.warn {
+  color: #dc2626;
+  font-weight: 600;
+}

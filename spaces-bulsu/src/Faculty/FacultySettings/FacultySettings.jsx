@@ -19,7 +19,13 @@ import {
   CODE_LENGTH,
   CODE_TTL_MIN,
 } from "../../utils/verification";
-import { logActivity } from "../../utils/logActivity"; // ✅ NEW
+import { logActivity } from "../../utils/logActivity";
+import {
+  getPushEnabled,
+  setPushEnabled as persistPushEnabled,
+  getBrowserPermission,
+  requestPushPermission,
+} from "../../utils/pushNotifications";
 
 // ── Cloud Function for self-delete ───────────────────────────────
 const functions = getFunctions();
@@ -102,6 +108,12 @@ export default function FacultySettings() {
   const [pwCode, setPwCode] = useState(Array(CODE_LENGTH).fill(""));
   const [pwResendIn, setPwResendIn] = useState(0);
 
+  // ── Push notification toggle ───────────────────────────────────
+  const [pushEnabled, setPushEnabledState] = useState(() => getPushEnabled());
+  const [browserPermission, setBrowserPermission] = useState(() =>
+    getBrowserPermission()
+  );
+
   // ── Modals ─────────────────────────────────────────────────────
   const [showEmailModal, setShowEmailModal]   = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -158,7 +170,6 @@ export default function FacultySettings() {
         details,
       });
     } catch (err) {
-      // Never block the user flow because of a log failure
       console.error("logSettingsActivity failed:", err);
     }
   };
@@ -179,6 +190,18 @@ export default function FacultySettings() {
       finally { setLoading(false); }
     });
     return () => unsub();
+  }, []);
+
+  // ── Sync browser permission state on mount + when user returns to tab ──
+  useEffect(() => {
+    const sync = () => setBrowserPermission(getBrowserPermission());
+    sync();
+    window.addEventListener("focus", sync);
+    document.addEventListener("visibilitychange", sync);
+    return () => {
+      window.removeEventListener("focus", sync);
+      document.removeEventListener("visibilitychange", sync);
+    };
   }, []);
 
   useEffect(() => {
@@ -231,6 +254,65 @@ export default function FacultySettings() {
     setDeleteStep(1);
     setDeleteAcknowledged(false);
   };
+
+  // ══════════════════════════════════════════════════════════════
+  // PUSH NOTIFICATION TOGGLE
+  // ══════════════════════════════════════════════════════════════
+  const handlePushToggle = async (e) => {
+    const wantsOn = e.target.checked;
+
+    if (wantsOn) {
+      const perm = await requestPushPermission();
+      setBrowserPermission(perm);
+
+      if (perm === "unsupported") {
+        showToast(
+          "error",
+          "Not Supported",
+          "Your browser doesn't support push notifications."
+        );
+        return;
+      }
+
+      if (perm === "denied") {
+        showToast(
+          "error",
+          "Notifications Blocked",
+          "Your browser has blocked notifications. Enable them in your browser site settings to receive alerts."
+        );
+        return;
+      }
+
+      if (perm === "granted") {
+        persistPushEnabled(true);
+        setPushEnabledState(true);
+        showToast(
+          "success",
+          "Notifications Enabled",
+          "You'll now receive real-time alerts for reservations, approvals, and schedules."
+        );
+      }
+      return;
+    }
+
+    persistPushEnabled(false);
+    setPushEnabledState(false);
+    showToast(
+      "success",
+      "Notifications Disabled",
+      "Push notifications have been turned off."
+    );
+  };
+
+  // Helper for the sub-text under the toggle
+  const pushSubText = (() => {
+    if (browserPermission === "unsupported") return "Not supported on this browser";
+    if (browserPermission === "denied") return "Blocked by browser — check site settings";
+    if (browserPermission === "default" && pushEnabled === false)
+      return "Click toggle to allow alerts";
+    if (pushEnabled) return "Real-time alerts are ON";
+    return "Turned off";
+  })();
 
   // ── PASSWORD FLOW ──────────────────────────────────────────────
   const handlePasswordStepOne = async (e) => {
@@ -387,7 +469,7 @@ export default function FacultySettings() {
       return showToast("error", "Invalid Code", `Enter the ${CODE_LENGTH}-digit code.`);
 
     const { currentPassword, newEmail } = emailForm;
-    const oldEmail = email; // capture before change
+    const oldEmail = email;
     setBusy(true);
     try {
       await verifyCode({ email: newEmail, purpose: "email-change", entered });
@@ -723,14 +805,22 @@ export default function FacultySettings() {
             </div>
 
             <div className="fs-card fs-card-flush">
+              {/* ✅ WORKING PUSH NOTIFICATIONS TOGGLE */}
               <div className="fs-list-row">
                 <i className="fa-solid fa-bell fs-row-icon accent"></i>
                 <div className="fs-row-text">
                   <span className="fs-row-title accent">Push Notifications</span>
-                  <span className="fs-row-sub">Real time alerts</span>
+                  <span className={`fs-row-sub ${browserPermission === "denied" ? "warn" : ""}`}>
+                    {pushSubText}
+                  </span>
                 </div>
-                <label className="fs-switch">
-                  <input type="checkbox" defaultChecked />
+                <label className={`fs-switch ${browserPermission === "unsupported" ? "is-disabled" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={pushEnabled}
+                    onChange={handlePushToggle}
+                    disabled={browserPermission === "unsupported" || busy}
+                  />
                   <span className="fs-switch-slider"></span>
                 </label>
               </div>

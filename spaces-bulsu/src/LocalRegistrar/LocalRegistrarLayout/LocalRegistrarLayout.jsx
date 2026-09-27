@@ -15,6 +15,7 @@ import {
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import LogoutPopup from "../../Popup/LogoutPopup/LogoutPopup";
 import NotificationCard from "../../Components/NotificationCard/Notification";
+import { fireNewNotifications } from "../../utils/pushNotifications";
 
 export default function LocalRegistrarLayout() {
   const [openSchedule, setOpenSchedule] = useState(false);
@@ -85,9 +86,14 @@ export default function LocalRegistrarLayout() {
       );
 
       const unsubscribeNotif = onSnapshot(q, (snapshot) => {
-        setNotifications(
-          snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
-        );
+        const list = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+        setNotifications(list);
+
+        // 🔔 Fire real browser push for any NEW notifications
+        fireNewNotifications(list);
       });
 
       return () => {
