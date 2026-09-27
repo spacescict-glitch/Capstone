@@ -416,15 +416,17 @@ function LocalRegistrarQRCode() {
         <div className="lr-qr-term-icon">
           <i className="fa-solid fa-calendar-check"></i>
         </div>
+
         <div className="lr-qr-term-text">
           <span className="lr-qr-term-label">Active Term</span>
           <strong className="lr-qr-term-value">{termLabel}</strong>
         </div>
+
         <div className="lr-qr-term-hint">
           <i className="fa-solid fa-circle-info"></i>
           <span>
-            QR codes are locked to this term. They expire automatically when the next
-            term begins — just re-export a fresh set at the start of each term.
+            QR codes automatically expire at the end of this term.
+            Re-export fresh codes at the start of each new term.
           </span>
         </div>
       </div>

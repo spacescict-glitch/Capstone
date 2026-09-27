@@ -646,3 +646,138 @@
   .lqr-clear-btn { width: 100%; justify-content: center; }
 }
 
+
+/* ═══════════════════════════════════════════════════════════
+   ACTIVE TERM BANNER
+   ═══════════════════════════════════════════════════════════ */
+
+.lr-qr-term-banner {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 20px;
+  background: linear-gradient(135deg, #FFF9F3 0%, #FEF0E7 100%);
+  border: 1px solid #FCD7B4;
+  border-left: 4px solid #F57C00;
+  border-radius: 14px;
+  margin-bottom: 18px;
+  box-shadow: 0 2px 6px rgba(245, 124, 0, 0.05);
+}
+
+.lr-qr-term-icon {
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #F57C00;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  flex-shrink: 0;
+  border: 1px solid #FCD7B4;
+  box-shadow: 0 2px 4px rgba(245, 124, 0, 0.08);
+}
+
+.lr-qr-term-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.lr-qr-term-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #B45309;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.lr-qr-term-value {
+  font-size: 15.5px;
+  font-weight: 800;
+  color: #1a1a1a;
+  line-height: 1.2;
+}
+
+.lr-qr-term-hint {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px dashed #FCD7B4;
+  font-size: 12.5px;
+  color: #8A5B00;
+  line-height: 1.55;
+}
+
+.lr-qr-term-hint i {
+  color: #D97706;
+  font-size: 13px;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.lr-qr-term-hint span {
+  flex: 1;
+}
+
+/* ─── Small term badge sa bawat QR card ─── */
+
+.qr-term-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #FEF0E7;
+  color: #F57C00;
+  border: 1px solid #FCD7B4;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+
+/* ─── Responsive ─── */
+
+@media (max-width: 600px) {
+  .lr-qr-term-banner {
+    padding: 14px 16px;
+    gap: 12px;
+    border-radius: 12px;
+  }
+
+  .lr-qr-term-icon {
+    width: 40px;
+    height: 40px;
+    font-size: 16px;
+  }
+
+  .lr-qr-term-value {
+    font-size: 14px;
+  }
+
+  .lr-qr-term-hint {
+    font-size: 12px;
+    padding-top: 10px;
+  }
+}
+
+@media (max-width: 400px) {
+  .lr-qr-term-banner {
+    padding: 12px 14px;
+  }
+
+  .lr-qr-term-label {
+    font-size: 10px;
+  }
+
+  .lr-qr-term-value {
+    font-size: 13px;
+  }
+}
