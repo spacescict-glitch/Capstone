@@ -1,11 +1,13 @@
 // ============================================================
 // FILE: src/utils/pushNotifications.js
 // Web push notification helpers using the browser Notification API.
-// Preference is stored in localStorage so it persists across sessions.
+// Preference + seen notification IDs are stored in localStorage
+// so they persist across sessions and avoid duplicate alerts.
 // ============================================================
 
 const LS_ENABLED_KEY = "spaces_push_enabled";
-const LS_SEEN_KEY = "spaces_push_last_seen";
+const LS_SEEN_IDS_KEY = "spaces_push_seen_ids";
+const MAX_SEEN_IDS = 300;
 
 /* ─── Preference (user toggle) ─────────────────────────────── */
 export const getPushEnabled = () => {
@@ -43,9 +45,18 @@ export const requestPushPermission = async () => {
 
 /* ─── Fire a real browser notification ─────────────────────── */
 export const showPushNotification = (title, options = {}) => {
-  if (typeof window === "undefined" || !("Notification" in window)) return null;
-  if (Notification.permission !== "granted") return null;
-  if (!getPushEnabled()) return null;
+  if (typeof window === "undefined" || !("Notification" in window)) {
+    console.warn("[push] Notification API not supported");
+    return null;
+  }
+  if (Notification.permission !== "granted") {
+    console.warn("[push] Permission not granted:", Notification.permission);
+    return null;
+  }
+  if (!getPushEnabled()) {
+    console.warn("[push] Push disabled by user preference");
+    return null;
+  }
 
   try {
     const notif = new Notification(title, {
@@ -60,7 +71,7 @@ export const showPushNotification = (title, options = {}) => {
         window.focus();
         notif.close();
       } catch (err) {
-        console.warn("Focus failed:", err);
+        console.warn("[push] Focus failed:", err);
       }
     };
 
@@ -75,57 +86,78 @@ export const showPushNotification = (title, options = {}) => {
 
     return notif;
   } catch (err) {
-    console.error("Push notification failed:", err);
+    console.error("[push] Failed to show notification:", err);
     return null;
   }
 };
 
-/* ─── Last-seen push cursor (to avoid spamming old notifications) ── */
-export const getLastSeenPushTime = () => {
-  if (typeof window === "undefined") return Date.now();
-  const raw = localStorage.getItem(LS_SEEN_KEY);
-  if (!raw) return Date.now(); // first load → don't fire for old ones
-  const parsed = parseInt(raw, 10);
-  return Number.isFinite(parsed) ? parsed : Date.now();
+/* ─── Seen IDs (avoid duplicate alerts) ────────────────────── */
+const loadSeenIds = () => {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = localStorage.getItem(LS_SEEN_IDS_KEY);
+    if (!raw) return null; // null = never initialized
+    const arr = JSON.parse(raw);
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch {
+    return null;
+  }
 };
 
-export const setLastSeenPushTime = (ms) => {
+const saveSeenIds = (set) => {
   if (typeof window === "undefined") return;
-  if (!Number.isFinite(ms)) return;
-  localStorage.setItem(LS_SEEN_KEY, String(ms));
+  try {
+    const arr = Array.from(set).slice(-MAX_SEEN_IDS);
+    localStorage.setItem(LS_SEEN_IDS_KEY, JSON.stringify(arr));
+  } catch (err) {
+    console.warn("[push] Failed to save seen IDs:", err);
+  }
 };
 
-/* ─── Convenience: fire for a list of new notifications ───── */
+/* ─── Fire for new notifications ───────────────────────────── */
 export const fireNewNotifications = (notifications = []) => {
-  if (!Array.isArray(notifications) || notifications.length === 0) return;
+  if (!Array.isArray(notifications) || notifications.length === 0) return 0;
+  if (!getPushEnabled()) return 0;
+  if (typeof window === "undefined" || !("Notification" in window)) return 0;
+  if (Notification.permission !== "granted") return 0;
 
-  // Only alert when the tab is hidden / in background
-  const tabHidden =
-    typeof document !== "undefined" && document.visibilityState === "hidden";
-  if (!tabHidden) return;
+  const seenSet = loadSeenIds();
 
-  const lastSeen = getLastSeenPushTime();
-  let maxCreated = lastSeen;
-  let fired = 0;
+  // ── First ever run: mark all existing notifications as seen,
+  //    don't fire anything (avoids spamming old ones).
+  if (seenSet === null) {
+    const initial = new Set(
+      notifications.map((n) => n.id).filter(Boolean)
+    );
+    saveSeenIds(initial);
+    console.log("[push] Initialized seen IDs:", initial.size);
+    return 0;
+  }
 
-  // Sort ascending so older ones fire first
-  const sorted = [...notifications].sort((a, b) => {
-    const aMs = a?.createdAt?.toMillis?.() ?? 0;
-    const bMs = b?.createdAt?.toMillis?.() ?? 0;
-    return aMs - bMs;
-  });
+  // ── Find new ones (by ID)
+  const newOnes = notifications.filter((n) => n.id && !seenSet.has(n.id));
 
-  sorted.forEach((n) => {
-    const createdMs = n?.createdAt?.toMillis?.() ?? 0;
-    if (createdMs > lastSeen) {
+  // ── Mark everything as seen (whether or not we fire)
+  notifications.forEach((n) => n.id && seenSet.add(n.id));
+  saveSeenIds(seenSet);
+
+  if (newOnes.length === 0) return 0;
+
+  console.log("[push] New notifications detected:", newOnes.length);
+
+  // Fire oldest → newest so the newest sits on top of the tray
+  newOnes
+    .sort((a, b) => {
+      const aMs = a?.createdAt?.toMillis?.() ?? 0;
+      const bMs = b?.createdAt?.toMillis?.() ?? 0;
+      return aMs - bMs;
+    })
+    .forEach((n) => {
       showPushNotification(n.title || "SpaceS CICT", {
         body: n.message || "You have a new notification.",
         tag: n.id,
       });
-      fired++;
-      if (createdMs > maxCreated) maxCreated = createdMs;
-    }
-  });
+    });
 
-  if (fired > 0) setLastSeenPushTime(maxCreated);
+  return newOnes.length;
 };

@@ -233,7 +233,6 @@ export default function ClerkSettings() {
     const wantsOn = e.target.checked;
 
     if (wantsOn) {
-      // User wants to turn it ON → request permission
       const perm = await requestPushPermission();
       setBrowserPermission(perm);
 
