@@ -7,6 +7,11 @@ import { toPng } from "html-to-image";
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
 import Toast from "../../Popup/Toast/Toast";
+import {
+  getCurrentTerm,
+  getTermLabel,
+  getTermShortLabel,
+} from "../../utils/academicTerm";
 
 // ─── PDF Libraries & Logos ──────────────────────────────────────────
 import jsPDF from "jspdf";
@@ -33,6 +38,15 @@ function LocalRegistrarQRCode() {
   const [exportingPDF, setExportingPDF] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [downloading, setDownloading] = useState({});
+
+  // ─── CURRENT TERM (used to scope QR codes) ─────────────────
+  const currentTerm = useMemo(() => getCurrentTerm(), []);
+  const termLabel    = useMemo(() => getTermLabel(currentTerm), [currentTerm]);
+  const termShort    = useMemo(() => getTermShortLabel(currentTerm), [currentTerm]);
+
+  // Helper — build the term-aware public URL for a room
+  const buildQrUrl = (roomId) =>
+    `${window.location.origin}/room/${roomId}?term=${currentTerm}`;
 
   // ─── FILTER STATE ──────────────────────────────────────────
   const [selectedBuilding, setSelectedBuilding] = useState("All Buildings");
@@ -113,17 +127,11 @@ function LocalRegistrarQRCode() {
     return ["All Floors", ...sorted];
   }, [rooms, selectedBuilding]);
 
-  // Reset floor kapag hindi na valid
   useEffect(() => {
-    if (!floorOptions.includes(selectedFloor)) {
-      setSelectedFloor("All Floors");
-    }
+    if (!floorOptions.includes(selectedFloor)) setSelectedFloor("All Floors");
   }, [floorOptions, selectedFloor]);
 
-  // Reset page kapag nagbago filters
-  useEffect(() => {
-    setPage(1);
-  }, [selectedBuilding, selectedFloor]);
+  useEffect(() => { setPage(1); }, [selectedBuilding, selectedFloor]);
 
   // ─── INDIVIDUAL QR DOWNLOAD (PNG) ────────────────────────────────
   const downloadSingleQR = async (room) => {
@@ -139,7 +147,7 @@ function LocalRegistrarQRCode() {
       });
 
       const link = document.createElement("a");
-      link.download = `${room.roomName || room.id}-QR.png`;
+      link.download = `${room.roomName || room.id}-QR-${currentTerm}.png`;
       link.href = dataUrl;
       document.body.appendChild(link);
       link.click();
@@ -174,11 +182,11 @@ function LocalRegistrarQRCode() {
           cacheBust: true, pixelRatio: 2, backgroundColor: "#ffffff",
         });
         const base64 = dataUrl.split(",")[1];
-        zip.file(`${room.roomName || room.id}-QR.png`, base64, { base64: true });
+        zip.file(`${room.roomName || room.id}-QR-${currentTerm}.png`, base64, { base64: true });
       }
 
       const blob = await zip.generateAsync({ type: "blob" });
-      saveAs(blob, `SpaceS-QR-Codes-${new Date().toISOString().slice(0, 10)}.zip`);
+      saveAs(blob, `SpaceS-QR-Codes-${currentTerm}.zip`);
 
       await addDoc(collection(db, "activityLogs"), {
         userId: auth.currentUser?.uid,
@@ -187,7 +195,7 @@ function LocalRegistrarQRCode() {
         action: "Downloaded All QR ZIP",
         actionType: "success",
         target: "QR Codes",
-        details: `Downloaded ${filteredRooms.length} QR codes as ZIP (Building: ${selectedBuilding}, Floor: ${selectedFloor}).`,
+        details: `Downloaded ${filteredRooms.length} QR codes as ZIP for ${termLabel} (Building: ${selectedBuilding}, Floor: ${selectedFloor}).`,
         status: "SUCCESS",
         timestamp: serverTimestamp(),
       });
@@ -256,6 +264,10 @@ function LocalRegistrarQRCode() {
         marginX, 122
       );
       pdf.text(
+        `Term: ${termLabel}`,
+        marginX, 134
+      );
+      pdf.text(
         `Generated: ${new Date().toLocaleString()}`,
         pageWidth - marginX, 110, { align: "right" }
       );
@@ -266,7 +278,7 @@ function LocalRegistrarQRCode() {
       const totalWidth = colsPerRow * (qrSize + spacing) - spacing;
       const startX = (pageWidth - totalWidth) / 2;
       let currentX = startX;
-      let currentY = 140;
+      let currentY = 152;
       let col = 0;
 
       for (let i = 0; i < filteredRooms.length; i++) {
@@ -329,7 +341,7 @@ function LocalRegistrarQRCode() {
         pdf.text(`${SCHOOL_HEADER.systemName} — Confidential`, marginX, pageHeight - 16);
       }
 
-      pdf.save(`SpaceS-QR-Codes-${new Date().toISOString().slice(0, 10)}.pdf`);
+      pdf.save(`SpaceS-QR-Codes-${currentTerm}.pdf`);
 
       await addDoc(collection(db, "activityLogs"), {
         userId: auth.currentUser?.uid,
@@ -338,7 +350,7 @@ function LocalRegistrarQRCode() {
         action: "Downloaded QR PDF",
         actionType: "success",
         target: "QR Codes",
-        details: `Downloaded ${filteredRooms.length} QR codes as PDF (Building: ${selectedBuilding}, Floor: ${selectedFloor}).`,
+        details: `Downloaded ${filteredRooms.length} QR codes as PDF for ${termLabel} (Building: ${selectedBuilding}, Floor: ${selectedFloor}).`,
         status: "SUCCESS",
         timestamp: serverTimestamp(),
       });
@@ -396,6 +408,24 @@ function LocalRegistrarQRCode() {
               </button>
             </div>
           )}
+        </div>
+      </div>
+
+      {/* ── ACTIVE TERM BANNER ── */}
+      <div className="lr-qr-term-banner">
+        <div className="lr-qr-term-icon">
+          <i className="fa-solid fa-calendar-check"></i>
+        </div>
+        <div className="lr-qr-term-text">
+          <span className="lr-qr-term-label">Active Term</span>
+          <strong className="lr-qr-term-value">{termLabel}</strong>
+        </div>
+        <div className="lr-qr-term-hint">
+          <i className="fa-solid fa-circle-info"></i>
+          <span>
+            QR codes are locked to this term. They expire automatically when the next
+            term begins — just re-export a fresh set at the start of each term.
+          </span>
         </div>
       </div>
 
@@ -500,7 +530,7 @@ function LocalRegistrarQRCode() {
               display: "flex", flexDirection: "column", alignItems: "center",
               gap: 10, width: "fit-content",
             }}>
-            <QRCode value={`${window.location.origin}/room/${room.id}`} size={220} />
+            <QRCode value={buildQrUrl(room.id)} size={220} />
             <strong>{room.roomName}</strong>
           </div>
         ))}
@@ -516,7 +546,7 @@ function LocalRegistrarQRCode() {
               display: "flex", flexDirection: "column", alignItems: "center",
               gap: 6, width: "fit-content",
             }}>
-            <QRCode value={`${window.location.origin}/room/${room.id}`} size={150} />
+            <QRCode value={buildQrUrl(room.id)} size={150} />
             <strong style={{ fontSize: 12 }}>{room.roomName}</strong>
           </div>
         ))}
@@ -543,9 +573,10 @@ function LocalRegistrarQRCode() {
                 <div key={room.id} className="qr-card-item"
                   ref={el => cardRefs.current[room.id] = el}>
                   <div className="qr-card-content">
-                    <QRCode value={`${window.location.origin}/room/${room.id}`} size={160} />
+                    <QRCode value={buildQrUrl(room.id)} size={160} />
                     <div className="qr-room-name">{room.roomName}</div>
                     {room.floor && <div className="qr-room-floor">Floor {room.floor}</div>}
+                    <div className="qr-term-badge">{termShort}</div>
                     <button
                       className="qr-download-single-btn"
                       onClick={() => downloadSingleQR(room)}

@@ -1,3 +1,7 @@
+/* ═══════════════════════════════════════════════════════════
+   PUBLIC ROOM SCHEDULE — full responsive stylesheet
+   ═══════════════════════════════════════════════════════════ */
+
 .public-room-page {
   width: 100%;
   min-height: 100vh;
@@ -8,18 +12,48 @@
   --hour-height: 60px;
 }
 
+/* ─── HEADER ────────────────────────────────────────────── */
 .public-room-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 20px;
   flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.public-room-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .public-room-header h1 {
   margin: 0;
   font-size: 36px;
   font-weight: 800;
+  line-height: 1.1;
+  word-break: break-word;
+}
+
+.public-room-term-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: #FEF0E7;
+  color: #F57C00;
+  border: 1px solid #FCD7B4;
+  font-size: 12.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.public-room-term-chip i {
+  font-size: 11px;
 }
 
 .room-status {
@@ -28,33 +62,182 @@
   font-weight: 700;
   color: white;
   white-space: nowrap;
+  font-size: 14px;
 }
 
 .room-status.available {
   background: #16a34a;
   color: white;
+  box-shadow: 0 4px 12px rgba(22, 163, 74, 0.25);
 }
 
 .room-status.occupied {
   background: #dc2626;
   color: white;
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.25);
 }
+
+/* ═══════════════════════════════════════════════════════════
+   EXPIRED SCREEN
+   ═══════════════════════════════════════════════════════════ */
+
+.public-room-expired {
+  width: 100%;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #F8F7F5;
+  padding: 20px;
+  font-family: Lexend, sans-serif;
+}
+
+.public-room-expired-card {
+  background: #fff;
+  border-radius: 20px;
+  padding: 40px 32px 32px;
+  max-width: 460px;
+  width: 100%;
+  text-align: center;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.08);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.public-room-expired-icon {
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  background: #FEE2E2;
+  color: #DC2626;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 30px;
+  margin-bottom: 6px;
+}
+
+.public-room-expired-card h1 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 800;
+  color: #1a1a1a;
+}
+
+.public-room-expired-sub {
+  font-size: 14px;
+  color: #6b7280;
+  line-height: 1.6;
+  margin: 0 0 8px;
+}
+
+.public-room-expired-info {
+  width: 100%;
+  background: #F8F7F5;
+  border: 1px solid #EFEAE4;
+  border-radius: 14px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.public-room-expired-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 14px;
+}
+
+.public-room-expired-row span {
+  font-size: 12px;
+  font-weight: 700;
+  color: #94A3B8;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.public-room-expired-row strong {
+  font-size: 13.5px;
+  color: #1a1a1a;
+  font-weight: 700;
+  text-align: right;
+}
+
+.public-room-expired-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #FFF9F3;
+  border-left: 3px solid #F57C00;
+  font-size: 12.5px;
+  color: #7A4A1F;
+  line-height: 1.5;
+  margin-top: 12px;
+}
+
+.public-room-expired-hint i {
+  color: #F57C00;
+  font-size: 14px;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.public-room-expired-hint strong {
+  color: #B45309;
+  font-weight: 800;
+}
+
+.public-room-expired-back {
+  margin-top: 18px;
+  padding: 12px 24px;
+  border-radius: 10px;
+  border: none;
+  background: #F57C00;
+  color: #fff;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 4px 12px rgba(245, 124, 0, 0.3);
+  transition: background 0.15s, transform 0.1s;
+}
+
+.public-room-expired-back:hover {
+  background: #d96a00;
+  transform: translateY(-1px);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   MAIN CARD
+   ═══════════════════════════════════════════════════════════ */
 
 .white-box-view-room {
   background-color: #ffffff;
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 20px;
   width: 100%;
   min-height: 800px;
   box-shadow: 0px 2px 8px rgba(0, 0, 0, .1);
   position: relative;
 }
+
 .box-header {
   display: flex;
   justify-content: center;
   align-items: center;
   width: 100%;
-  margin: 20px 0;
+  margin: 16px 0 22px;
   box-sizing: border-box;
 }
 
@@ -64,20 +247,106 @@
   gap: 10px;
   font-size: 18px;
   font-weight: 700;
+  white-space: nowrap;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.public-room-week-label {
+  min-width: 0;
+  text-align: center;
+}
+
+.public-room-nav-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: #F5F6FA;
+  color: #5f6c80;
+  font-size: 14px;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s, transform 0.1s;
+  flex-shrink: 0;
+}
+
+.public-room-nav-btn:hover:not(:disabled) {
+  background: #FEF0E7;
+  color: #F57C00;
+  transform: scale(1.05);
+}
+
+.public-room-nav-btn:disabled,
+.public-room-nav-btn.is-disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.public-room-today-btn {
+  margin-left: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1.5px solid #F57C00;
+  background: #FEF0E7;
+  color: #F57C00;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s;
   white-space: nowrap;
 }
 
+.public-room-today-btn:hover {
+  background: #FDE8D4;
+}
+
+.public-room-today-btn i {
+  font-size: 11px;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   CALENDAR — horizontal scroll always
+   ═══════════════════════════════════════════════════════════ */
+
 .calendar-scroll-x {
-  overflow-x: hidden;
-  scrollbar-width: none; 
-  -ms-overflow-style: none; 
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+  margin: 0 -4px;
+  padding: 0 4px 8px;
 }
 
 .calendar-scroll-x::-webkit-scrollbar {
-  display: none;
+  height: 8px;
 }
 
+.calendar-scroll-x::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.calendar-scroll-x::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+.calendar-scroll-x::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+.calendar-inner {
+  min-width: 800px; /* force scroll on narrow viewports */
+}
+
+/* ─── Days header ─────────────────────────────────────── */
 .days-container {
   display: grid;
   grid-template-columns: var(--time-col-width) repeat(7, minmax(90px, 1fr));
@@ -100,6 +369,11 @@
   gap: 4px;
   padding: 4px 0;
   box-sizing: border-box;
+  transition: opacity 0.2s;
+}
+
+.day.past-day {
+  opacity: 0.4;
 }
 
 .day-name {
@@ -131,6 +405,7 @@
   margin: 0 20px;
 }
 
+/* ─── Schedule body ───────────────────────────────────── */
 .schedule-container {
   display: flex;
   margin: 20px;
@@ -167,6 +442,18 @@
   position: relative;
   border-left: 1px solid #ECECEC;
   overflow: visible;
+  transition: background 0.2s;
+}
+
+.calendar-day.past-day {
+  background: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 8px,
+    rgba(0, 0, 0, 0.015) 8px,
+    rgba(0, 0, 0, 0.015) 16px
+  );
+  pointer-events: none;
 }
 
 .class-details-container {
@@ -201,48 +488,100 @@
   margin-top: 8px;
 }
 
-/* ============ RESPONSIVE ============ */
+/* ═══════════════════════════════════════════════════════════
+   RESPONSIVE — TABLET (≤ 992px)
+   ═══════════════════════════════════════════════════════════ */
 
-@media (max-width: 768px) {
+@media (max-width: 992px) {
   .public-room-page {
-    padding: 16px;
-    --time-col-width: 50px;
+    --time-col-width: 56px;
   }
 
   .public-room-header h1 {
-    font-size: 26px;
+    font-size: 30px;
+  }
+
+  .week-navigation {
+    font-size: 16px;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   RESPONSIVE — MOBILE (≤ 768px)
+   ═══════════════════════════════════════════════════════════ */
+
+@media (max-width: 768px) {
+  .public-room-page {
+    padding: 14px 12px;
+    --time-col-width: 48px;
+  }
+
+  .public-room-header h1 {
+    font-size: 24px;
+  }
+
+  .public-room-term-chip {
+    font-size: 11.5px;
+    padding: 5px 10px;
   }
 
   .room-status {
     padding: 8px 18px;
-    font-size: 13px;
+    font-size: 12.5px;
   }
 
   .white-box-view-room {
-    padding: 16px;
+    padding: 14px 10px;
+    border-radius: 10px;
     min-height: auto;
   }
 
   .box-header {
-    margin: 12px;
+    margin: 10px 0 14px;
+    justify-content: flex-start;
   }
 
   .week-navigation {
-    font-size: 15px;
+    font-size: 14px;
+    gap: 6px;
+    width: 100%;
+    justify-content: space-between;
   }
 
+  .public-room-week-label {
+    flex: 1;
+    font-size: 13.5px;
+    text-align: center;
+  }
+
+  .public-room-nav-btn {
+    width: 36px;
+    height: 36px;
+    font-size: 13px;
+  }
+
+  .public-room-today-btn {
+    font-size: 11.5px;
+    padding: 6px 10px;
+    margin-left: 0;
+  }
+
+  /* Calendar — keep horizontal scroll on mobile */
   .calendar-scroll-x {
-    overflow-x: auto;
+    margin: 0 -2px;
+    padding: 0 2px 8px;
+  }
+
+  .calendar-inner {
+    min-width: 720px;
   }
 
   .days-container,
   .schedule-container {
     margin: 12px;
-    min-width: 700px;
   }
 
   .days-divider {
-    min-width: 700px;
     margin: 0 12px;
   }
 
@@ -251,7 +590,7 @@
   }
 
   .day-name {
-    font-size: 10px;
+    font-size: 10.5px;
   }
 
   .day-date {
@@ -261,17 +600,18 @@
   }
 
   .time-slot {
-    height: 60px; 
+    height: 60px;
+    font-size: 11px;
   }
 
   .calendar-grid {
-    height: 900px;
+    height: 840px;
+    grid-template-columns: repeat(7, minmax(85px, 1fr));
   }
 
   .no-schedule {
-    min-height: 900px;
+    min-height: 840px;
   }
-
 
   .no-schedule i {
     font-size: 44px;
@@ -286,11 +626,106 @@
     right: 12px;
     bottom: 12px;
   }
+
+  /* Expired card tweaks */
+  .public-room-expired-card {
+    padding: 32px 22px 26px;
+    border-radius: 16px;
+  }
+
+  .public-room-expired-icon {
+    width: 64px;
+    height: 64px;
+    font-size: 26px;
+  }
+
+  .public-room-expired-card h1 {
+    font-size: 20px;
+  }
+
+  .public-room-expired-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+  }
+
+  .public-room-expired-row strong {
+    text-align: left;
+  }
 }
 
+/* ═══════════════════════════════════════════════════════════
+   RESPONSIVE — SMALL PHONES (≤ 480px)
+   ═══════════════════════════════════════════════════════════ */
+
 @media (max-width: 480px) {
+  .public-room-page {
+    padding: 12px 8px;
+  }
+
   .public-room-header {
     flex-direction: column;
     align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+
+  .public-room-title-wrap {
+    gap: 8px;
+  }
+
+  .public-room-header h1 {
+    font-size: 21px;
+  }
+
+  .public-room-term-chip {
+    font-size: 11px;
+    padding: 4px 9px;
+  }
+
+  .room-status {
+    padding: 7px 14px;
+    font-size: 12px;
+  }
+
+  .white-box-view-room {
+    padding: 12px 6px;
+    border-radius: 8px;
+  }
+
+  .calendar-inner {
+    min-width: 680px;
+  }
+
+  .days-container,
+  .schedule-container {
+    margin: 10px;
+  }
+
+  .days-divider {
+    margin: 0 10px;
+  }
+
+  .public-room-week-label {
+    font-size: 12.5px;
+  }
+
+  .public-room-nav-btn {
+    width: 32px;
+    height: 32px;
+    font-size: 12px;
+  }
+
+  .public-room-today-btn {
+    padding: 5px 9px;
+    font-size: 11px;
+  }
+
+  .public-room-today-btn i {
+    display: none;
+  }
+
+  .time-column {
+    padding-right: 10px;
   }
 }

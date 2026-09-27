@@ -1,11 +1,12 @@
-import { useState, useEffect } from "react";
-import { useParams } from "react-router-dom";
+import { useState, useEffect, useMemo } from "react";
+import { useParams, useSearchParams, useNavigate } from "react-router-dom";
 
 import "./public-room-schedule.css";
 
 import ScheduleCard from "../../Components/ScheduleCard/ScheduleCard";
 import ClassDetailsCard from "../../Components/ClassDetailsCard/ClassDetailsCard";
 import { isActiveOnDate } from "../../utils/scheduleActivePeriod";
+import { getCurrentTerm, getTermLabel, isValidTerm } from "../../utils/academicTerm";
 
 import {
   doc,
@@ -24,7 +25,7 @@ const HOUR_HEIGHT = 60;
 // Calendar grid starts at 7:00 AM (first label = "07 AM")
 const CALENDAR_START_MINUTES = 7 * 60;
 
-// ─── date helper ────────────────────────────────────────────────────
+// ─── date helpers ───────────────────────────────────────────────────
 const toDateStr = (date) => {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");
@@ -32,8 +33,79 @@ const toDateStr = (date) => {
   return `${y}-${m}-${d}`;
 };
 
+const stripTime = (date) => {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
+
+const getStartOfWeek = (date) => {
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
+
+// ─── Expired screen ────────────────────────────────────────────────
+function ExpiredScreen({ urlTerm, currentTerm }) {
+  const navigate = useNavigate();
+  const urlTermLabel = urlTerm ? getTermLabel(urlTerm) : null;
+  const currentTermLabel = getTermLabel(currentTerm);
+
+  return (
+    <div className="public-room-expired">
+      <div className="public-room-expired-card">
+        <div className="public-room-expired-icon">
+          <i className="fa-solid fa-qrcode"></i>
+        </div>
+
+        <h1>QR Code Expired</h1>
+        <p className="public-room-expired-sub">
+          This QR code is no longer valid. It was issued for a previous academic
+          term and cannot be used anymore.
+        </p>
+
+        <div className="public-room-expired-info">
+          <div className="public-room-expired-row">
+            <span>QR was issued for</span>
+            <strong>{urlTermLabel || "Unknown term"}</strong>
+          </div>
+          <div className="public-room-expired-row">
+            <span>Current active term</span>
+            <strong>{currentTermLabel}</strong>
+          </div>
+        </div>
+
+        <div className="public-room-expired-hint">
+          <i className="fa-solid fa-lightbulb"></i>
+          <span>
+            Please contact the <strong>CICT Local Registrar</strong> to request
+            an updated QR code for this room.
+          </span>
+        </div>
+
+        <button
+          type="button"
+          className="public-room-expired-back"
+          onClick={() => navigate("/login")}
+        >
+          <i className="fa-solid fa-right-to-bracket"></i> Go to Login
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function PublicRoomSchedule() {
   const { roomId } = useParams();
+  const [searchParams] = useSearchParams();
+  const urlTerm = searchParams.get("term");
+  const currentTerm = useMemo(() => getCurrentTerm(), []);
+
+  // ─── Term gate: block if missing / mismatched ───────────────────
+  const termValid = isValidTerm(urlTerm);
 
   const [room, setRoom] = useState(null);
   const [currentWeek, setCurrentWeek] = useState(new Date());
@@ -65,9 +137,7 @@ function PublicRoomSchedule() {
 
   const getTopPosition = (startTime) => {
     const startMinutes = convertToMinutes(startTime);
-    return (
-      ((startMinutes - CALENDAR_START_MINUTES) / 60) * HOUR_HEIGHT
-    );
+    return ((startMinutes - CALENDAR_START_MINUTES) / 60) * HOUR_HEIGHT;
   };
 
   const getCardHeight = (startTime, endTime) => {
@@ -77,15 +147,6 @@ function PublicRoomSchedule() {
   };
 
   // ─── week helpers ─────────────────────────────────────────────
-  const getStartOfWeek = (date) => {
-    const d = new Date(date);
-    const day = d.getDay();
-    const diff = day === 0 ? -6 : 1 - day;
-    d.setDate(d.getDate() + diff);
-    d.setHours(0, 0, 0, 0);
-    return d;
-  };
-
   const startOfWeek = getStartOfWeek(currentWeek);
   const weekDates = Array.from({ length: 7 }, (_, i) => {
     const date = new Date(startOfWeek);
@@ -93,14 +154,24 @@ function PublicRoomSchedule() {
     return date;
   });
 
+  const todayStart = useMemo(() => stripTime(new Date()), []);
+  const currentWeekStart = useMemo(() => getStartOfWeek(todayStart), [todayStart]);
+  const viewingWeekStart = useMemo(() => getStartOfWeek(currentWeek), [currentWeek]);
+
+  const canGoPrev = viewingWeekStart.getTime() > currentWeekStart.getTime();
+  const isAtCurrentWeek =
+    viewingWeekStart.getTime() === currentWeekStart.getTime();
+
   const isToday = (date) => {
-    const today = new Date();
+    const t = new Date();
     return (
-      today.getDate() === date.getDate() &&
-      today.getMonth() === date.getMonth() &&
-      today.getFullYear() === date.getFullYear()
+      t.getDate() === date.getDate() &&
+      t.getMonth() === date.getMonth() &&
+      t.getFullYear() === date.getFullYear()
     );
   };
+
+  const isPastDay = (date) => stripTime(date).getTime() < todayStart.getTime();
 
   const formatWeekRange = () => {
     const start = weekDates[0];
@@ -116,11 +187,12 @@ function PublicRoomSchedule() {
 
   // ─── effects ──────────────────────────────────────────────────
   useEffect(() => {
+    if (!termValid) return; // term invalid → don't load anything
     loadRoom();
     const interval = setInterval(() => loadRoom(), 60000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId]);
+  }, [roomId, termValid]);
 
   const getCurrentDay = () => {
     const days = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
@@ -146,14 +218,15 @@ function PublicRoomSchedule() {
       .filter((s) => !s.initialized);
     setSchedules(scheduleList);
 
-    // ── EVENTS ──
+    // ── EVENTS (only today & future) ──
     const eventSnap = await getDocs(collection(db, "events"));
+    const todayStr = toDateStr(todayStart);
     const eventList = eventSnap.docs
       .map((d) => ({ id: d.id, ...d.data() }))
-      .filter((e) => e.roomId === roomId);
+      .filter((e) => e.roomId === roomId && (!e.date || e.date >= todayStr));
     setEvents(eventList);
 
-    // ── RESERVATIONS (approved only) ──
+    // ── RESERVATIONS (approved only, today & future) ──
     const reservationSnap = await getDocs(
       collection(db, "reservationRequests")
     );
@@ -162,7 +235,8 @@ function PublicRoomSchedule() {
       .filter(
         (r) =>
           r.roomId === roomId &&
-          String(r.status).toLowerCase() === "approved"
+          String(r.status).toLowerCase() === "approved" &&
+          (!r.date || r.date >= todayStr)
       );
     setReservations(reservationList);
 
@@ -186,7 +260,7 @@ function PublicRoomSchedule() {
       );
     setReassignments(reassignList);
 
-    // ── STATUS (Available / Occupied) ──
+    // ── STATUS (Available / Occupied) — only relevant for today ──
     const now = new Date();
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
     const todayDay = getCurrentDay();
@@ -283,13 +357,11 @@ function PublicRoomSchedule() {
     return schedules
       .filter((s) => s.day?.trim().toUpperCase() === day)
       .map((schedule) => {
-        // Must be active on this date (checks isActive + activeFrom/activeUntil)
         if (!isActiveOnDate(schedule, dateStr)) return null;
 
         const key = `${schedule.id}_${dateStr}`;
         if (reassignedAwayKeys.has(key)) return null;
 
-        // Handle partial-day release (class ends early)
         const releaseInfo = releasedMap.get(key);
         if (releaseInfo) {
           if (!releaseInfo.effectiveEndTime) return null;
@@ -326,12 +398,21 @@ function PublicRoomSchedule() {
     ];
   };
 
+  // ─── TERM GATE ────────────────────────────────────────────────
+  if (!termValid) {
+    return <ExpiredScreen urlTerm={urlTerm} currentTerm={currentTerm} />;
+  }
+
   // ─── render ───────────────────────────────────────────────────
   return (
     <div className="public-room-page">
       <div className="public-room-header">
-        <div>
-          <h1>{room?.roomName}</h1>
+        <div className="public-room-title-wrap">
+          <h1>{room?.roomName || "Room"}</h1>
+          <span className="public-room-term-chip">
+            <i className="fa-solid fa-calendar-check"></i>
+            {getTermLabel(currentTerm)}
+          </span>
         </div>
 
         <span
@@ -348,150 +429,183 @@ function PublicRoomSchedule() {
       <div className="white-box-view-room">
         <div className="box-header">
           <div className="week-navigation">
-            <i
-              className="fa-solid fa-chevron-left"
-              style={{ cursor: "pointer" }}
+            <button
+              type="button"
+              className={`public-room-nav-btn ${!canGoPrev ? "is-disabled" : ""}`}
               onClick={() => {
+                if (!canGoPrev) return;
                 const prev = new Date(currentWeek);
                 prev.setDate(prev.getDate() - 7);
                 setCurrentWeek(prev);
               }}
-            ></i>
+              disabled={!canGoPrev}
+              aria-label="Previous week"
+            >
+              <i className="fa-solid fa-chevron-left"></i>
+            </button>
 
-            <span>{formatWeekRange()}</span>
+            <span className="public-room-week-label">{formatWeekRange()}</span>
 
-            <i
-              className="fa-solid fa-chevron-right"
-              style={{ cursor: "pointer" }}
+            <button
+              type="button"
+              className="public-room-nav-btn"
               onClick={() => {
                 const next = new Date(currentWeek);
                 next.setDate(next.getDate() + 7);
                 setCurrentWeek(next);
               }}
-            ></i>
+              aria-label="Next week"
+            >
+              <i className="fa-solid fa-chevron-right"></i>
+            </button>
+
+            {!isAtCurrentWeek && (
+              <button
+                type="button"
+                className="public-room-today-btn"
+                onClick={() => setCurrentWeek(new Date())}
+                aria-label="Jump to current week"
+              >
+                <i className="fa-solid fa-calendar-day"></i> Today
+              </button>
+            )}
           </div>
         </div>
 
         <div className="calendar-scroll-x">
-          <div className="days-container">
-            <div className="time-column" aria-hidden="true"></div>
+          <div className="calendar-inner">
+            <div className="days-container">
+              <div className="time-column" aria-hidden="true"></div>
 
-            {weekDates.map((date, index) => (
-              <div
-                key={index}
-                className={`day ${isToday(date) ? "today" : ""}`}
-              >
-                <span className="day-name">{DAYS[index]}</span>
-                <span className="day-date">{date.getDate()}</span>
-              </div>
-            ))}
-          </div>
-
-          <hr className="days-divider" />
-
-          <div className="schedule-container">
-            <div className="time-column">
-              <div className="time-slot">07 AM</div>
-              <div className="time-slot">08 AM</div>
-              <div className="time-slot">09 AM</div>
-              <div className="time-slot">10 AM</div>
-              <div className="time-slot">11 AM</div>
-              <div className="time-slot">12 PM</div>
-              <div className="time-slot">01 PM</div>
-              <div className="time-slot">02 PM</div>
-              <div className="time-slot">03 PM</div>
-              <div className="time-slot">04 PM</div>
-              <div className="time-slot">05 PM</div>
-              <div className="time-slot">06 PM</div>
-              <div className="time-slot">07 PM</div>
-              <div className="time-slot">08 PM</div>
+              {weekDates.map((date, index) => {
+                const past = isPastDay(date);
+                return (
+                  <div
+                    key={index}
+                    className={`day ${isToday(date) ? "today" : ""} ${
+                      past ? "past-day" : ""
+                    }`}
+                  >
+                    <span className="day-name">{DAYS[index]}</span>
+                    <span className="day-date">{date.getDate()}</span>
+                  </div>
+                );
+              })}
             </div>
 
-            <div className="calendar-grid">
-              {schedules.length === 0 &&
-              events.length === 0 &&
-              reservations.length === 0 &&
-              reassignedInto.length === 0 ? (
-                <div className="no-schedule">
-                  <i className="fa-regular fa-calendar-xmark"></i>
-                  <h3>No schedules available</h3>
-                  <p>There are no schedules for this room.</p>
-                </div>
-              ) : (
-                DAYS.map((day, index) => {
-                  const dateObj = weekDates[index];
-                  const dateStr = toDateStr(dateObj);
-                  const dayItems = getItemsForDate(dateObj);
-                  const daySchedules = getSchedulesForDate(day, dateStr);
+            <hr className="days-divider" />
 
-                  return (
-                    <div className="calendar-day" key={day}>
-                      {/* Regular schedules (active + not reassigned away) */}
-                      {daySchedules
-                        .filter((schedule) => {
-                          // Skip if any event/reservation/reassignment overlaps
-                          const sStart = convertToMinutes(schedule.startTime);
-                          const sEnd = convertToMinutes(schedule.endTime);
+            <div className="schedule-container">
+              <div className="time-column">
+                <div className="time-slot">07 AM</div>
+                <div className="time-slot">08 AM</div>
+                <div className="time-slot">09 AM</div>
+                <div className="time-slot">10 AM</div>
+                <div className="time-slot">11 AM</div>
+                <div className="time-slot">12 PM</div>
+                <div className="time-slot">01 PM</div>
+                <div className="time-slot">02 PM</div>
+                <div className="time-slot">03 PM</div>
+                <div className="time-slot">04 PM</div>
+                <div className="time-slot">05 PM</div>
+                <div className="time-slot">06 PM</div>
+                <div className="time-slot">07 PM</div>
+                <div className="time-slot">08 PM</div>
+              </div>
 
-                          return !dayItems.some((item) => {
-                            const eStart = convertToMinutes(item.startTime);
-                            const eEnd = convertToMinutes(item.endTime);
-                            return sStart < eEnd && sEnd > eStart;
-                          });
-                        })
-                        .map((schedule) => (
-                          <ScheduleCard
-                            key={schedule.id}
-                            schedule={schedule}
-                            top={getTopPosition(schedule.startTime)}
-                            height={getCardHeight(
-                              schedule.startTime,
-                              schedule.endTime
-                            )}
-                            onClick={() => setSelectedSchedule(schedule)}
-                          />
-                        ))}
+              <div className="calendar-grid">
+                {schedules.length === 0 &&
+                events.length === 0 &&
+                reservations.length === 0 &&
+                reassignedInto.length === 0 ? (
+                  <div className="no-schedule">
+                    <i className="fa-regular fa-calendar-xmark"></i>
+                    <h3>No schedules available</h3>
+                    <p>There are no upcoming schedules for this room.</p>
+                  </div>
+                ) : (
+                  DAYS.map((day, index) => {
+                    const dateObj = weekDates[index];
+                    const dateStr = toDateStr(dateObj);
+                    const past = isPastDay(dateObj);
 
-                      {/* Events / Reservations / Reassignments-in */}
-                      {dayItems.map((item) => {
-                        const isReassignment = item._source === "reassignment";
-                        const isEvent = item._source === "event";
+                    // Hide cards on past days (today and future only)
+                    const dayItems = past ? [] : getItemsForDate(dateObj);
+                    const daySchedules = past
+                      ? []
+                      : getSchedulesForDate(day, dateStr);
 
-                        const displaySchedule = {
-                          ...item,
-                          subject: isReassignment
-                            ? item.courseTitle ||
-                              item.subject ||
-                              "Moved Class"
-                            : item.title || item.purpose || "Reservation",
-                          faculty: isEvent
-                            ? "ROOM ACTIVITY"
-                            : isReassignment
-                            ? item.facultyName ||
-                              item.faculty ||
-                              "Moved Class"
-                            : item.requesterName ||
-                              item.facultyName ||
-                              "Reservation",
-                        };
+                    return (
+                      <div
+                        className={`calendar-day ${past ? "past-day" : ""}`}
+                        key={day}
+                      >
+                        {/* Regular schedules (active + not reassigned away) */}
+                        {daySchedules
+                          .filter((schedule) => {
+                            const sStart = convertToMinutes(schedule.startTime);
+                            const sEnd = convertToMinutes(schedule.endTime);
 
-                        return (
-                          <ScheduleCard
-                            key={item.id}
-                            schedule={displaySchedule}
-                            top={getTopPosition(item.startTime)}
-                            height={getCardHeight(
-                              item.startTime,
-                              item.endTime
-                            )}
-                            onClick={() => setSelectedSchedule(item)}
-                          />
-                        );
-                      })}
-                    </div>
-                  );
-                })
-              )}
+                            return !dayItems.some((item) => {
+                              const eStart = convertToMinutes(item.startTime);
+                              const eEnd = convertToMinutes(item.endTime);
+                              return sStart < eEnd && sEnd > eStart;
+                            });
+                          })
+                          .map((schedule) => (
+                            <ScheduleCard
+                              key={schedule.id}
+                              schedule={schedule}
+                              top={getTopPosition(schedule.startTime)}
+                              height={getCardHeight(
+                                schedule.startTime,
+                                schedule.endTime
+                              )}
+                              onClick={() => setSelectedSchedule(schedule)}
+                            />
+                          ))}
+
+                        {/* Events / Reservations / Reassignments-in */}
+                        {dayItems.map((item) => {
+                          const isReassignment = item._source === "reassignment";
+                          const isEvent = item._source === "event";
+
+                          const displaySchedule = {
+                            ...item,
+                            subject: isReassignment
+                              ? item.courseTitle ||
+                                item.subject ||
+                                "Moved Class"
+                              : item.title || item.purpose || "Reservation",
+                            faculty: isEvent
+                              ? "ROOM ACTIVITY"
+                              : isReassignment
+                              ? item.facultyName ||
+                                item.faculty ||
+                                "Moved Class"
+                              : item.requesterName ||
+                                item.facultyName ||
+                                "Reservation",
+                          };
+
+                          return (
+                            <ScheduleCard
+                              key={item.id}
+                              schedule={displaySchedule}
+                              top={getTopPosition(item.startTime)}
+                              height={getCardHeight(
+                                item.startTime,
+                                item.endTime
+                              )}
+                              onClick={() => setSelectedSchedule(item)}
+                            />
+                          );
+                        })}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
             </div>
           </div>
         </div>
