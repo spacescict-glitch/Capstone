@@ -451,3 +451,87 @@
     gap: 12px;
   }
 }
+
+/* ══════════════ PAST-DATE LOCK BANNER ══════════════ */
+
+.dh-edit-locked-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  background: #FEF2F2;
+  border: 1px solid #FECACA;
+  border-left: 4px solid #DC2626;
+  border-radius: 12px;
+  margin-bottom: 16px;
+  color: #991B1B;
+}
+
+.dh-edit-locked-banner > i {
+  font-size: 18px;
+  color: #DC2626;
+  margin-top: 1px;
+  flex-shrink: 0;
+}
+
+.dh-edit-locked-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  line-height: 1.5;
+}
+
+.dh-edit-locked-text strong {
+  font-size: 13.5px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: #991B1B;
+  text-transform: uppercase;
+}
+
+.dh-edit-locked-text span {
+  font-size: 13px;
+  color: #7F1D1D;
+  font-weight: 400;
+}
+
+.dh-edit-locked-text b {
+  font-weight: 800;
+  color: #DC2626;
+}
+
+/* Disabled inputs visual cue */
+.dh-edit-approved-form-input:disabled,
+.dh-edit-approved-custom-select.disabled .dh-edit-approved-form-input {
+  background-color: #F3F4F6 !important;
+  color: #9CA3AF !important;
+  cursor: not-allowed !important;
+  opacity: 0.85;
+}
+
+.dh-edit-approved-save-btn:disabled {
+  background-color: #9CA3AF !important;
+  cursor: not-allowed !important;
+  opacity: 0.9;
+}
+
+/* Mobile */
+@media (max-width: 500px) {
+  .dh-edit-locked-banner {
+    padding: 12px 14px;
+    gap: 10px;
+    border-radius: 10px;
+  }
+
+  .dh-edit-locked-banner > i {
+    font-size: 16px;
+  }
+
+  .dh-edit-locked-text strong {
+    font-size: 12.5px;
+  }
+
+  .dh-edit-locked-text span {
+    font-size: 12px;
+  }
+}

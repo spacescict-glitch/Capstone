@@ -16,6 +16,7 @@ import {
 } from "firebase/firestore";
 import NotificationCard from "../../Components/NotificationCard/Notification";
 import LogoutPopup from "../../Popup/LogoutPopup/LogoutPopup";
+import { fireNewNotifications } from "../../utils/pushNotifications";
 
 export default function ClerkLayout() {
   const navigate = useNavigate();
@@ -74,9 +75,14 @@ export default function ClerkLayout() {
       );
 
       const unsubscribeNotif = onSnapshot(q, (snapshot) => {
-        setNotifications(
-          snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
-        );
+        const list = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+        setNotifications(list);
+
+        // 🔔 Fire real browser push for any NEW notifications
+        fireNewNotifications(list);
       });
 
       return unsubscribeNotif;

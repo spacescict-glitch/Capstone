@@ -24,7 +24,7 @@ const MAX_HOUR = 20;
 const MIN_MINUTES = MIN_HOUR * 60; // 420
 const MAX_MINUTES = MAX_HOUR * 60; // 1200
 const ITEMS_PER_PAGE = 6;
-const LIVE_ITEMS_PER_PAGE = 4; // ✅ bagong constant para sa sidebar
+const LIVE_ITEMS_PER_PAGE = 4;
 
 // ─── Helpers ────────────────────────────────────────────────────────
 const convertToMinutes = (time) => {
@@ -59,7 +59,7 @@ const formatDurationLabel = (mins) => {
 
 const formatDateLong = (dateStr) => {
   if (!dateStr) return "—";
-  return new Date(dateStr).toLocaleDateString("en-US", {
+  return new Date(`${dateStr}T00:00:00`).toLocaleDateString("en-US", {
     weekday: "short",
     month: "short",
     day: "numeric",
@@ -183,7 +183,7 @@ export default function WalkInReservation() {
   const [selectedBuilding, setSelectedBuilding] = useState("All Buildings");
   const [selectedFloor, setSelectedFloor] = useState("All Floors");
   const [currentPage, setCurrentPage] = useState(1);
-  const [liveCurrentPage, setLiveCurrentPage] = useState(1); // ✅ para sa sidebar
+  const [liveCurrentPage, setLiveCurrentPage] = useState(1);
 
   const [selectedDate, setSelectedDate] = useState(getTodayLocal());
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -559,7 +559,6 @@ export default function WalkInReservation() {
     currentMinutes,
   ]);
 
-  // ✅ Pagination para sa live availability sidebar
   const totalLivePages = Math.max(
     1,
     Math.ceil(liveAvailability.length / LIVE_ITEMS_PER_PAGE),
@@ -575,12 +574,10 @@ export default function WalkInReservation() {
     liveEndIndex,
   );
 
-  // ✅ Reset live page sa page 1 kapag nagbago ang date
   useEffect(() => {
     setLiveCurrentPage(1);
   }, [selectedDate]);
 
-  // ✅ Kung naging invalid ang live page
   useEffect(() => {
     if (liveCurrentPage > totalLivePages) {
       setLiveCurrentPage(totalLivePages);
@@ -1324,14 +1321,53 @@ export default function WalkInReservation() {
             {/* Room grid */}
             <div className="wir-slots">
               {loadingRooms ? (
-                <div className="wir-inline-loading">Loading rooms...</div>
-              ) : availableRooms.length === 0 ? (
                 <div className="wir-inline-loading">
-                  No rooms available on {selectedDate} within operating hours.
+                  <span className="small-spinner wir-inline-spinner"></span>
+                  Loading rooms...
+                </div>
+              ) : availableRooms.length === 0 ? (
+                <div className="wir-empty-state">
+                  <div className="wir-empty-icon">
+                    <i className="fa-regular fa-calendar-xmark"></i>
+                  </div>
+                  <h4 className="wir-empty-title">No Rooms Available</h4>
+                  <p className="wir-empty-text">
+                    There are no available rooms on{" "}
+                    <strong>{formatDateLong(selectedDate)}</strong> within operating
+                    hours (7:00 AM – 8:00 PM).
+                  </p>
+                  <div className="wir-empty-hint">
+                    <i className="fa-solid fa-lightbulb"></i>
+                    <span>Try selecting a different date.</span>
+                  </div>
                 </div>
               ) : filteredAvailableRooms.length === 0 ? (
-                <div className="wir-inline-loading">
-                  No rooms match the selected building/floor filter.
+                <div className="wir-empty-state">
+                  <div className="wir-empty-icon">
+                    <i className="fa-solid fa-filter-circle-xmark"></i>
+                  </div>
+                  <h4 className="wir-empty-title">No Matches Found</h4>
+                  <p className="wir-empty-text">
+                    No rooms match the selected{" "}
+                    <strong>
+                      {selectedBuilding !== "All Buildings"
+                        ? selectedBuilding
+                        : selectedFloor !== "All Floors"
+                        ? selectedFloor
+                        : "filter"}
+                    </strong>{" "}
+                    filter for {formatDateLong(selectedDate)}.
+                  </p>
+                  <button
+                    type="button"
+                    className="wir-empty-btn"
+                    onClick={() => {
+                      setSelectedBuilding("All Buildings");
+                      setSelectedFloor("All Floors");
+                    }}
+                  >
+                    <i className="fa-solid fa-rotate-left"></i> Clear Filters
+                  </button>
                 </div>
               ) : (
                 paginatedRooms.map((room) => (
@@ -1608,7 +1644,7 @@ export default function WalkInReservation() {
                 ))}
               </div>
 
-              {/* ✅ PAGINATION — live availability sidebar */}
+              {/* PAGINATION — live availability sidebar */}
               {totalLivePages > 1 && (
                 <div className="wir-live-pagination">
                   <button

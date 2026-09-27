@@ -38,6 +38,32 @@ const overlap = (aStart, aEnd, bStart, bEnd) => {
          convertToMinutes(aEnd) > convertToMinutes(bStart);
 };
 
+// ─── Today + Past-date helpers ──────────────────────────────────────
+const getTodayLocal = () => {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+};
+
+const isPastDate = (dateStr) => {
+  if (!dateStr) return false;
+  return dateStr < getTodayLocal();
+};
+
+const formatDateLong = (dateStr) => {
+  if (!dateStr) return "—";
+  const d = new Date(`${dateStr}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return dateStr;
+  return d.toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+};
+
 // ─── Find user by name ──────────────────────────────────────────────
 const findUserByName = async (name) => {
   if (!name) return null;
@@ -115,6 +141,10 @@ function ClerkEditApprovedReservation() {
   const courseTitle = reservation?.courseTitle || "";
   const facultyName = reservation?.facultyName || reservation?.requesterName || "";
 
+  // ✅ Check if the reservation's date is already in the past
+  const reservationIsPast = isPastDate(reservation?.date);
+  const editLocked = reservationIsPast || saving;
+
   // ─── Load initial data ─────────────────────────────────────────────
   useEffect(() => {
     if (!reservation) {
@@ -130,6 +160,7 @@ function ClerkEditApprovedReservation() {
     });
 
     loadAllRooms();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reservation]);
 
   // ─── Load all rooms ────────────────────────────────────────────────
@@ -277,9 +308,11 @@ function ClerkEditApprovedReservation() {
     if (allRooms.length > 0 && editableFields.date && editableFields.startTime && editableFields.endTime) {
       fetchAvailableRooms(allRooms, editableFields.date, editableFields.startTime, editableFields.endTime);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editableFields.date, editableFields.startTime, editableFields.endTime, allRooms]);
 
   const handleChange = (field) => (e) => {
+    if (reservationIsPast) return; // hard block
     const value = e.target.value;
     setEditableFields((prev) => ({ ...prev, [field]: value }));
     setConflictError("");
@@ -304,6 +337,17 @@ function ClerkEditApprovedReservation() {
   };
 
   const handleSave = async () => {
+    // ✅ Hard block: cannot edit past reservations
+    if (reservationIsPast) {
+      showToast(
+        "error",
+        "Edit Not Allowed",
+        "This reservation's date has already passed and can no longer be edited."
+      );
+      setShowSaveModal(false);
+      return;
+    }
+
     setSaving(true);
     showToast("loading", "Saving", "Updating reservation...");
 
@@ -453,7 +497,22 @@ function ClerkEditApprovedReservation() {
       <div className="clerk-white-box-edit-approved">
         <h2 className="clerk-edit-approved-title">Edit Approved Reservation</h2>
 
-        {conflictError && (
+        {/* ✅ Past-date lock banner */}
+        {reservationIsPast && (
+          <div className="clerk-edit-locked-banner">
+            <i className="fa-solid fa-lock"></i>
+            <div className="clerk-edit-locked-text">
+              <strong>Editing Locked</strong>
+              <span>
+                This reservation was scheduled on{" "}
+                <b>{formatDateLong(reservation.date)}</b> — its date has already
+                passed and can no longer be edited.
+              </span>
+            </div>
+          </div>
+        )}
+
+        {conflictError && !reservationIsPast && (
           <div className="clerk-edit-conflict-banner">
             <i className="fa-solid fa-triangle-exclamation"></i>
             <span>{conflictError}</span>
@@ -502,21 +561,27 @@ function ClerkEditApprovedReservation() {
                   className="clerk-edit-approved-form-input"
                   value={editableFields.roomName}
                   onChange={handleChange("roomName")}
-                  disabled={loadingRooms || loadingAvailable || saving}
+                  disabled={loadingRooms || loadingAvailable || editLocked}
                 >
-                  <option value="">{loadingAvailable ? "Checking availability..." : "Select a room"}</option>
+                  <option value="">
+                    {reservationIsPast
+                      ? "Editing disabled (past date)"
+                      : loadingAvailable
+                      ? "Checking availability..."
+                      : "Select a room"}
+                  </option>
                   {availableRooms.map((r) => (
                     <option key={r.id} value={r.roomName}>
                       {r.roomName} {r.roomStatus === "maintenance" ? "(Under Maintenance)" : ""}
                     </option>
                   ))}
                 </select>
-                {loadingAvailable && (
+                {loadingAvailable && !reservationIsPast && (
                   <small style={{ color: "#6b7280", marginTop: "4px" }}>
                     <i className="fa-solid fa-spinner fa-spin"></i> Checking availability...
                   </small>
                 )}
-                {availableRooms.length === 0 && !loadingAvailable && editableFields.date && editableFields.startTime && editableFields.endTime && (
+                {availableRooms.length === 0 && !loadingAvailable && !reservationIsPast && editableFields.date && editableFields.startTime && editableFields.endTime && (
                   <small style={{ color: "#dc2626", marginTop: "4px" }}>
                     No rooms available for the selected date, time, and purpose.
                   </small>
@@ -530,7 +595,7 @@ function ClerkEditApprovedReservation() {
                   className="clerk-edit-approved-form-input"
                   value={editableFields.date}
                   onChange={handleChange("date")}
-                  disabled={saving}
+                  disabled={editLocked}
                 />
               </div>
 
@@ -542,7 +607,7 @@ function ClerkEditApprovedReservation() {
                     className="clerk-edit-approved-form-input"
                     value={editableFields.startTime}
                     onChange={handleChange("startTime")}
-                    disabled={saving}
+                    disabled={editLocked}
                   />
                 </div>
                 <div className="clerk-edit-approved-form-group half">
@@ -552,7 +617,7 @@ function ClerkEditApprovedReservation() {
                     className="clerk-edit-approved-form-input"
                     value={editableFields.endTime}
                     onChange={handleChange("endTime")}
-                    disabled={saving}
+                    disabled={editLocked}
                   />
                 </div>
               </div>
@@ -609,6 +674,14 @@ function ClerkEditApprovedReservation() {
         <button
           className="clerk-edit-save-btn"
           onClick={() => {
+            if (reservationIsPast) {
+              showToast(
+                "error",
+                "Edit Not Allowed",
+                "This reservation's date has already passed and can no longer be edited."
+              );
+              return;
+            }
             if (!editableFields.roomName) {
               setConflictError("Please select a room.");
               showToast("error", "Error", "Please select a room.");
@@ -621,9 +694,10 @@ function ClerkEditApprovedReservation() {
             }
             setShowSaveModal(true);
           }}
-          disabled={saving || loadingAvailable}
+          disabled={saving || loadingAvailable || reservationIsPast}
+          title={reservationIsPast ? "Cannot edit — this reservation's date has passed" : undefined}
         >
-          {saving ? "Saving..." : "Save Changes"}
+          {saving ? "Saving..." : reservationIsPast ? "Editing Locked" : "Save Changes"}
         </button>
       </div>
 

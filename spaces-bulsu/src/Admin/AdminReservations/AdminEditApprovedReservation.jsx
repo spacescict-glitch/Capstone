@@ -46,6 +46,32 @@ const toDateStr = (date) => {
   return `${y}-${m}-${day}`;
 };
 
+// ─── Today + Past-date helpers ──────────────────────────────────────
+const getTodayLocal = () => {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+};
+
+const isPastDate = (dateStr) => {
+  if (!dateStr) return false;
+  return dateStr < getTodayLocal();
+};
+
+const formatDateLong = (dateStr) => {
+  if (!dateStr) return "—";
+  const d = new Date(`${dateStr}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return dateStr;
+  return d.toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+};
+
 // ─── Find user by name ──────────────────────────────────────────────
 const findUserByName = async (name) => {
   if (!name) return null;
@@ -178,6 +204,10 @@ function AdminEditApprovedReservation() {
   const courseTitle = reservation?.courseTitle || "";
   const facultyName = reservation?.facultyName || reservation?.requesterName || "";
 
+  // ✅ Check if the reservation's date is already in the past
+  const reservationIsPast = isPastDate(reservation?.date);
+  const editLocked = reservationIsPast || saving;
+
   // ─── Load initial data ─────────────────────────────────────────────
   useEffect(() => {
     if (!reservation) {
@@ -193,6 +223,7 @@ function AdminEditApprovedReservation() {
     });
 
     loadAllRooms();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reservation]);
 
   // ─── Load all rooms ────────────────────────────────────────────────
@@ -202,7 +233,6 @@ function AdminEditApprovedReservation() {
       const snap = await getDocs(collection(db, "rooms"));
       const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       setAllRooms(data);
-      // After loading all rooms, fetch available ones based on current fields
       fetchAvailableRooms(data, editableFields.date, editableFields.startTime, editableFields.endTime);
     } catch (err) {
       console.error(err);
@@ -222,7 +252,6 @@ function AdminEditApprovedReservation() {
     try {
       const dayAbbrev = getDayAbbrev(date);
 
-      // Fetch releases, reassignments for the date
       const [releaseSnap, reassignSnap, eventSnap, reservationSnap] = await Promise.all([
         getDocs(collection(db, "roomReleases")),
         getDocs(collection(db, "roomReassignments")),
@@ -243,9 +272,8 @@ function AdminEditApprovedReservation() {
       const events = eventSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
       const reservations = reservationSnap.docs
         .map((d) => ({ id: d.id, ...d.data() }))
-        .filter((r) => r.id !== reservation.id); // exclude self
+        .filter((r) => r.id !== reservation.id);
 
-      // Build release keys
       const releaseKeys = new Set(
         releases
           .filter((r) => r.date === date)
@@ -258,7 +286,6 @@ function AdminEditApprovedReservation() {
           .map((r) => `${r.scheduleId}_${r.date}`)
       );
 
-      // Group reassignments by new room
       const reassignIntoMap = {};
       reassignments
         .filter((r) => r.date === date && r.newRoomId)
@@ -267,14 +294,11 @@ function AdminEditApprovedReservation() {
           reassignIntoMap[r.newRoomId].push(r);
         });
 
-      // For each room, check availability
       const available = [];
 
       for (const room of roomsList) {
-        // Maintenance check
         if (isRoomUnderMaintenance(room, date, startTime, endTime)) continue;
 
-        // Fetch schedules for this room
         const scheduleSnap = await getDocs(
           collection(db, "rooms", room.id, "schedules")
         );
@@ -282,7 +306,6 @@ function AdminEditApprovedReservation() {
           .map((d) => ({ id: d.id, ...d.data() }))
           .filter((s) => !s.initialized && s.day === dayAbbrev);
 
-        // Check if any schedule overlaps (skip released & reassigned‑away)
         const hasScheduleConflict = schedules.some((sched) => {
           const key = `${sched.id}_${date}`;
           if (releaseKeys.has(key)) return false;
@@ -291,19 +314,16 @@ function AdminEditApprovedReservation() {
         });
         if (hasScheduleConflict) continue;
 
-        // Check events
         const hasEventConflict = events.some(
           (e) => e.roomId === room.id && overlap(startTime, endTime, e.startTime, e.endTime)
         );
         if (hasEventConflict) continue;
 
-        // Check other approved reservations
         const hasReservationConflict = reservations.some(
           (r) => r.roomId === room.id && overlap(startTime, endTime, r.startTime, r.endTime)
         );
         if (hasReservationConflict) continue;
 
-        // Check reassigned‑in (they also occupy)
         const reassignInto = reassignIntoMap[room.id] || [];
         const hasReassignConflict = reassignInto.some((r) =>
           overlap(startTime, endTime, r.startTime, r.endTime)
@@ -311,7 +331,6 @@ function AdminEditApprovedReservation() {
         if (hasReassignConflict) continue;
 
         // ─── Purpose‑based filters ──────────────────────────────────
-        // Equipment (for Hands‑on)
         if (purpose === "Hands-on" && requiredEquipment.length > 0) {
           const roomEquipment = Object.entries(room.equipment || {})
             .filter(([key, value]) => value === true)
@@ -323,7 +342,6 @@ function AdminEditApprovedReservation() {
           if (!hasAllEquipment) continue;
         }
 
-        // Capacity (for Lecture / Examination)
         if ((purpose === "Lecture" || purpose === "Examination") && studentRange) {
           const minCapacity = {
             "30-50": 30,
@@ -334,14 +352,11 @@ function AdminEditApprovedReservation() {
           if (Number(room.capacity || 0) < minCapacity) continue;
         }
 
-        // For Organization meetings, we might want capacity too? Not required.
-
         available.push(room);
       }
 
       setAvailableRooms(available);
 
-      // If the current selected room is not in available, clear selection
       if (editableFields.roomName && !available.some((r) => r.roomName === editableFields.roomName)) {
         setEditableFields((prev) => ({ ...prev, roomName: "" }));
         setConflictError("The previously selected room is no longer available for the chosen date/time.");
@@ -358,10 +373,12 @@ function AdminEditApprovedReservation() {
     if (allRooms.length > 0 && editableFields.date && editableFields.startTime && editableFields.endTime) {
       fetchAvailableRooms(allRooms, editableFields.date, editableFields.startTime, editableFields.endTime);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editableFields.date, editableFields.startTime, editableFields.endTime, allRooms]);
 
   // ─── Handle form changes ──────────────────────────────────────────
   const handleChange = (field) => (e) => {
+    if (reservationIsPast) return; // hard block
     const value = e.target.value;
     setEditableFields((prev) => ({ ...prev, [field]: value }));
     setConflictError("");
@@ -379,7 +396,6 @@ function AdminEditApprovedReservation() {
       return "This room is under maintenance during the selected time.";
     }
 
-    // Check if room is actually available (already filtered, but double-check)
     if (!availableRooms.some((r) => r.roomName === roomName)) {
       return "This room is not available for the selected date/time and purpose.";
     }
@@ -389,6 +405,17 @@ function AdminEditApprovedReservation() {
 
   // ─── Save ──────────────────────────────────────────────────────────
   const handleSave = async () => {
+    // ✅ Hard block: cannot edit past reservations
+    if (reservationIsPast) {
+      showToast(
+        "error",
+        "Edit Not Allowed",
+        "This reservation's date has already passed and can no longer be edited."
+      );
+      setShowSaveModal(false);
+      return;
+    }
+
     setSaving(true);
     showToast("loading", "Saving", "Updating reservation...");
 
@@ -412,7 +439,6 @@ function AdminEditApprovedReservation() {
         }
       }
 
-      // Update reservation
       await updateDoc(doc(db, "reservationRequests", reservation.id), {
         roomName: editableFields.roomName,
         date: editableFields.date,
@@ -421,7 +447,6 @@ function AdminEditApprovedReservation() {
         updatedAt: serverTimestamp(),
       });
 
-      // Find room ID
       const room = allRooms.find((r) => r.roomName === editableFields.roomName);
       if (room) {
         await updateDoc(doc(db, "reservationRequests", reservation.id), {
@@ -531,13 +556,27 @@ function AdminEditApprovedReservation() {
   }
 
   // ─── Render ──────────────────────────────────────────────────────────
-
   return (
     <div className="dph-edit-approved-room">
       <div className="white-box-edit-approved">
         <h2 className="dph-edit-approved-title">Edit Approved Reservation</h2>
 
-        {conflictError && (
+        {/* ✅ Past-date lock banner */}
+        {reservationIsPast && (
+          <div className="dh-edit-locked-banner">
+            <i className="fa-solid fa-lock"></i>
+            <div className="dh-edit-locked-text">
+              <strong>Editing Locked</strong>
+              <span>
+                This reservation was scheduled on{" "}
+                <b>{formatDateLong(reservation.date)}</b> — its date has already
+                passed and can no longer be edited.
+              </span>
+            </div>
+          </div>
+        )}
+
+        {conflictError && !reservationIsPast && (
           <div className="dh-edit-conflict-banner">
             <i className="fa-solid fa-triangle-exclamation"></i>
             <span>{conflictError}</span>
@@ -585,22 +624,23 @@ function AdminEditApprovedReservation() {
               <div className="dh-edit-approved-form-group">
                 <label>Room</label>
                 <RoomDropdown
-                  placeholder="Select a room"
+                  placeholder={reservationIsPast ? "Editing disabled (past date)" : "Select a room"}
                   rooms={availableRooms}
                   value={editableFields.roomName}
                   onChange={(roomName) => {
+                    if (reservationIsPast) return;
                     setEditableFields((prev) => ({ ...prev, roomName }));
                     setConflictError("");
                   }}
-                  disabled={loadingRooms || loadingAvailable || saving}
-                  loading={loadingAvailable}
+                  disabled={loadingRooms || loadingAvailable || editLocked}
+                  loading={loadingAvailable && !reservationIsPast}
                 />
-                {loadingAvailable && (
+                {loadingAvailable && !reservationIsPast && (
                   <small style={{ color: "#6b7280", marginTop: "4px" }}>
                     <i className="fa-solid fa-spinner fa-spin"></i> Checking availability...
                   </small>
                 )}
-                {availableRooms.length === 0 && !loadingAvailable && editableFields.date && editableFields.startTime && editableFields.endTime && (
+                {availableRooms.length === 0 && !loadingAvailable && !reservationIsPast && editableFields.date && editableFields.startTime && editableFields.endTime && (
                   <small style={{ color: "#dc2626", marginTop: "4px" }}>
                     No rooms available for the selected date, time, and purpose.
                   </small>
@@ -614,7 +654,7 @@ function AdminEditApprovedReservation() {
                   className="dh-edit-approved-form-input"
                   value={editableFields.date}
                   onChange={handleChange("date")}
-                  disabled={saving}
+                  disabled={editLocked}
                 />
               </div>
 
@@ -626,7 +666,7 @@ function AdminEditApprovedReservation() {
                     className="dh-edit-approved-form-input"
                     value={editableFields.startTime}
                     onChange={handleChange("startTime")}
-                    disabled={saving}
+                    disabled={editLocked}
                   />
                 </div>
                 <div className="dh-edit-approved-form-group half">
@@ -636,7 +676,7 @@ function AdminEditApprovedReservation() {
                     className="dh-edit-approved-form-input"
                     value={editableFields.endTime}
                     onChange={handleChange("endTime")}
-                    disabled={saving}
+                    disabled={editLocked}
                   />
                 </div>
               </div>
@@ -690,13 +730,19 @@ function AdminEditApprovedReservation() {
         <button
           className="dh-edit-save-btn"
           onClick={() => {
-            // Check if room is selected and available
+            if (reservationIsPast) {
+              showToast(
+                "error",
+                "Edit Not Allowed",
+                "This reservation's date has already passed and can no longer be edited."
+              );
+              return;
+            }
             if (!editableFields.roomName) {
               setConflictError("Please select a room.");
               showToast("error", "Error", "Please select a room.");
               return;
             }
-            // Check if the selected room is in available list
             if (!availableRooms.some((r) => r.roomName === editableFields.roomName)) {
               setConflictError("The selected room is not available for the chosen date/time and purpose.");
               showToast("error", "Error", "Selected room is not available.");
@@ -704,9 +750,10 @@ function AdminEditApprovedReservation() {
             }
             setShowSaveModal(true);
           }}
-          disabled={saving || loadingAvailable}
+          disabled={saving || loadingAvailable || reservationIsPast}
+          title={reservationIsPast ? "Cannot edit — this reservation's date has passed" : undefined}
         >
-          {saving ? "Saving..." : "Save Changes"}
+          {saving ? "Saving..." : reservationIsPast ? "Editing Locked" : "Save Changes"}
         </button>
       </div>
 
