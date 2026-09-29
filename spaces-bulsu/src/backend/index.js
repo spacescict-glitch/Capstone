@@ -15,21 +15,26 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "4mb" }));
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+// ─── Endpoint-specific Gemini keys ─────────────────────────────
+const GEMINI_KEYS = {
+  bulk: process.env.GEMINI_API_KEY_BULK,
+  import: process.env.GEMINI_API_KEY_IMPORT,
+};
+
+// ─── Groq fallback (optional) ──────────────────────────────────
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
 console.log("🚀 Boot:", {
-  hasGemini: !!GEMINI_API_KEY,
+  hasBulkKey: !!GEMINI_KEYS.bulk,
+  hasImportKey: !!GEMINI_KEYS.import,
+  hasGroq: !!GROQ_API_KEY,
   hasFirebase: !!process.env.FIREBASE_SERVICE_ACCOUNT,
   onVercel: !!process.env.VERCEL,
   nodeEnv: process.env.NODE_ENV,
   nodeVersion: process.version,
 });
 
-if (!GEMINI_API_KEY) {
-  console.error("❌ GEMINI_API_KEY is not set");
-}
-
-// ✅ KEEP MANY MODELS — budget-based timeout will protect wall-clock time
+// ─── Model lists ───────────────────────────────────────────────
 const GEMINI_MODELS = [
   "gemini-flash-latest",
   "gemini-3.6-flash",
@@ -38,128 +43,248 @@ const GEMINI_MODELS = [
   "gemini-flash-lite-latest",
 ];
 
-// Total wall-clock budget for the whole fallback chain.
-// Vercel Hobby cap = 10s. Leave 1s headroom for cold start + body parse + response.
+const GROQ_MODELS = [
+  "llama-3.3-70b-versatile",   // best quality
+  "llama-3.1-8b-instant",      // fastest
+];
+
+// Total wall-clock budget for entire chain (Gemini + Groq)
 const TOTAL_BUDGET_MS = 9000;
 const PER_MODEL_MAX_MS = 4500;
 
-const buildGeminiUrl = (model) =>
-  GEMINI_API_KEY
-    ? `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`
-    : null;
+// =============================================================
+//  GEMINI CALL
+// =============================================================
+async function tryGemini({ model, apiKey, prompt, timeoutMs }) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
-// ---------- GEMINI WITH BUDGET-BASED FALLBACK ----------
-async function generateWithRetry(prompt) {
-  if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not configured on server.");
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.1,
+          responseMimeType: "application/json",
+        },
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      const err = new Error(data?.error?.message || "Gemini error");
+      err.status = response.status;
+      err.provider = "gemini";
+      err.model = model;
+      throw err;
+    }
+
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) throw new Error("Empty response from Gemini");
+    return text;
+  } catch (e) {
+    clearTimeout(timeoutId);
+    throw e;
+  }
+}
+
+// =============================================================
+//  GROQ CALL (fallback)
+// =============================================================
+async function tryGroq({ model, prompt, timeoutMs }) {
+  if (!GROQ_API_KEY) {
+    const err = new Error("No Groq API key");
+    err.skipped = true;
+    throw err;
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${GROQ_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.1,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a university schedule extraction engine. Always return valid JSON only, no markdown.",
+          },
+          { role: "user", content: prompt },
+        ],
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      const err = new Error(data?.error?.message || "Groq error");
+      err.status = response.status;
+      err.provider = "groq";
+      err.model = model;
+      throw err;
+    }
+
+    const text = data?.choices?.[0]?.message?.content;
+    if (!text) throw new Error("Empty response from Groq");
+
+    // Groq might return {"schedules": [...]} or direct array — normalize
+    return text;
+  } catch (e) {
+    clearTimeout(timeoutId);
+    throw e;
+  }
+}
+
+// =============================================================
+//  MAIN — Budget-based fallback chain
+//  keyType: "bulk" or "import"
+// =============================================================
+async function generateWithRetry(prompt, keyType = "bulk") {
+  const apiKey = GEMINI_KEYS[keyType];
+  if (!apiKey) throw new Error(`GEMINI_API_KEY_${keyType.toUpperCase()} is not set`);
 
   const startTime = Date.now();
   let lastError;
   const tried = [];
 
+  // ── STAGE 1: Gemini with endpoint-specific key ──
   for (const model of GEMINI_MODELS) {
     const elapsed = Date.now() - startTime;
     const remaining = TOTAL_BUDGET_MS - elapsed;
-
-    if (remaining < 800) {
-      console.warn(
-        `⏱️ Budget exhausted after ${elapsed}ms — stopping (tried: ${tried.join(", ")})`
-      );
-      break;
-    }
+    if (remaining < 1500) break; // leave budget for Groq fallback
 
     const timeoutMs = Math.min(remaining, PER_MODEL_MAX_MS);
-    tried.push(`${model}(${timeoutMs}ms)`);
+    tried.push(`gemini:${model}`);
 
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-      const response = await fetch(buildGeminiUrl(model), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: 0.1,
-            responseMimeType: "application/json",
-          },
-        }),
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        const err = new Error(data?.error?.message || "Unknown Gemini error");
-        err.status = response.status;
-        err.model = model;
-        throw err;
-      }
-
-      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!text) throw new Error("Empty response from Gemini");
-
+      const text = await tryGemini({ model, apiKey, prompt, timeoutMs });
       const totalMs = Date.now() - startTime;
-      console.log(`✅ Success via ${model} in ${totalMs}ms`);
+      console.log(`✅ Gemini success: ${model} in ${totalMs}ms`);
       return text;
     } catch (error) {
       lastError = error;
-      const totalMs = Date.now() - startTime;
 
-      // Timeout — try next model immediately
       if (error.name === "AbortError") {
-        console.warn(
-          `⏱️ ${model} timed out after ${timeoutMs}ms (total ${totalMs}ms) — trying next`
-        );
+        console.warn(`⏱️ Gemini ${model} timeout (${timeoutMs}ms)`);
         continue;
       }
       if (error.status === 401 || error.status === 403) {
-        throw new Error("Invalid Gemini API key.");
+        console.error(`🔑 Gemini ${model} auth error — skipping provider`);
+        break; // whole Gemini provider is bad → go to Groq
       }
       if (error.status === 429) {
-        console.warn(`🚫 ${model} rate limited (429) — trying next`);
+        console.warn(`🚫 Gemini ${model} rate limited — next model`);
         continue;
       }
       if (error.status === 503) {
-        console.warn(`🔄 ${model} overloaded (503) — trying next`);
+        console.warn(`🔄 Gemini ${model} overloaded — next model`);
         continue;
       }
-
-      // Other error (404 model not found, etc.) — try next
-      console.warn(`⚠️ ${model} failed: ${error.message} — trying next`);
+      console.warn(`⚠️ Gemini ${model} failed: ${error.message}`);
       continue;
     }
   }
 
-  // All attempts exhausted — detect error type for clearer message
+  // ── STAGE 2: Groq fallback ──
+  if (GROQ_API_KEY) {
+    console.log("🔄 Gemini failed — switching to Groq fallback");
+    for (const model of GROQ_MODELS) {
+      const elapsed = Date.now() - startTime;
+      const remaining = TOTAL_BUDGET_MS - elapsed;
+      if (remaining < 800) break;
+
+      const timeoutMs = Math.min(remaining, PER_MODEL_MAX_MS);
+      tried.push(`groq:${model}`);
+
+      try {
+        const text = await tryGroq({ model, prompt, timeoutMs });
+        const totalMs = Date.now() - startTime;
+        console.log(`✅ Groq success: ${model} in ${totalMs}ms`);
+        return text;
+      } catch (error) {
+        lastError = error;
+        if (error.name === "AbortError") {
+          console.warn(`⏱️ Groq ${model} timeout`);
+          continue;
+        }
+        if (error.status === 401 || error.status === 403) {
+          console.error(`🔑 Groq auth error — aborting`);
+          break;
+        }
+        if (error.status === 429) {
+          console.warn(`🚫 Groq rate limited`);
+          continue;
+        }
+        console.warn(`⚠️ Groq ${model} failed: ${error.message}`);
+        continue;
+      }
+    }
+  }
+
+  // ── All exhausted ──
+  console.error(`❌ All AI providers failed. Tried: ${tried.join(", ")}`);
+
   if (lastError?.status === 429) {
-    throw new Error(
-      "Too many requests to AI right now. Please wait 1 minute and try again."
-    );
+    throw new Error("AI is rate-limited. Please wait 1 minute and try again.");
   }
   if (lastError?.status === 503) {
-    throw new Error(
-      "AI service is temporarily overloaded. Please try again in a few seconds."
-    );
+    throw new Error("AI is temporarily overloaded. Try again in a few seconds.");
   }
   if (lastError?.name === "AbortError") {
-    throw new Error(
-      "AI is taking too long. Please try again, or upload a smaller file."
-    );
+    throw new Error("AI is taking too long. Try a smaller file.");
   }
-  throw lastError || new Error("All AI models failed. Please try again.");
+  throw lastError || new Error("All AI providers failed. Try again.");
 }
 
 // ---------- SAFE JSON PARSER ----------
 function extractJSON(text) {
-  const cleaned = text.replace(/```json/gi, "").replace(/```/g, "").trim();
-  const start = cleaned.indexOf("[");
-  const end = cleaned.lastIndexOf("]");
-  if (start === -1 || end === -1) {
-    throw new Error("No JSON array found: " + cleaned.slice(0, 300));
+  let cleaned = text.replace(/```json/gi, "").replace(/```/g, "").trim();
+
+  // Try direct array first
+  let start = cleaned.indexOf("[");
+  let end = cleaned.lastIndexOf("]");
+  if (start !== -1 && end !== -1) {
+    try {
+      const arr = JSON.parse(cleaned.slice(start, end + 1));
+      if (Array.isArray(arr)) return arr;
+    } catch (e) {
+      // fall through
+    }
   }
-  return JSON.parse(cleaned.slice(start, end + 1));
+
+  // Try object with a schedules array field (Groq sometimes returns this)
+  const objStart = cleaned.indexOf("{");
+  const objEnd = cleaned.lastIndexOf("}");
+  if (objStart !== -1 && objEnd !== -1) {
+    try {
+      const obj = JSON.parse(cleaned.slice(objStart, objEnd + 1));
+      if (Array.isArray(obj.schedules)) return obj.schedules;
+      if (Array.isArray(obj.data)) return obj.data;
+      if (Array.isArray(obj.result)) return obj.result;
+    } catch (e) {
+      // fall through
+    }
+  }
+
+  throw new Error("No JSON array found: " + cleaned.slice(0, 300));
 }
 
 // =============================================================
@@ -196,10 +321,7 @@ async function getGoogleAccessToken() {
   const signer = crypto.createSign("RSA-SHA256");
   signer.update(unsigned);
   const signature = signer.sign(sa.private_key, "base64");
-  const sig64url = signature
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
+  const sig64url = signature.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
   const jwt = `${unsigned}.${sig64url}`;
 
@@ -246,9 +368,7 @@ async function updateUserPassword(email, newPassword) {
   if (!lookupRes.ok) {
     const msg = lookupData?.error?.message || "User lookup failed";
     const err = new Error(msg);
-    if (/USER_NOT_FOUND|not found/i.test(msg)) {
-      err.code = "auth/user-not-found";
-    }
+    if (/USER_NOT_FOUND|not found/i.test(msg)) err.code = "auth/user-not-found";
     throw err;
   }
 
@@ -267,10 +387,7 @@ async function updateUserPassword(email, newPassword) {
         "Content-Type": "application/json",
         Authorization: `Bearer ${accessToken}`,
       },
-      body: JSON.stringify({
-        localId: user.localId,
-        password: newPassword,
-      }),
+      body: JSON.stringify({ localId: user.localId, password: newPassword }),
     }
   );
 
@@ -288,20 +405,20 @@ async function updateUserPassword(email, newPassword) {
 
 app.get("/api/test-key", async (req, res) => {
   try {
-    const text = await generateWithRetry("Say the word OK and nothing else.");
+    const text = await generateWithRetry("Say the word OK and nothing else.", "bulk");
     res.json({ success: true, response: text });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// ---------- ENDPOINT 1: With rooms ----------
+// ---------- ENDPOINT 1: With rooms (BULK key) ----------
 app.post("/api/extract-schedule", async (req, res) => {
   try {
-    if (!GEMINI_API_KEY) {
+    if (!GEMINI_KEYS.bulk) {
       return res.status(500).json({
         success: false,
-        message: "Server config error: GEMINI_API_KEY missing.",
+        message: "Server config error: GEMINI_API_KEY_BULK missing.",
       });
     }
 
@@ -341,7 +458,7 @@ Schedule Text:
 ${rawText}
 `;
 
-    const text = await generateWithRetry(prompt);
+    const text = await generateWithRetry(prompt, "bulk");
     let schedules = extractJSON(text);
 
     if (!Array.isArray(schedules)) throw new Error("Response is not an array");
@@ -358,10 +475,10 @@ ${rawText}
       }))
       .filter((s) => s.subject || s.day);
 
-    console.log(`✅ Extracted ${schedules.length} schedule(s)`);
+    console.log(`✅ Extracted ${schedules.length} schedule(s) [BULK]`);
     res.json({ success: true, schedules });
   } catch (error) {
-    console.error("❌ Extraction error:", error.message);
+    console.error("❌ Extraction error [BULK]:", error.message);
     res.status(error.status || 500).json({
       success: false,
       message: error.message || "Failed to extract schedule.",
@@ -369,13 +486,13 @@ ${rawText}
   }
 });
 
-// ---------- ENDPOINT 2: Online classes ----------
+// ---------- ENDPOINT 2: Online classes (IMPORT key) ----------
 app.post("/api/extract-online-schedule", async (req, res) => {
   try {
-    if (!GEMINI_API_KEY) {
+    if (!GEMINI_KEYS.import) {
       return res.status(500).json({
         success: false,
-        message: "Server config error: GEMINI_API_KEY missing.",
+        message: "Server config error: GEMINI_API_KEY_IMPORT missing.",
       });
     }
 
@@ -417,7 +534,7 @@ Schedule Text:
 ${rawText}
 `;
 
-    const text = await generateWithRetry(prompt);
+    const text = await generateWithRetry(prompt, "import");
     let schedules = extractJSON(text);
 
     if (!Array.isArray(schedules)) throw new Error("Response is not an array");
@@ -433,14 +550,10 @@ ${rawText}
       }))
       .filter((s) => s.subject || s.day);
 
-    console.log(
-      `✅ Extracted ${schedules.length} online schedule(s) for: ${
-        faculty || "Unknown"
-      }`
-    );
+    console.log(`✅ Extracted ${schedules.length} online schedule(s) [IMPORT] for: ${faculty || "Unknown"}`);
     res.json({ success: true, schedules });
   } catch (error) {
-    console.error("❌ Extraction error:", error.message);
+    console.error("❌ Extraction error [IMPORT]:", error.message);
     res.status(error.status || 500).json({
       success: false,
       message: error.message || "Failed to extract online schedule.",
@@ -459,14 +572,12 @@ app.post("/api/reset-password", async (req, res) => {
         message: "Email and new password are required.",
       });
     }
-
     if (newPassword.length < 8) {
       return res.status(400).json({
         success: false,
         message: "Password must be at least 8 characters.",
       });
     }
-
     if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
       return res.status(500).json({
         success: false,
@@ -480,10 +591,7 @@ app.post("/api/reset-password", async (req, res) => {
   } catch (error) {
     console.error("❌ Reset password error:", error.message);
     let message = "Failed to reset password.";
-    if (
-      error.code === "auth/user-not-found" ||
-      /USER_NOT_FOUND|not found/i.test(error.message)
-    ) {
+    if (error.code === "auth/user-not-found" || /USER_NOT_FOUND|not found/i.test(error.message)) {
       message = "No account found with that email.";
     } else if (/INVALID_PASSWORD|WEAK_PASSWORD/i.test(error.message)) {
       message = "Password is too weak. Use a stronger one.";
