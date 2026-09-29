@@ -34,7 +34,7 @@ console.log("🚀 Boot:", {
   nodeVersion: process.version,
 });
 
-// ─── Model lists ───────────────────────────────────────────────
+// ─── Models ────────────────────────────────────────────────────
 const GEMINI_MODELS = [
   "gemini-flash-latest",
   "gemini-3.6-flash",
@@ -44,13 +44,17 @@ const GEMINI_MODELS = [
 ];
 
 const GROQ_MODELS = [
-  "llama-3.3-70b-versatile",   // best quality
-  "llama-3.1-8b-instant",      // fastest
+  "llama-3.3-70b-versatile",
+  "llama-3.1-8b-instant",
 ];
 
-// Total wall-clock budget for entire chain (Gemini + Groq)
-const TOTAL_BUDGET_MS = 9000;
-const PER_MODEL_MAX_MS = 4500;
+// ✅ NEW: Separate sub-budgets for Gemini and Groq
+const GEMINI_BUDGET_MS = 20000;   // 20s for all Gemini attempts
+const GROQ_BUDGET_MS   = 25000;   // 25s for Groq fallback
+const TOTAL_BUDGET_MS  = 50000;   // 50s grand total (Vercel Hobby allows up to 60s)
+
+// Per-model max timeout
+const PER_MODEL_MAX_MS = 5000;
 
 // =============================================================
 //  GEMINI CALL
@@ -96,7 +100,7 @@ async function tryGemini({ model, apiKey, prompt, timeoutMs }) {
 }
 
 // =============================================================
-//  GROQ CALL (fallback)
+//  GROQ CALL
 // =============================================================
 async function tryGroq({ model, prompt, timeoutMs }) {
   if (!GROQ_API_KEY) {
@@ -144,8 +148,6 @@ async function tryGroq({ model, prompt, timeoutMs }) {
 
     const text = data?.choices?.[0]?.message?.content;
     if (!text) throw new Error("Empty response from Groq");
-
-    // Groq might return {"schedules": [...]} or direct array — normalize
     return text;
   } catch (e) {
     clearTimeout(timeoutId);
@@ -155,7 +157,8 @@ async function tryGroq({ model, prompt, timeoutMs }) {
 
 // =============================================================
 //  MAIN — Budget-based fallback chain
-//  keyType: "bulk" or "import"
+//  Stage 1: Gemini (20s budget)
+//  Stage 2: Groq   (25s budget)
 // =============================================================
 async function generateWithRetry(prompt, keyType = "bulk") {
   const apiKey = GEMINI_KEYS[keyType];
@@ -165,13 +168,23 @@ async function generateWithRetry(prompt, keyType = "bulk") {
   let lastError;
   const tried = [];
 
-  // ── STAGE 1: Gemini with endpoint-specific key ──
-  for (const model of GEMINI_MODELS) {
-    const elapsed = Date.now() - startTime;
-    const remaining = TOTAL_BUDGET_MS - elapsed;
-    if (remaining < 1500) break; // leave budget for Groq fallback
+  // ─────────────────────────────────────────────────────────────
+  //  STAGE 1: Gemini — bounded to GEMINI_BUDGET_MS
+  // ─────────────────────────────────────────────────────────────
+  const geminiStart = Date.now();
+  console.log(`🔷 Stage 1: Gemini (budget ${GEMINI_BUDGET_MS}ms)`);
 
-    const timeoutMs = Math.min(remaining, PER_MODEL_MAX_MS);
+  for (const model of GEMINI_MODELS) {
+    const geminiElapsed = Date.now() - geminiStart;
+    const geminiRemaining = GEMINI_BUDGET_MS - geminiElapsed;
+
+    // Stop Gemini if we've used our sub-budget
+    if (geminiRemaining < 1500) {
+      console.warn(`⏱️ Gemini sub-budget exhausted (${geminiElapsed}ms used)`);
+      break;
+    }
+
+    const timeoutMs = Math.min(geminiRemaining, PER_MODEL_MAX_MS);
     tried.push(`gemini:${model}`);
 
     try {
@@ -188,7 +201,7 @@ async function generateWithRetry(prompt, keyType = "bulk") {
       }
       if (error.status === 401 || error.status === 403) {
         console.error(`🔑 Gemini ${model} auth error — skipping provider`);
-        break; // whole Gemini provider is bad → go to Groq
+        break;
       }
       if (error.status === 429) {
         console.warn(`🚫 Gemini ${model} rate limited — next model`);
@@ -203,15 +216,27 @@ async function generateWithRetry(prompt, keyType = "bulk") {
     }
   }
 
-  // ── STAGE 2: Groq fallback ──
-  if (GROQ_API_KEY) {
-    console.log("🔄 Gemini failed — switching to Groq fallback");
-    for (const model of GROQ_MODELS) {
-      const elapsed = Date.now() - startTime;
-      const remaining = TOTAL_BUDGET_MS - elapsed;
-      if (remaining < 800) break;
+  console.log(`🔶 Gemini exhausted after ${Date.now() - geminiStart}ms`);
 
-      const timeoutMs = Math.min(remaining, PER_MODEL_MAX_MS);
+  // ─────────────────────────────────────────────────────────────
+  //  STAGE 2: Groq — bounded to GROQ_BUDGET_MS
+  // ─────────────────────────────────────────────────────────────
+  if (!GROQ_API_KEY) {
+    console.warn("⚠️ No Groq API key — cannot fallback");
+  } else {
+    console.log(`🔷 Stage 2: Groq (budget ${GROQ_BUDGET_MS}ms)`);
+    const groqStart = Date.now();
+
+    for (const model of GROQ_MODELS) {
+      const groqElapsed = Date.now() - groqStart;
+      const groqRemaining = GROQ_BUDGET_MS - groqElapsed;
+
+      if (groqRemaining < 1500) {
+        console.warn(`⏱️ Groq sub-budget exhausted (${groqElapsed}ms used)`);
+        break;
+      }
+
+      const timeoutMs = Math.min(groqRemaining, PER_MODEL_MAX_MS);
       tried.push(`groq:${model}`);
 
       try {
@@ -221,26 +246,32 @@ async function generateWithRetry(prompt, keyType = "bulk") {
         return text;
       } catch (error) {
         lastError = error;
+
         if (error.name === "AbortError") {
-          console.warn(`⏱️ Groq ${model} timeout`);
+          console.warn(`⏱️ Groq ${model} timeout (${timeoutMs}ms)`);
           continue;
         }
         if (error.status === 401 || error.status === 403) {
-          console.error(`🔑 Groq auth error — aborting`);
+          console.error(`🔑 Groq ${model} auth error — aborting`);
           break;
         }
         if (error.status === 429) {
-          console.warn(`🚫 Groq rate limited`);
+          console.warn(`🚫 Groq ${model} rate limited`);
           continue;
         }
         console.warn(`⚠️ Groq ${model} failed: ${error.message}`);
         continue;
       }
     }
+
+    console.log(`🔶 Groq exhausted after ${Date.now() - groqStart}ms`);
   }
 
-  // ── All exhausted ──
-  console.error(`❌ All AI providers failed. Tried: ${tried.join(", ")}`);
+  // ─────────────────────────────────────────────────────────────
+  //  ALL EXHAUSTED
+  // ─────────────────────────────────────────────────────────────
+  const totalMs = Date.now() - startTime;
+  console.error(`❌ All AI providers failed after ${totalMs}ms. Tried: ${tried.join(", ")}`);
 
   if (lastError?.status === 429) {
     throw new Error("AI is rate-limited. Please wait 1 minute and try again.");
@@ -249,7 +280,7 @@ async function generateWithRetry(prompt, keyType = "bulk") {
     throw new Error("AI is temporarily overloaded. Try again in a few seconds.");
   }
   if (lastError?.name === "AbortError") {
-    throw new Error("AI is taking too long. Try a smaller file.");
+    throw new Error("AI took too long. Please try a smaller file.");
   }
   throw lastError || new Error("All AI providers failed. Try again.");
 }
