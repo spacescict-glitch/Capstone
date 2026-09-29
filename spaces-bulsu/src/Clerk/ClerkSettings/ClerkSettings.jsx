@@ -8,7 +8,7 @@ import {
   onAuthStateChanged,
   EmailAuthProvider,
   reauthenticateWithCredential,
-  updateEmail,
+  verifyBeforeUpdateEmail,
   updatePassword,
 } from "firebase/auth";
 import Toast from "../../Popup/Toast/Toast";
@@ -266,7 +266,6 @@ export default function ClerkSettings() {
       return;
     }
 
-    // User wants to turn it OFF
     persistPushEnabled(false);
     setPushEnabledState(false);
     showToast(
@@ -276,7 +275,6 @@ export default function ClerkSettings() {
     );
   };
 
-  // Helper for the sub-text under the toggle
   const pushSubText = (() => {
     if (browserPermission === "unsupported") return "Not supported on this browser";
     if (browserPermission === "denied") return "Blocked by browser — check site settings";
@@ -428,6 +426,7 @@ export default function ClerkSettings() {
     }
   };
 
+  // ✅ FIXED: verifyBeforeUpdateEmail instead of updateEmail
   const handleEmailVerifyAndUpdate = async () => {
     const entered = emailCode.join("");
     if (entered.length !== CODE_LENGTH)
@@ -437,13 +436,19 @@ export default function ClerkSettings() {
     setBusy(true);
     try {
       await verifyCode({ email: newEmail, purpose: "email-change", entered });
-
       await reauthenticate(currentPassword);
-      await updateEmail(user, newEmail);
-      await updateDoc(doc(db, "users", user.uid), { email: newEmail });
 
+      // Sends verification link to new email (works with Email Enumeration Protection)
+      await verifyBeforeUpdateEmail(user, newEmail);
+
+      await updateDoc(doc(db, "users", user.uid), { email: newEmail });
       setEmail(newEmail);
-      showToast("success", "Email Updated", "Your email address has been changed successfully.");
+
+      showToast(
+        "success",
+        "Verification Email Sent",
+        `A verification link was sent to ${newEmail}. Click the link in your inbox to complete the change.`
+      );
       closeModals();
     } catch (err) {
       console.error(err);
@@ -454,6 +459,8 @@ export default function ClerkSettings() {
         msg = "That email is already in use by another account.";
       if (err.code === "auth/requires-recent-login")
         msg = "Please log out and log back in, then try again.";
+      if (err.code === "auth/operation-not-allowed")
+        msg = "Email change is currently disabled. Please contact the system administrator.";
       showToast("error", "Update Failed", msg);
     } finally {
       setBusy(false);
@@ -711,7 +718,6 @@ export default function ClerkSettings() {
             </div>
 
             <div className="fs-card fs-card-flush">
-              {/* ✅ WORKING PUSH NOTIFICATIONS TOGGLE */}
               <div className="fs-list-row">
                 <i className="fa-solid fa-bell fs-row-icon accent"></i>
                 <div className="fs-row-text">
@@ -839,7 +845,7 @@ export default function ClerkSettings() {
                 <div className="fs-modal-actions" style={{ marginTop: 20 }}>
                   <button type="button" className="fs-modal-btn cancel" onClick={() => { setEmailStep("form"); setEmailCode(Array(CODE_LENGTH).fill("")); }} disabled={busy}>Back</button>
                   <button type="button" className="fs-modal-btn confirm" onClick={handleEmailVerifyAndUpdate} disabled={busy}>
-                    {busy ? <><i className="fa-solid fa-circle-notch fa-spin"></i> Updating…</> : "Verify & Update"}
+                    {busy ? <><i className="fa-solid fa-circle-notch fa-spin"></i> Sending…</> : "Verify & Send Link"}
                   </button>
                 </div>
 

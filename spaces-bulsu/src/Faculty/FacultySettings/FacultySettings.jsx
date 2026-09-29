@@ -8,7 +8,7 @@ import {
   onAuthStateChanged,
   EmailAuthProvider,
   reauthenticateWithCredential,
-  updateEmail,
+  verifyBeforeUpdateEmail,
   updatePassword,
 } from "firebase/auth";
 import Toast from "../../Popup/Toast/Toast";
@@ -192,7 +192,6 @@ export default function FacultySettings() {
     return () => unsub();
   }, []);
 
-  // ── Sync browser permission state on mount + when user returns to tab ──
   useEffect(() => {
     const sync = () => setBrowserPermission(getBrowserPermission());
     sync();
@@ -304,7 +303,6 @@ export default function FacultySettings() {
     );
   };
 
-  // Helper for the sub-text under the toggle
   const pushSubText = (() => {
     if (browserPermission === "unsupported") return "Not supported on this browser";
     if (browserPermission === "denied") return "Blocked by browser — check site settings";
@@ -389,7 +387,6 @@ export default function FacultySettings() {
       await reauthenticate(currentPassword);
       await updatePassword(user, newPassword);
 
-      // ✅ Log the password change
       await logSettingsActivity(
         "Changed password",
         "Account Security",
@@ -463,6 +460,7 @@ export default function FacultySettings() {
     }
   };
 
+  // ✅ FIXED: verifyBeforeUpdateEmail instead of updateEmail
   const handleEmailVerifyAndUpdate = async () => {
     const entered = emailCode.join("");
     if (entered.length !== CODE_LENGTH)
@@ -475,10 +473,12 @@ export default function FacultySettings() {
       await verifyCode({ email: newEmail, purpose: "email-change", entered });
 
       await reauthenticate(currentPassword);
-      await updateEmail(user, newEmail);
+
+      // Sends verification link to new email (works with Email Enumeration Protection)
+      await verifyBeforeUpdateEmail(user, newEmail);
+
       await updateDoc(doc(db, "users", user.uid), { email: newEmail });
 
-      // ✅ Log the email change
       await logSettingsActivity(
         "Changed email address",
         "Account Settings",
@@ -486,7 +486,11 @@ export default function FacultySettings() {
       );
 
       setEmail(newEmail);
-      showToast("success", "Email Updated", "Your email address has been changed successfully.");
+      showToast(
+        "success",
+        "Verification Email Sent",
+        `A verification link was sent to ${newEmail}. Click the link in your inbox to complete the change.`
+      );
       closeModals();
     } catch (err) {
       console.error(err);
@@ -497,6 +501,8 @@ export default function FacultySettings() {
         msg = "That email is already in use by another account.";
       if (err.code === "auth/requires-recent-login")
         msg = "Please log out and log back in, then try again.";
+      if (err.code === "auth/operation-not-allowed")
+        msg = "Email change is currently disabled. Please contact the system administrator.";
       showToast("error", "Update Failed", msg);
     } finally {
       setBusy(false);
@@ -601,7 +607,6 @@ export default function FacultySettings() {
   return (
     <>
       <div className="fs-page">
-        {/* HEADER */}
         <div className="fs-page-header">
           <h1><span className="fs-bar" /> Settings</h1>
           <p>Manage your account security and notification settings.</p>
@@ -805,7 +810,6 @@ export default function FacultySettings() {
             </div>
 
             <div className="fs-card fs-card-flush">
-              {/* ✅ WORKING PUSH NOTIFICATIONS TOGGLE */}
               <div className="fs-list-row">
                 <i className="fa-solid fa-bell fs-row-icon accent"></i>
                 <div className="fs-row-text">
@@ -991,9 +995,9 @@ export default function FacultySettings() {
                     disabled={busy}
                   >
                     {busy ? (
-                      <><i className="fa-solid fa-circle-notch fa-spin"></i> Updating…</>
+                      <><i className="fa-solid fa-circle-notch fa-spin"></i> Sending…</>
                     ) : (
-                      "Verify & Update"
+                      "Verify & Send Link"
                     )}
                   </button>
                 </div>
