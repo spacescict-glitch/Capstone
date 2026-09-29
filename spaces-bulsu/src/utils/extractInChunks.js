@@ -2,7 +2,7 @@ export async function extractInChunks({
   rawText,
   endpoint,
   payload = {},
-  maxChunkChars = 2000,
+  maxChunkChars = 1500,
   onProgress,
 }) {
   // Split by lines para hindi maputol ang isang schedule row
@@ -20,7 +20,6 @@ export async function extractInChunks({
   }
   if (current.trim()) chunks.push(current);
 
-  // Fallback: walang newlines pero sobrang haba
   if (chunks.length === 1 && chunks[0].length > maxChunkChars * 2) {
     const big = chunks[0];
     chunks.length = 0;
@@ -32,54 +31,72 @@ export async function extractInChunks({
   console.log(`📦 Split into ${chunks.length} chunk(s)`);
 
   const allSchedules = [];
+  const MAX_TRIES = 6;
+
   for (let i = 0; i < chunks.length; i++) {
     if (onProgress) onProgress(i + 1, chunks.length);
 
-    const MAX_TRIES = 3;
     let attempt = 0;
     let data = null;
+    let lastErr = null;
 
     while (attempt < MAX_TRIES) {
-    attempt++;
-    try {
+      attempt++;
+      try {
         const res = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...payload, rawText: chunks[i] }),
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...payload, rawText: chunks[i] }),
         });
 
-        data = await res.json();
-
-        // If 503/429 (overloaded), retry after short wait
-        if (
-        (res.status === 503 || res.status === 429) &&
-        attempt < MAX_TRIES
-        ) {
-        console.warn(
-            `Chunk ${i + 1} got ${res.status}. Retry ${attempt}/${MAX_TRIES}...`
-        );
-        if (onProgress) {
-            onProgress(`retry-${attempt}`, chunks.length);
-        }
-        await new Promise((r) => setTimeout(r, 1500 * attempt));
-        continue;
+        let parsed = null;
+        try {
+          parsed = await res.json();
+        } catch {
+          parsed = null;
         }
 
-        if (!res.ok || !data.success) {
-        throw new Error(
-            `Chunk ${i + 1}/${chunks.length}: ${data.message || res.statusText}`
-        );
+        // ✅ Retry sa: 404 (cold start), 500 (timeout), 502 (edge), 503 (busy), 429 (rate limit)
+        if ([404, 500, 502, 503, 429].includes(res.status) && attempt < MAX_TRIES) {
+          const waitMs = Math.min(800 * Math.pow(2, attempt), 8000);
+          console.warn(
+            `Chunk ${i + 1} got ${res.status}. Retry ${attempt}/${MAX_TRIES} in ${waitMs}ms...`
+          );
+          if (onProgress) onProgress(`retry-${attempt}`, chunks.length);
+          await new Promise((r) => setTimeout(r, waitMs));
+          continue;
         }
 
-        // success
+        if (!res.ok || !parsed?.success) {
+          throw new Error(
+            `Chunk ${i + 1}/${chunks.length}: ${
+              parsed?.message || res.statusText || res.status
+            }`
+          );
+        }
+
+        data = parsed;
         break;
-    } catch (err) {
+      } catch (err) {
+        lastErr = err;
         if (attempt >= MAX_TRIES) throw err;
-        await new Promise((r) => setTimeout(r, 1500 * attempt));
-    }
+        const waitMs = Math.min(800 * Math.pow(2, attempt), 8000);
+        console.warn(
+          `Chunk ${i + 1} error: ${err.message}. Retry ${attempt}/${MAX_TRIES} in ${waitMs}ms...`
+        );
+        await new Promise((r) => setTimeout(r, waitMs));
+      }
     }
 
-    allSchedules.push(...(data?.schedules || []));
+    if (!data) {
+      throw new Error(
+        `Chunk ${i + 1}/${chunks.length}: ${
+          lastErr?.message || "Failed after retries."
+        }`
+      );
+    }
+
+    allSchedules.push(...(data.schedules || []));
   }
 
   // Dedupe

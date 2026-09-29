@@ -45,7 +45,8 @@ const GEMINI_MODELS = [
 
 const GROQ_MODELS = [
   "llama-3.3-70b-versatile",
-  "llama-3.1-8b-instant",
+  "meta-llama/llama-4-scout-17b-16e-instruct",
+  "openai/gpt-oss-20b",
 ];
 
 // ✅ NEW: Separate sub-budgets for Gemini and Groq
