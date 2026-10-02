@@ -282,7 +282,12 @@ exports.scheduledWatcherCheck = onSchedule(
 //   • Admin UserManagement (delete OTHER users)
 //   • FacultySettings (delete OWN account)
 // ════════════════════════════════════════════════════════════════
-exports.deleteUser = onCall(async (request) => {
+exports.deleteUser = onCall(
+  {
+    cors: true,
+    invoker: "public",
+  },
+  async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "You must be logged in.");
   }
