@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import {
   collection,
   addDoc,
@@ -55,6 +55,8 @@ const SORT_OPTIONS = [
 const steps = [{ number: 1, label: "DETAILS" }, { number: 2, label: "CONFIRM" }];
 
 const DELETE_PHRASE = "DELETE USER";
+
+const PER_PAGE = 10; // ← Max users per page
 
 async function createUserSecondaryApp(email, password) {
   const secondaryApp = initializeApp(firebaseConfig, `secondary-${Date.now()}`);
@@ -151,6 +153,84 @@ function SortMenu({ sortBy, setSortBy }) {
   );
 }
 
+// ── Pagination control component ──
+function Pagination({ currentPage, totalPages, onPageChange, totalItems, startIndex, endIndex }) {
+  if (totalPages <= 1) return null;
+
+  // Build visible page numbers (window of 5)
+  const getPageNumbers = () => {
+    const pages = [];
+    const maxVisible = 5;
+    let start = Math.max(1, currentPage - Math.floor(maxVisible / 2));
+    let end = Math.min(totalPages, start + maxVisible - 1);
+
+    if (end - start + 1 < maxVisible) {
+      start = Math.max(1, end - maxVisible + 1);
+    }
+
+    if (start > 1) {
+      pages.push(1);
+      if (start > 2) pages.push("...");
+    }
+
+    for (let i = start; i <= end; i++) pages.push(i);
+
+    if (end < totalPages) {
+      if (end < totalPages - 1) pages.push("...");
+      pages.push(totalPages);
+    }
+
+    return pages;
+  };
+
+  return (
+    <div className="um-pagination">
+      <span className="um-pagination-info">
+        Showing <strong>{startIndex + 1}</strong>–<strong>{endIndex}</strong> of <strong>{totalItems}</strong>
+      </span>
+
+      <div className="um-pagination-controls">
+        <button
+          type="button"
+          className="um-page-btn"
+          onClick={() => onPageChange(currentPage - 1)}
+          disabled={currentPage === 1}
+          title="Previous page"
+        >
+          <i className="fa-solid fa-chevron-left" />
+        </button>
+
+        {getPageNumbers().map((p, idx) =>
+          p === "..." ? (
+            <span key={`ellipsis-${idx}`} className="um-page-ellipsis">
+              …
+            </span>
+          ) : (
+            <button
+              key={p}
+              type="button"
+              className={`um-page-btn ${p === currentPage ? "active" : ""}`}
+              onClick={() => onPageChange(p)}
+            >
+              {p}
+            </button>
+          )
+        )}
+
+        <button
+          type="button"
+          className="um-page-btn"
+          onClick={() => onPageChange(currentPage + 1)}
+          disabled={currentPage === totalPages}
+          title="Next page"
+        >
+          <i className="fa-solid fa-chevron-right" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
   const [search, setSearch] = useState("");
   const [users, setUsers] = useState([]);
@@ -158,14 +238,15 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
   const [sending, setSending] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [resetTarget, setResetTarget] = useState(null);
-  const [unblockTarget, setUnblockTarget] = useState(null);
   const [sortBy, setSortBy] = useState("name-asc");
   const [roleFilter, setRoleFilter] = useState("All");
   const [statusFilter, setStatusFilter] = useState("All");
   const [deleting, setDeleting] = useState(false);
-  const [unblocking, setUnblocking] = useState(false);
 
-  // ── NEW: 2-step strong warning delete ──
+  // ── Pagination state ──
+  const [currentPage, setCurrentPage] = useState(1);
+
+  // ── 2-step strong warning delete ──
   const [deleteStep, setDeleteStep] = useState(1);
   const [deleteAcknowledged, setDeleteAcknowledged] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
@@ -252,91 +333,96 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
 
   const totalCount = users.length;
   const activeCount = users.filter((u) => u.status === "Active").length;
-  const disabledCount = users.filter((u) => u.status === "Disabled").length;
   const blockedCount = users.filter((u) => u.status === "Blocked").length;
 
-  const filtered = users
-    .filter(
-      (u) =>
-        `${u.firstName} ${u.lastName}`.toLowerCase().includes(search.toLowerCase()) ||
-        u.email?.toLowerCase().includes(search.toLowerCase()) ||
-        u.role?.toLowerCase().includes(search.toLowerCase())
-    )
-    .filter((u) => roleFilter === "All" || u.role === roleFilter)
-    .filter((u) => statusFilter === "All" || u.status === statusFilter)
-    .sort((a, b) => {
-      const nameA = `${a.firstName ?? ""} ${a.lastName ?? ""}`.trim().toLowerCase();
-      const nameB = `${b.firstName ?? ""} ${b.lastName ?? ""}`.trim().toLowerCase();
-      switch (sortBy) {
-        case "name-desc": return nameB.localeCompare(nameA);
-        case "role": return (a.role || "").localeCompare(b.role || "") || nameA.localeCompare(nameB);
-        case "status": return (a.status || "").localeCompare(b.status || "") || nameA.localeCompare(nameB);
-        case "name-asc":
-        default: return nameA.localeCompare(nameB);
-      }
-    });
+  // ── Filtered + sorted list ──
+  const filtered = useMemo(() => {
+    return users
+      .filter(
+        (u) =>
+          `${u.firstName} ${u.lastName}`.toLowerCase().includes(search.toLowerCase()) ||
+          u.email?.toLowerCase().includes(search.toLowerCase()) ||
+          u.role?.toLowerCase().includes(search.toLowerCase())
+      )
+      .filter((u) => roleFilter === "All" || u.role === roleFilter)
+      .filter((u) => statusFilter === "All" || u.status === statusFilter)
+      .sort((a, b) => {
+        const nameA = `${a.firstName ?? ""} ${a.lastName ?? ""}`.trim().toLowerCase();
+        const nameB = `${b.firstName ?? ""} ${b.lastName ?? ""}`.trim().toLowerCase();
+        switch (sortBy) {
+          case "name-desc": return nameB.localeCompare(nameA);
+          case "role": return (a.role || "").localeCompare(b.role || "") || nameA.localeCompare(nameB);
+          case "status": return (a.status || "").localeCompare(b.status || "") || nameA.localeCompare(nameB);
+          case "name-asc":
+          default: return nameA.localeCompare(nameB);
+        }
+      });
+  }, [users, search, roleFilter, statusFilter, sortBy]);
 
+  // ── Pagination computation ──
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
+  const startIndex = (currentPage - 1) * PER_PAGE;
+  const endIndex = Math.min(startIndex + PER_PAGE, filtered.length);
+  const paginatedUsers = filtered.slice(startIndex, endIndex);
+
+  // Reset to page 1 whenever filters/search/sort change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, roleFilter, statusFilter, sortBy]);
+
+  // Guard: if current page exceeds total pages (e.g., after deletion), clamp
+  useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages);
+  }, [currentPage, totalPages]);
+
+  // ── Toggle Active ↔ Blocked (unified) ──
   const handleToggleStatus = async (user) => {
-    const newStatus = user.status === "Active" ? "Disabled" : "Active";
+    const isUnblocking = user.status === "Blocked";
+    const newStatus = isUnblocking ? "Active" : "Blocked";
+
+    const updates = isUnblocking
+      ? {
+          status: "Active",
+          loginAttempts: 0,
+          blockReason: "",
+          blockedAt: null,
+          blockedUntil: null,
+          lastFailedAt: null,
+          lastFailedReason: "",
+          lastFailedRole: "",
+        }
+      : {
+          status: "Blocked",
+          loginAttempts: 0,
+          blockReason: "Manually blocked by Admin",
+          blockedAt: serverTimestamp(),
+          blockedUntil: null,
+          lastFailedAt: null,
+          lastFailedReason: "",
+          lastFailedRole: "",
+        };
+
     try {
-      await updateDoc(doc(db, "users", user.id), { status: newStatus });
+      await updateDoc(doc(db, "users", user.id), updates);
       await logActivity({
         userId: user.id,
         user: getFullName(user),
         role: user.role,
-        action: user.status === "Active" ? "Disabled User" : "Enabled User",
+        action: isUnblocking ? "Unblocked User" : "Blocked User",
         actionType: "edit",
         target: user.email,
         status: "SUCCESS",
       });
-      setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, status: newStatus } : u)));
-      showToast("success", newStatus === "Active" ? "User Enabled" : "User Disabled", `${getFullName(user)} is now ${newStatus.toLowerCase()}.`);
+      setUsers((prev) =>
+        prev.map((u) => (u.id === user.id ? { ...u, ...updates } : u))
+      );
+      showToast(
+        "success",
+        isUnblocking ? "User Unblocked" : "User Blocked",
+        `${getFullName(user)} is now ${newStatus.toLowerCase()}.`
+      );
     } catch (e) {
       showToast("error", "Update Failed", e.message);
-    }
-  };
-
-  const handleUnblock = (user) => setUnblockTarget(user);
-
-  const confirmUnblock = async () => {
-    if (!unblockTarget) return;
-    setUnblocking(true);
-    const user = unblockTarget;
-    try {
-      await updateDoc(doc(db, "users", user.id), {
-        status: "Active",
-        loginAttempts: 0,
-        blockReason: "",
-        blockedAt: null,
-        blockedUntil: null,
-        lastFailedAt: null,
-        lastFailedReason: "",
-        lastFailedRole: "",
-      });
-
-      await logActivity({
-        userId: user.id,
-        user: getFullName(user),
-        role: user.role,
-        action: "Unblocked User Account",
-        actionType: "success",
-        target: user.email,
-        status: "SUCCESS",
-      });
-
-      setUsers((prev) =>
-        prev.map((u) =>
-          u.id === user.id
-            ? { ...u, status: "Active", loginAttempts: 0, blockReason: "", blockedUntil: null }
-            : u
-        )
-      );
-      showToast("success", "User Unblocked", `${getFullName(user)} can now log in again.`);
-    } catch (e) {
-      showToast("error", "Unblock Failed", e.message);
-    } finally {
-      setUnblocking(false);
-      setUnblockTarget(null);
     }
   };
 
@@ -387,7 +473,8 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
         </button>
       </div>
 
-      <div className="um-stats-row um-stats-row-4">
+      {/* ── STATS — 3 cards ── */}
+      <div className="um-stats-row">
         <div className="um-stat-card">
           <div className="um-stat-icon"><i className="fa-solid fa-users" /></div>
           <div>
@@ -401,14 +488,6 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
           <div>
             <div className="um-stat-value">{activeCount}</div>
             <div className="um-stat-label">Active</div>
-          </div>
-        </div>
-
-        <div className="um-stat-card">
-          <div className="um-stat-icon is-muted"><i className="fa-solid fa-ban" /></div>
-          <div>
-            <div className="um-stat-value">{disabledCount}</div>
-            <div className="um-stat-label">Disabled</div>
           </div>
         </div>
 
@@ -453,7 +532,7 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
         })}
       </div>
 
-      {/* Status filter chips */}
+      {/* ── STATUS FILTER CHIPS ── */}
       <div className="um-chip-row um-status-chip-row">
         <button
           className={`um-chip ${statusFilter === "All" ? "active" : ""}`}
@@ -466,12 +545,6 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
           onClick={() => setStatusFilter("Active")}
         >
           Active
-        </button>
-        <button
-          className={`um-chip ${statusFilter === "Disabled" ? "active" : ""}`}
-          onClick={() => setStatusFilter("Disabled")}
-        >
-          Disabled
         </button>
         <button
           className={`um-chip ${statusFilter === "Blocked" ? "active" : ""}`}
@@ -495,7 +568,7 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
               </tr>
             </thead>
             <tbody>
-              {filtered.length === 0 ? (
+              {paginatedUsers.length === 0 ? (
                 <tr>
                   <td colSpan={5}>
                     <div className="um-empty-state">
@@ -506,18 +579,17 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
                   </td>
                 </tr>
               ) : (
-                filtered.map((u) => {
+                paginatedUsers.map((u) => {
                   const rc = ROLE_COLORS[u.role] || { bg: "#f3f4f6", text: "#374151" };
                   const fullName = `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim();
                   const isBlocked = u.status === "Blocked";
-                  const isDisabled = u.status === "Disabled";
                   const blockedUntilStr = formatBlockedUntil(u.blockedUntil);
 
                   return (
                     <tr key={u.id}>
                       <td>
                         <div className="um-user-cell">
-                          <div className={`um-avatar ${isDisabled ? "disabled" : ""} ${isBlocked ? "blocked" : ""}`}>
+                          <div className={`um-avatar ${isBlocked ? "blocked" : ""}`}>
                             {fullName.charAt(0).toUpperCase() || "?"}
                           </div>
                           <span className="um-name">{fullName || "—"}</span>
@@ -550,16 +622,6 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
                       </td>
                       <td>
                         <div className="um-actions">
-                          {isBlocked && (
-                            <button
-                              className="um-action-icon unlock"
-                              title="Unblock this account"
-                              onClick={() => handleUnblock(u)}
-                            >
-                              <i className="fa-solid fa-lock-open" />
-                            </button>
-                          )}
-
                           <button className="um-action-icon danger" title="Delete User" onClick={() => handleDeleteUser(u)}>
                             <i className="fa-solid fa-trash" />
                           </button>
@@ -574,14 +636,22 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
                           </button>
 
                           {u.status === "Active" ? (
-                            <button className="um-action-icon danger" title="Disable" onClick={() => handleToggleStatus(u)}>
+                            <button
+                              className="um-action-icon danger"
+                              title="Block this account"
+                              onClick={() => handleToggleStatus(u)}
+                            >
                               <i className="fa-solid fa-ban" />
                             </button>
-                          ) : u.status === "Disabled" ? (
-                            <button className="um-action-icon success" title="Enable" onClick={() => handleToggleStatus(u)}>
+                          ) : (
+                            <button
+                              className="um-action-icon success"
+                              title="Unblock this account"
+                              onClick={() => handleToggleStatus(u)}
+                            >
                               <i className="fa-solid fa-circle-check" />
                             </button>
-                          ) : null}
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -592,12 +662,16 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
           </table>
         )}
 
+        {/* ── PAGINATION ── */}
         {!loading && filtered.length > 0 && (
-          <div className="um-table-footer">
-            <span className="um-count">
-              Showing {filtered.length} of {totalCount} user{totalCount === 1 ? "" : "s"}
-            </span>
-          </div>
+          <Pagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            onPageChange={setCurrentPage}
+            totalItems={filtered.length}
+            startIndex={startIndex}
+            endIndex={endIndex}
+          />
         )}
       </div>
 
@@ -771,33 +845,6 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
             <div className="um-modal-actions">
               <button className="um-modal-cancel" onClick={() => setResetTarget(null)}>Cancel</button>
               <button className="um-modal-confirm" onClick={confirmResetPassword}>Send Email</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Unblock modal ── */}
-      {unblockTarget && (
-        <div className="um-modal-overlay">
-          <div className="um-modal">
-            <div className="um-modal-icon is-success"><i className="fa-solid fa-lock-open" /></div>
-            <h3 className="um-modal-title">Unblock Account</h3>
-            <p className="um-modal-text">
-              Unblock<br /><strong>{unblockTarget.email}</strong>?<br /><br />
-              This will reset the failed login counter, clear the block reason,
-              and allow the user to log in again immediately.
-            </p>
-            {unblockTarget.blockReason && (
-              <div className="um-modal-note">
-                <i className="fa-solid fa-circle-info" />
-                <span>{unblockTarget.blockReason}</span>
-              </div>
-            )}
-            <div className="um-modal-actions">
-              <button className="um-modal-cancel" onClick={() => setUnblockTarget(null)} disabled={unblocking}>Cancel</button>
-              <button className="um-modal-confirm is-success" onClick={confirmUnblock} disabled={unblocking}>
-                {unblocking ? (<><i className="fa-solid fa-spinner fa-spin" /> Unblocking…</>) : ("Yes, Unblock")}
-              </button>
             </div>
           </div>
         </div>

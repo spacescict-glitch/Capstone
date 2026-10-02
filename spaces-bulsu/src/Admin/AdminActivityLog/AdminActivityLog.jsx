@@ -450,6 +450,7 @@ export default function AdminActivityLog() {
           <div className="filter-group">
             <label>ACTION TYPE</label>
             <div className="select-wrap">
+              <i className="fa-solid fa-filter"></i>
               <select value={actionType} onChange={e => setActionType(e.target.value)}>
                 <option>All Actions</option>
                 <option>Approved</option>
@@ -460,13 +461,6 @@ export default function AdminActivityLog() {
               <i className="fa-solid fa-chevron-down chev"></i>
             </div>
           </div>
-
-          <button
-            className="apply-btn-dph"
-            onClick={() => showToast("Filters applied", "success")}
-          >
-            Apply Filters
-          </button>
         </div>
 
         {/* TABLE */}

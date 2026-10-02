@@ -1075,13 +1075,6 @@ export default function FacultyRoom() {
                 >
                   <i className="fa-solid fa-rotate-left"></i> Clear
                 </button>
-                <button
-                  type="button"
-                  className="panel-apply-btn"
-                  onClick={() => setShowFilterPanel(false)}
-                >
-                  Apply Filters
-                </button>
               </div>
             </div>
           </>

@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import "./local-registrar-settings.css";
 import { auth, db } from "../../firebase";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
-import { getFunctions, httpsCallable } from "firebase/functions";
 import {
   onAuthStateChanged,
   EmailAuthProvider,
@@ -25,10 +24,6 @@ import {
   getBrowserPermission,
   requestPushPermission,
 } from "../../utils/pushNotifications";
-
-// ── Cloud Function for self-delete ───────────────────────────────
-const functions = getFunctions();
-const deleteUserFn = httpsCallable(functions, "deleteUser");
 
 // ── Password rules ────────────────────────────────────────────────
 const passwordChecks = (pw) => ({
@@ -84,8 +79,6 @@ const FAQ_ITEMS = [
   },
 ];
 
-const DELETE_PHRASE = "DELETE MY ACCOUNT";
-
 export default function LocalRegistrarSettings() {
   const navigate = useNavigate();
 
@@ -115,13 +108,7 @@ export default function LocalRegistrarSettings() {
 
   // ── Modals ─────────────────────────────────────────────────────
   const [showEmailModal, setShowEmailModal]   = useState(false);
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [emailForm, setEmailForm]   = useState({ currentPassword: "", newEmail: "" });
-  const [deleteForm, setDeleteForm] = useState({ currentPassword: "", confirmText: "" });
-
-  // ── Delete flow — 2-step warning ───────────────────────────────
-  const [deleteStep, setDeleteStep] = useState(1);
-  const [deleteAcknowledged, setDeleteAcknowledged] = useState(false);
 
   // Email sub-flow state
   const [emailStep, setEmailStep] = useState("form");
@@ -214,15 +201,11 @@ export default function LocalRegistrarSettings() {
     setPwCode(Array(CODE_LENGTH).fill(""));
   };
 
-  const closeModals = () => {
+  const closeEmailModal = () => {
     setShowEmailModal(false);
-    setShowDeleteModal(false);
     setEmailForm({ currentPassword: "", newEmail: "" });
-    setDeleteForm({ currentPassword: "", confirmText: "" });
     setEmailStep("form");
     setEmailCode(Array(CODE_LENGTH).fill(""));
-    setDeleteStep(1);
-    setDeleteAcknowledged(false);
   };
 
   // ══════════════════════════════════════════════════════════════
@@ -425,7 +408,7 @@ export default function LocalRegistrarSettings() {
     }
   };
 
-  // ✅ FIXED: verifyBeforeUpdateEmail instead of updateEmail
+  // ✅ verifyBeforeUpdateEmail instead of updateEmail
   const handleEmailVerifyAndUpdate = async () => {
     const entered = emailCode.join("");
     if (entered.length !== CODE_LENGTH)
@@ -449,7 +432,7 @@ export default function LocalRegistrarSettings() {
         "Verification Email Sent",
         `A verification link was sent to ${newEmail}. Click the link in your inbox to complete the change.`
       );
-      closeModals();
+      closeEmailModal();
     } catch (err) {
       console.error(err);
       let msg = err?.message || "Update failed.";
@@ -480,77 +463,6 @@ export default function LocalRegistrarSettings() {
       showToast("error", "Resend Failed", err?.text || err?.message || "Try again.");
     }
   };
-
-  // ══════════════════════════════════════════════════════════════
-  // DELETE ACCOUNT — 2-step "grabihan" flow
-  // ══════════════════════════════════════════════════════════════
-  const handleDeleteAccount = async (e) => {
-    e.preventDefault();
-    const { currentPassword, confirmText } = deleteForm;
-
-    if (!currentPassword)
-      return showToast("error", "Missing Password", "Please enter your current password.");
-    if (confirmText.trim() !== DELETE_PHRASE)
-      return showToast(
-        "error",
-        "Confirmation Failed",
-        `Type "${DELETE_PHRASE}" exactly to confirm.`
-      );
-    if (!deleteAcknowledged)
-      return showToast("error", "Not Acknowledged", "Please check the acknowledgment box.");
-
-    setBusy(true);
-    try {
-      await reauthenticate(currentPassword);
-
-      try {
-        const result = await deleteUserFn({ userId: user.uid });
-        if (!result.data?.success) {
-          throw new Error("Cloud function did not return success.");
-        }
-      } catch (fnErr) {
-        console.error("Cloud function delete failed:", fnErr);
-
-        const isFnUnavailable =
-          fnErr?.code === "functions/not-found" ||
-          fnErr?.code === "functions/unavailable";
-
-        if (isFnUnavailable) {
-          console.warn("Cloud Function unavailable — falling back to client-side delete.");
-          const { deleteUser } = await import("firebase/auth");
-          const { deleteDoc } = await import("firebase/firestore");
-
-          try { await deleteDoc(doc(db, "users", user.uid)); }
-          catch (fsErr) { console.warn("Firestore delete failed:", fsErr); }
-
-          await deleteUser(user);
-        } else {
-          throw fnErr;
-        }
-      }
-
-      showToast("success", "Account Deleted", "Your account has been permanently deleted.");
-      closeModals();
-      setTimeout(() => navigate("/login"), 1500);
-    } catch (err) {
-      console.error(err);
-      let msg = err?.message || "Deletion failed.";
-      if (err.code === "auth/wrong-password")
-        msg = "Your current password is incorrect.";
-      if (err.code === "auth/requires-recent-login")
-        msg = "Please log out and log back in, then try again.";
-      if (err?.code === "functions/failed-precondition")
-        msg = err.message;
-      showToast("error", "Deletion Failed", msg);
-      setBusy(false);
-    }
-  };
-
-  const isDeleteReady =
-    deleteStep === 2 &&
-    deleteAcknowledged &&
-    deleteForm.currentPassword.trim() !== "" &&
-    deleteForm.confirmText.trim() === DELETE_PHRASE;
 
   if (loading) {
     return (
@@ -776,14 +688,6 @@ export default function LocalRegistrarSettings() {
                 </div>
                 <i className="fa-solid fa-chevron-right fs-row-chev"></i>
               </div>
-
-              <div className="fs-list-row clickable danger" onClick={() => setShowDeleteModal(true)}>
-                <i className="fa-regular fa-trash-can fs-row-icon danger"></i>
-                <div className="fs-row-text">
-                  <span className="fs-row-title danger">Delete Account</span>
-                </div>
-                <i className="fa-solid fa-chevron-right fs-row-chev danger"></i>
-              </div>
             </div>
           </div>
         </div>
@@ -791,7 +695,7 @@ export default function LocalRegistrarSettings() {
 
       {/* ── CHANGE EMAIL MODAL ─────────────────────────────────── */}
       {showEmailModal && (
-        <div className="fs-modal-overlay" onClick={() => !busy && closeModals()}>
+        <div className="fs-modal-overlay" onClick={() => !busy && closeEmailModal()}>
           <div className="fs-modal" onClick={(e) => e.stopPropagation()}>
             {emailStep === "form" && (
               <form onSubmit={handleEmailStepOne}>
@@ -824,7 +728,7 @@ export default function LocalRegistrarSettings() {
                 </div>
 
                 <div className="fs-modal-actions">
-                  <button type="button" className="fs-modal-btn cancel" onClick={closeModals} disabled={busy}>Cancel</button>
+                  <button type="button" className="fs-modal-btn cancel" onClick={closeEmailModal} disabled={busy}>Cancel</button>
                   <button type="submit" className="fs-modal-btn confirm" disabled={busy}>
                     {busy ? <><i className="fa-solid fa-circle-notch fa-spin"></i> Sending…</> : "Send Code to New Email"}
                   </button>
@@ -853,116 +757,6 @@ export default function LocalRegistrarSettings() {
                   {emailResendIn > 0 ? `Resend code in ${emailResendIn}s` : "Didn't get the code? Resend"}
                 </p>
               </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ── DELETE ACCOUNT — 2-STEP "GRABIHAN" ─────────────────── */}
-      {showDeleteModal && (
-        <div className="fs-modal-overlay" onClick={() => !busy && closeModals()}>
-          <div className="fs-modal fs-modal-delete-warning" onClick={(e) => e.stopPropagation()}>
-            {deleteStep === 1 && (
-              <>
-                <div className="fs-modal-icon red fs-modal-icon-pulse"><i className="fa-solid fa-triangle-exclamation"></i></div>
-                <h3>Delete Your Account?</h3>
-                <p className="fs-modal-sub">
-                  This is a <strong>permanent and irreversible</strong> action. Please read carefully before continuing.
-                </p>
-
-                <div className="fs-delete-warning-box">
-                  <div className="fs-delete-warning-title">
-                    <i className="fa-solid fa-circle-exclamation"></i>
-                    What will be lost
-                  </div>
-                  <ul className="fs-delete-warning-list">
-                    <li><i className="fa-solid fa-xmark"></i>All your class schedules and room assignments</li>
-                    <li><i className="fa-solid fa-xmark"></i>All your reservations and pending requests</li>
-                    <li><i className="fa-solid fa-xmark"></i>All rooms you're currently watching ("Notify Me")</li>
-                    <li><i className="fa-solid fa-xmark"></i>Your notification history and account data</li>
-                    <li><i className="fa-solid fa-xmark"></i>Access to SpaceS CICT (you'll need a new invite)</li>
-                  </ul>
-                </div>
-
-                <label className="fs-delete-ack">
-                  <input
-                    type="checkbox"
-                    checked={deleteAcknowledged}
-                    onChange={(e) => setDeleteAcknowledged(e.target.checked)}
-                  />
-                  <span>I understand this action is <strong>permanent</strong> and cannot be undone.</span>
-                </label>
-
-                <div className="fs-modal-actions">
-                  <button type="button" className="fs-modal-btn cancel" onClick={closeModals} disabled={busy}>Cancel</button>
-                  <button type="button" className="fs-modal-btn danger" disabled={!deleteAcknowledged} onClick={() => setDeleteStep(2)}>
-                    Continue to Confirmation <i className="fa-solid fa-arrow-right"></i>
-                  </button>
-                </div>
-              </>
-            )}
-
-            {deleteStep === 2 && (
-              <form onSubmit={handleDeleteAccount}>
-                <div className="fs-modal-icon red fs-modal-icon-pulse"><i className="fa-solid fa-trash-can"></i></div>
-                <h3>Final Confirmation</h3>
-                <p className="fs-modal-sub">
-                  This is your <strong>last chance</strong>. Once you click the delete button below, your account is gone forever.
-                </p>
-
-                <div className="fs-delete-danger-banner">
-                  <i className="fa-solid fa-skull-crossbones"></i>
-                  <span>Point of no return</span>
-                </div>
-
-                <div className="fs-field">
-                  <label>Current Password</label>
-                  <input
-                    type="password"
-                    className="fs-input"
-                    value={deleteForm.currentPassword}
-                    onChange={(e) => setDeleteForm((f) => ({ ...f, currentPassword: e.target.value }))}
-                    autoComplete="current-password"
-                    placeholder="Enter your password"
-                    required
-                  />
-                </div>
-
-                <div className="fs-field">
-                  <label>Type <span className="fs-danger-text">{DELETE_PHRASE}</span> below</label>
-                  <input
-                    type="text"
-                    className="fs-input"
-                    value={deleteForm.confirmText}
-                    onChange={(e) => setDeleteForm((f) => ({ ...f, confirmText: e.target.value }))}
-                    placeholder={DELETE_PHRASE}
-                    autoComplete="off"
-                    spellCheck="false"
-                    required
-                  />
-                  <small className={
-                    deleteForm.confirmText === DELETE_PHRASE ? "fs-phrase-ok" :
-                    deleteForm.confirmText.length > 0 ? "fs-phrase-bad" : ""
-                  }>
-                    {deleteForm.confirmText === DELETE_PHRASE ? (
-                      <><i className="fa-solid fa-circle-check"></i> Phrase matched</>
-                    ) : deleteForm.confirmText.length > 0 ? (
-                      <><i className="fa-solid fa-circle-xmark"></i> Phrase doesn't match</>
-                    ) : (
-                      "Type the exact phrase to enable the delete button."
-                    )}
-                  </small>
-                </div>
-
-                <div className="fs-modal-actions">
-                  <button type="button" className="fs-modal-btn cancel" onClick={() => setDeleteStep(1)} disabled={busy}>
-                    <i className="fa-solid fa-arrow-left"></i> Back
-                  </button>
-                  <button type="submit" className="fs-modal-btn danger" disabled={!isDeleteReady || busy}>
-                    {busy ? <><i className="fa-solid fa-circle-notch fa-spin"></i> Deleting…</> : <><i className="fa-solid fa-trash-can"></i> Delete Forever</>}
-                  </button>
-                </div>
-              </form>
             )}
           </div>
         </div>

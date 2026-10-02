@@ -234,25 +234,28 @@
 /* FILTERS */
 .log-filters {
   display: flex;
-  align-items: flex-start;
-  gap: 14px;
+  align-items: flex-end;
+  gap: 16px;
   flex-wrap: nowrap;
   overflow-x: auto;
-  padding-bottom: 4px;
+  padding: 18px 0 20px;
+  border-bottom: 1px solid #f3f4f6;
+  margin-bottom: 8px;
 }
 
 .filter-group {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   flex-shrink: 0;
 }
 
 .filter-group label {
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 10.5px;
+  font-weight: 800;
   color: #9ca3af;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
+  padding-left: 4px;
 }
 
 .select-wrap {
@@ -264,29 +267,44 @@
 .select-wrap > i:first-child {
   position: absolute;
   left: 14px;
-  color: #9ca3af;
-  font-size: 14px;
+  color: #f57c00;
+  font-size: 13px;
   pointer-events: none;
+  transition: transform 0.2s ease;
+  z-index: 1;
 }
 
 .select-wrap select {
-  height: 44px;
-  padding: 0 36px 0 36px;
+  height: 46px;
+  padding: 0 40px 0 38px;
   border: 1.5px solid #e5e7eb;
   border-radius: 12px;
-  background: white;
+  background: #ffffff;
   font-size: 13px;
   font-weight: 600;
   font-family: "Lexend", sans-serif;
-  color: #374151;
+  color: #1f2937;
   appearance: none;
   cursor: pointer;
-  min-width: 160px;
+  min-width: 190px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+
+.select-wrap select:hover {
+  border-color: #fbbf7a;
+  background: #fffdfb;
 }
 
 .select-wrap select:focus {
   outline: none;
   border-color: #f57c00;
+  background: #ffffff;
+  box-shadow: 0 0 0 4px rgba(245, 124, 0, 0.12);
+}
+
+.select-wrap:hover > i:first-child {
+  transform: scale(1.08);
 }
 
 .chev {
@@ -295,28 +313,16 @@
   color: #9ca3af;
   font-size: 11px;
   pointer-events: none;
+  transition: transform 0.2s ease, color 0.2s ease;
 }
 
-.apply-btn-dph {
-  height: 44px;
-  padding: 0 24px;
-  border: none;
+.select-wrap:hover .chev {
   color: #f57c00;
-  border-radius: 12px;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: background 0.2s;
-  border: 1.5px solid #f57c00;
-  cursor: pointer;
-  background-color: transparent;
-  border-radius: 10px;
-  transition: background-color 0.2s ease;
-  align-self: flex-end;
 }
 
-.apply-btn-dph:hover {
-  background-color: #fef0e7;
+.select-wrap select:focus ~ .chev {
+  color: #f57c00;
+  transform: rotate(180deg);
 }
 
 /* TABLE */
@@ -555,10 +561,6 @@
     margin-top: 10px;
   }
 
-  .apply-btn-dph {
-    align-self: auto;
-  }
-
   .log-tabs {
     flex-wrap: nowrap;
     overflow-x: auto;
@@ -590,7 +592,7 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   NEW: Warning + Blocked status badges
+   Warning + Blocked status badges
    ═══════════════════════════════════════════════════════════════ */
 .status-badge.warning {
   background: #fff7ed;
@@ -603,7 +605,7 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   NEW: Attempt pill (#1, #2, ...) sa Action cell
+   Attempt pill (#1, #2, ...) sa Action cell
    ═══════════════════════════════════════════════════════════════ */
 .attempt-pill {
   display: inline-block;
@@ -619,7 +621,7 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   NEW: User agent hint icon
+   User agent hint icon
    ═══════════════════════════════════════════════════════════════ */
 .ua-hint {
   display: inline-block;

@@ -405,22 +405,26 @@ export default function Login() {
       uid = userDoc.id;
       userData = userDoc.data();
 
-      // ─── 2. Check block status (may auto-unblock) ───────────────
+      // ─── 2. Check blocked status (UNIFIED — manual + auto) ──────
       if (userData.status === "Blocked") {
         const blockedUntil = userData.blockedUntil?.toDate?.();
-        const stillBlocked =
-          !blockedUntil || blockedUntil.getTime() > Date.now();
+        const isTempBlockActive =
+          blockedUntil && blockedUntil.getTime() > Date.now();
 
-        if (stillBlocked) {
+        // A) Manual block (no blockedUntil) OR auto-block still active → deny
+        if (!blockedUntil || isTempBlockActive) {
           showToast(
             "error",
             "Account Blocked",
-            "Your account has been blocked due to multiple failed login attempts. Please contact the Admin for assistance."
+            blockedUntil
+              ? "Your account is temporarily blocked due to multiple failed login attempts. Please try again later or contact the Admin."
+              : "Your account has been blocked. Please contact the Admin for assistance."
           );
           setLoading(false);
           return;
         }
 
+        // B) Auto-block timer expired → silent auto-unblock
         try {
           await updateDoc(doc(db, "users", uid), {
             status: "Active",
@@ -439,13 +443,6 @@ export default function Login() {
           console.warn("[login] auto-unblock failed:", e);
           userData = { ...userData, status: "Active" };
         }
-      }
-
-      // ─── 3. Check if manually disabled ──────────────────────────
-      if (userData.status === "Disabled") {
-        showToast("error", "Account Disabled", "Your account is disabled.");
-        setLoading(false);
-        return;
       }
 
       // ─── 4. Attempt Firebase sign-in ────────────────────────────
