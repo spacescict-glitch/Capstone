@@ -26,6 +26,7 @@ export default function FacultyLayout() {
   const [notifications, setNotifications] = useState([]);
   const [activeTab, setActiveTab] = useState("all");
   const [loggingOut, setLoggingOut] = useState(false);
+  const [selectedNotification, setSelectedNotification] = useState(null);
   const [profile, setProfile] = useState({
     firstName: "",
     lastName: "",
@@ -126,6 +127,7 @@ export default function FacultyLayout() {
     setSidebarOpen(false);
     setShowProfileMenu(false);
     setShowNotifications(false);
+    setSelectedNotification(null);
   }, [location.pathname]);
 
   /* ---------- Lock body scroll while drawer open ---------- */
@@ -138,6 +140,25 @@ export default function FacultyLayout() {
     };
   }, [sidebarOpen, isMobile]);
 
+  /* ---------- Lock body scroll while notification detail open ---------- */
+  useEffect(() => {
+    if (!selectedNotification) return;
+    const original = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = original;
+    };
+  }, [selectedNotification]);
+
+  /* ---------- Esc to close notification detail ---------- */
+  useEffect(() => {
+    const handleEsc = (e) => {
+      if (e.key === "Escape") setSelectedNotification(null);
+    };
+    window.addEventListener("keydown", handleEsc);
+    return () => window.removeEventListener("keydown", handleEsc);
+  }, []);
+
   /* ---------- Notification helpers ---------- */
   const formatTime = (timestamp) => {
     if (!timestamp) return "";
@@ -148,6 +169,18 @@ export default function FacultyLayout() {
     if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
     if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
     return `${Math.floor(diff / 86400)}d ago`;
+  };
+
+  const formatFullTime = (timestamp) => {
+    if (!timestamp?.toDate) return "—";
+    return timestamp.toDate().toLocaleString("en-US", {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   };
 
   const markAsRead = async (id) => {
@@ -168,6 +201,30 @@ export default function FacultyLayout() {
     } catch (err) {
       console.error(err);
     }
+  };
+
+  const openNotification = async (item) => {
+    setSelectedNotification(item);
+    if (item.unread) {
+      await markAsRead(item.id);
+    }
+  };
+
+  const closeNotificationDetail = () => setSelectedNotification(null);
+
+  /* ---------- Hide "View" button once reassignment is decided ---------- */
+  // A reassignment notification that has already been accepted or
+  // declined should no longer show the "View" button in the card.
+  const isDecidedNotification = (item) => {
+    const badge = String(item?.badge || "").toUpperCase();
+    const type = String(item?.type || "").toLowerCase();
+    return (
+      badge === "ACCEPTED" ||
+      badge === "DECLINED" ||
+      badge === "APPROVED" ||
+      badge === "REJECTED" ||
+      type === "room-reassignment-status"
+    );
   };
 
   const unreadCount = notifications.filter((n) => n.unread && !n.archived).length;
@@ -196,11 +253,25 @@ export default function FacultyLayout() {
     urgent: "fa-solid fa-exclamation",
     approved: "fa-solid fa-check",
     "room-reassignment": "fa-solid fa-arrows-rotate",
+    "room-reassignment-status": "fa-solid fa-arrows-rotate",
     "room-activity": "fa-solid fa-calendar-plus",
     "room-release": "fa-solid fa-door-open",
     "conflict-resolution": "fa-solid fa-circle-check",
     "schedule-upload": "fa-solid fa-upload",
     default: "fa-solid fa-bell",
+  };
+
+  const typeLabel = {
+    schedule: "Schedule",
+    urgent: "Urgent",
+    approved: "Approved",
+    "room-reassignment": "Room Reassignment",
+    "room-reassignment-status": "Room Reassignment",
+    "room-activity": "Room Activity",
+    "room-release": "Room Release",
+    "conflict-resolution": "Conflict Resolution",
+    "schedule-upload": "Schedule Upload",
+    default: "Notification",
   };
 
   /* ---------- Logout ---------- */
@@ -428,8 +499,16 @@ export default function FacultyLayout() {
                                 type={item.type}
                                 unread={item.unread}
                                 archived={item.archived}
-                                assignmentId={item.assignmentId}
-                                onClick={() => { if (item.unread) markAsRead(item.id); }}
+                                /* 🔒 Only pass assignmentId when the reassignment
+                                   is NOT yet decided — this hides the "View"
+                                   button automatically once the faculty has
+                                   accepted/declined (or when it's a status update). */
+                                assignmentId={
+                                  isDecidedNotification(item)
+                                    ? undefined
+                                    : item.assignmentId
+                                }
+                                onClick={() => openNotification(item)}
                               />
                             </div>
                           ))
@@ -456,6 +535,72 @@ export default function FacultyLayout() {
           </main>
         </div>
       </div>
+
+      {/* ── NOTIFICATION DETAIL OVERLAY ─────────────────────── */}
+      {selectedNotification && (
+        <div
+          className="notif-detail-overlay"
+          onClick={closeNotificationDetail}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="notif-detail-card"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <span className="notif-detail-handle" aria-hidden="true" />
+
+            <button
+              type="button"
+              className="notif-detail-close"
+              onClick={closeNotificationDetail}
+              aria-label="Close"
+            >
+              <i className="fa-solid fa-xmark"></i>
+            </button>
+
+            <div className="notif-detail-head">
+              <div className={`notif-detail-icon type-${selectedNotification.type || "default"}`}>
+                <i className={typeIcon[selectedNotification.type] || typeIcon.default}></i>
+              </div>
+              <div className="notif-detail-head-text">
+                <div className="notif-detail-type">
+                  {typeLabel[selectedNotification.type] || typeLabel.default}
+                </div>
+                <h3 className="notif-detail-title">
+                  {selectedNotification.title || "Notification"}
+                </h3>
+              </div>
+            </div>
+
+            <div className="notif-detail-meta">
+              <span>
+                <i className="fa-regular fa-clock"></i>
+                {formatFullTime(selectedNotification.createdAt)}
+              </span>
+              {selectedNotification.badge && (
+                <span className="notif-detail-badge">
+                  {selectedNotification.badge}
+                </span>
+              )}
+            </div>
+
+            <div className="notif-detail-message">
+              {selectedNotification.message || "No additional details."}
+            </div>
+
+            <div className="notif-detail-footer">
+              <button
+                type="button"
+                className="notif-detail-btn"
+                onClick={closeNotificationDetail}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* LOGOUT MODAL */}
       {showLogoutConfirm && (

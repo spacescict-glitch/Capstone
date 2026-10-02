@@ -47,6 +47,7 @@ export default function ClerkLayout() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [activeTab, setActiveTab] = useState("all");
+  const [selectedNotification, setSelectedNotification] = useState(null);
 
   /* ================= AUTH + NOTIFICATIONS ================= */
   useEffect(() => {
@@ -112,6 +113,7 @@ export default function ClerkLayout() {
     setSidebarOpen(false);
     setShowProfileMenu(false);
     setShowNotifications(false);
+    setSelectedNotification(null);
   }, [location.pathname]);
 
   /* ============ LOCK BODY SCROLL WHILE DRAWER OPEN ============ */
@@ -123,6 +125,25 @@ export default function ClerkLayout() {
       document.body.style.overflow = original;
     };
   }, [sidebarOpen, isMobile]);
+
+  /* ============ LOCK BODY SCROLL WHILE NOTIF DETAIL OPEN ============ */
+  useEffect(() => {
+    if (!selectedNotification) return;
+    const original = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = original;
+    };
+  }, [selectedNotification]);
+
+  /* ============ ESC TO CLOSE NOTIF DETAIL ============ */
+  useEffect(() => {
+    const handleEsc = (e) => {
+      if (e.key === "Escape") setSelectedNotification(null);
+    };
+    window.addEventListener("keydown", handleEsc);
+    return () => window.removeEventListener("keydown", handleEsc);
+  }, []);
 
   /* ============ CLOSE PROFILE MENU ON OUTSIDE CLICK ============ */
   useEffect(() => {
@@ -153,6 +174,18 @@ export default function ClerkLayout() {
     return `${Math.floor(diff / 86400)}d ago`;
   };
 
+  const formatFullTime = (timestamp) => {
+    if (!timestamp?.toDate) return "—";
+    return timestamp.toDate().toLocaleString("en-US", {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
   const markAsRead = async (id) => {
     try {
       await updateDoc(doc(db, "notifications", id), { unread: false });
@@ -174,6 +207,15 @@ export default function ClerkLayout() {
       console.error(err);
     }
   };
+
+  const openNotification = async (item) => {
+    setSelectedNotification(item);
+    if (item.unread) {
+      await markAsRead(item.id);
+    }
+  };
+
+  const closeNotificationDetail = () => setSelectedNotification(null);
 
   const unreadCount = notifications.filter((n) => n.unread && !n.archived).length;
   const allCount = notifications.filter((n) => !n.archived).length;
@@ -206,6 +248,18 @@ export default function ClerkLayout() {
     "conflict-resolution": "fa-solid fa-circle-check",
     "schedule-upload": "fa-solid fa-upload",
     default: "fa-solid fa-bell",
+  };
+
+  const typeLabel = {
+    schedule: "Schedule",
+    urgent: "Urgent",
+    approved: "Approved",
+    "room-reassignment": "Room Reassignment",
+    "room-activity": "Room Activity",
+    "room-release": "Room Release",
+    "conflict-resolution": "Conflict Resolution",
+    "schedule-upload": "Schedule Upload",
+    default: "Notification",
   };
 
   /* ================= LOGOUT ================= */
@@ -579,7 +633,7 @@ export default function ClerkLayout() {
                                 type={item.type}
                                 unread={item.unread}
                                 archived={item.archived}
-                                onClick={() => markAsRead(item.id)}
+                                onClick={() => openNotification(item)}
                               />
                             </div>
                           ))
@@ -606,6 +660,73 @@ export default function ClerkLayout() {
           </main>
         </div>
       </div>
+
+      {/* ── NOTIFICATION DETAIL OVERLAY ─────────────────────── */}
+      {selectedNotification && (
+        <div
+          className="notif-detail-overlay-DH"
+          onClick={closeNotificationDetail}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="notif-detail-card-DH"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* drag handle — visual affordance on mobile */}
+            <span className="notif-detail-handle-DH" aria-hidden="true" />
+
+            <button
+              type="button"
+              className="notif-detail-close-DH"
+              onClick={closeNotificationDetail}
+              aria-label="Close"
+            >
+              <i className="fa-solid fa-xmark"></i>
+            </button>
+
+            <div className="notif-detail-head-DH">
+              <div className={`notif-detail-icon-DH type-${selectedNotification.type || "default"}`}>
+                <i className={typeIcon[selectedNotification.type] || typeIcon.default}></i>
+              </div>
+              <div className="notif-detail-head-text-DH">
+                <div className="notif-detail-type-DH">
+                  {typeLabel[selectedNotification.type] || typeLabel.default}
+                </div>
+                <h3 className="notif-detail-title-DH">
+                  {selectedNotification.title || "Notification"}
+                </h3>
+              </div>
+            </div>
+
+            <div className="notif-detail-meta-DH">
+              <span>
+                <i className="fa-regular fa-clock"></i>
+                {formatFullTime(selectedNotification.createdAt)}
+              </span>
+              {selectedNotification.badge && (
+                <span className="notif-detail-badge-DH">
+                  {selectedNotification.badge}
+                </span>
+              )}
+            </div>
+
+            <div className="notif-detail-message-DH">
+              {selectedNotification.message || "No additional details."}
+            </div>
+
+            <div className="notif-detail-footer-DH">
+              <button
+                type="button"
+                className="notif-detail-btn-DH"
+                onClick={closeNotificationDetail}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showLogout && (
         <LogoutPopup
