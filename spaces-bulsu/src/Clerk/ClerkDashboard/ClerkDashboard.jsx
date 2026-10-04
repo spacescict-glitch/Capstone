@@ -560,7 +560,7 @@ function ClerkDashboard() {
         <div className="clerk-dashboard-header">
           <h1 className="clerk-dashboard-title">Clerk Dashboard</h1>
           <p className="clerk-dashboard-subtitle">
-            Monitor real-time room availability, occupancy, and daily schedule across
+            Monitor room availability, occupancy, and daily schedule across
             the entire CICT department.
           </p>
         </div>
@@ -731,7 +731,7 @@ function ClerkDashboard() {
               <div className="clerk-upcoming-header">
                 <div className="clerk-upcoming-title">
                   <i className="fa-regular fa-calendar clerk-upcoming-icon"></i>
-                  <span>Upcoming Schedule</span>
+                  <span>Upcoming Schedule/s</span>
                 </div>
               </div>
 

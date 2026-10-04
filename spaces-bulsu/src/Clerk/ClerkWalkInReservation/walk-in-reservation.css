@@ -1487,3 +1487,31 @@ font-size:13px;
     padding: 12px 18px;
   }
 }
+
+/* ══════════════ 3-COLUMN ROW (Duration · From · To) ══════════════ */
+
+.wir-row-3 {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
+/* Read-only / disabled "To" field */
+.wir-input-readonly,
+.wir-input:disabled {
+  background: #F1F3F5;
+  color: #6b7280;
+  cursor: not-allowed;
+  font-weight: 600;
+}
+
+@media (max-width: 640px) {
+  .wir-row-3 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ══════════════ Room card — Available Time row ══════════════ */
+/* tighten the strong so the time range fits nicely */
+.wir-room-duration strong {
+  font-size: 15px;
+  color: #15803d;
+}

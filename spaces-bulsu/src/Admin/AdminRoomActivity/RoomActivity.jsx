@@ -45,6 +45,27 @@ const fmtDate = (d) => {
 };
 
 // ═════════════════════════════════════════════════════════════════════
+// RECENCY HELPERS — normalize any date-like value to milliseconds.
+// Handles Firestore Timestamp, Date, number, ISO string, or missing.
+// ═════════════════════════════════════════════════════════════════════
+const toMillis = (v) => {
+  if (!v) return 0;
+  if (typeof v === "number") return v;
+  if (v instanceof Date) return v.getTime();
+  if (typeof v === "object" && typeof v.seconds === "number") {
+    return v.seconds * 1000 + Math.floor((v.nanoseconds || 0) / 1e6);
+  }
+  const t = new Date(v).getTime();
+  return Number.isNaN(t) ? 0 : t;
+};
+
+// Best-effort "when was this request submitted" timestamp.
+const recencyOf = (item) =>
+  toMillis(item?.createdAt) ||
+  toMillis(item?.updatedAt) ||
+  (item?.date ? new Date(`${item.date}T00:00:00`).getTime() : 0);
+
+// ═════════════════════════════════════════════════════════════════════
 // CALENDAR HELPERS
 // ═════════════════════════════════════════════════════════════════════
 const MONTH_NAMES = [
@@ -223,11 +244,22 @@ function InlineRoomPicker({ value, valueId, onChange, rooms = [], placeholder = 
     return () => document.removeEventListener("mousedown", handle);
   }, []);
 
+  const sortedRooms = useMemo(
+    () =>
+      [...rooms].sort((a, b) =>
+        (a.roomName || "").localeCompare(b.roomName || "", undefined, {
+          numeric: true,
+          sensitivity: "base",
+        })
+      ),
+    [rooms]
+  );
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return rooms;
-    return rooms.filter((r) => (r.roomName || "").toLowerCase().includes(q));
-  }, [rooms, search]);
+    if (!q) return sortedRooms;
+    return sortedRooms.filter((r) => (r.roomName || "").toLowerCase().includes(q));
+  }, [sortedRooms, search]);
 
   const toggle = () => { setSearch(""); setOpen((v) => !v); };
 
@@ -319,7 +351,7 @@ function InlineRoomPicker({ value, valueId, onChange, rooms = [], placeholder = 
 }
 
 // ═════════════════════════════════════════════════════════════════════
-// CONFLICT ROW — reusable, parehong data shape
+// CONFLICT ROW
 // ═════════════════════════════════════════════════════════════════════
 function ConflictRow({ conflict }) {
   return (
@@ -453,10 +485,28 @@ function RoomActivity() {
       );
     }
     const sorted = [...list];
-    if (sortOrder === "newest") sorted.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
-    else if (sortOrder === "oldest") sorted.sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
-    else if (sortOrder === "date_asc") sorted.sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
-    else if (sortOrder === "date_desc") sorted.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+
+    // ── NEWEST FIRST is the default & must always win ──
+    if (sortOrder === "newest") {
+      sorted.sort((a, b) => {
+        const diff = recencyOf(b) - recencyOf(a);
+        if (diff !== 0) return diff;
+        // Stable tie-breaker: newest schedule date first, then id.
+        const dateDiff = String(b.date || "").localeCompare(String(a.date || ""));
+        if (dateDiff !== 0) return dateDiff;
+        return String(b.id || "").localeCompare(String(a.id || ""));
+      });
+    } else if (sortOrder === "oldest") {
+      sorted.sort((a, b) => {
+        const diff = recencyOf(a) - recencyOf(b);
+        if (diff !== 0) return diff;
+        return String(a.date || "").localeCompare(String(b.date || ""));
+      });
+    } else if (sortOrder === "date_asc") {
+      sorted.sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+    } else if (sortOrder === "date_desc") {
+      sorted.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+    }
     return sorted;
   }, [items, activeTab, searchTerm, roomFilter, sortOrder]);
 
@@ -718,119 +768,122 @@ function RoomActivity() {
       {reviewing && (
         <div className="ra-modal-overlay">
           <div className="ra-modal ra-modal-wide">
-            <div className="ra-modal-icon">
-              <i className="fa-solid fa-circle-check"></i>
-            </div>
-            <h3 className="ra-modal-title">
-              {editMode ? "Edit & Approve" : "Approve Request"}
-            </h3>
-            <p className="ra-modal-text">
-              You can adjust details before approving. Only affected faculty will be notified.
-            </p>
+            {/* ═════════════ SCROLLABLE BODY ═════════════ */}
+            <div className="ra-modal-scroll">
+              <div className="ra-modal-header">
+                <div className="ra-modal-icon">
+                  <i className="fa-solid fa-check"></i>
+                </div>
+                <h3 className="ra-modal-title">
+                  {editMode ? "Edit & Approve" : "Approve Request"}
+                </h3>
+                <p className="ra-modal-text">
+                  You can adjust details before approving. Only affected faculty will be notified.
+                </p>
+              </div>
 
-            {/* ═════════ CONFLICT DETAILS ═════════ */}
-            {(reviewing.item.conflicts?.length || 0) > 0 && (
-              <div className="ra-conflict-panel">
-                <div className="ra-conflict-panel-header">
-                  <i className="fa-solid fa-triangle-exclamation"></i>
-                  <div>
-                    <strong>
-                      {reviewing.item.conflicts.length} conflicting{" "}
-                      {reviewing.item.conflicts.length === 1 ? "schedule" : "schedules"}
-                    </strong>
-                    <p>
-                      These classes will be overridden. Affected faculty will be notified.
-                    </p>
+              {/* Conflict details — compact scrollable list */}
+              {(reviewing.item.conflicts?.length || 0) > 0 && (
+                <div className="ra-conflict-panel">
+                  <div className="ra-conflict-panel-header">
+                    <i className="fa-solid fa-triangle-exclamation"></i>
+                    <div>
+                      <strong>
+                        {reviewing.item.conflicts.length} conflicting{" "}
+                        {reviewing.item.conflicts.length === 1 ? "schedule" : "schedules"}
+                      </strong>
+                      <p>These classes will be overridden. Affected faculty will be notified.</p>
+                    </div>
+                  </div>
+
+                  <div className="ra-conflict-panel-list ra-conflict-panel-list--compact">
+                    {reviewing.item.conflicts.map((conflict, i) => (
+                      <ConflictRow key={conflict.scheduleId || i} conflict={conflict} />
+                    ))}
                   </div>
                 </div>
+              )}
 
-                <div className="ra-conflict-panel-list">
-                  {reviewing.item.conflicts.map((conflict, i) => (
-                    <ConflictRow
-                      key={conflict.scheduleId || i}
-                      conflict={conflict}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
+              <button className="ra-edit-toggle" onClick={() => setEditMode((v) => !v)}>
+                <i className={`fa-solid ${editMode ? "fa-eye" : "fa-pen-to-square"}`}></i>
+                {editMode ? "Preview only" : "Edit before approving"}
+              </button>
 
-            <button className="ra-edit-toggle" onClick={() => setEditMode((v) => !v)}>
-              <i className={`fa-solid ${editMode ? "fa-eye" : "fa-pen-to-square"}`}></i>
-              {editMode ? "Preview only" : "Edit before approving"}
-            </button>
-
-            {editMode ? (
-              <div className="ra-edit-grid">
-                <label>
-                  Title
-                  <input
-                    value={draft.title}
-                    onChange={(e) => setDraft({ ...draft, title: e.target.value })}
-                  />
-                </label>
-
-                <label>
-                  Room
-                  <InlineRoomPicker
-                    value={draft.roomName}
-                    valueId={draft.roomId}
-                    rooms={roomsList}
-                    onChange={(roomName, roomId) =>
-                      setDraft({ ...draft, roomName, roomId })
-                    }
-                    placeholder="Select room"
-                  />
-                </label>
-
-                <label>
-                  Date
-                  <InlineDatePicker
-                    value={draft.date}
-                    onChange={(v) => setDraft({ ...draft, date: v })}
-                    placeholder="Select date"
-                  />
-                </label>
-
-                <div className="ra-row-2">
+              {editMode ? (
+                <div className="ra-edit-grid">
                   <label>
-                    Start
+                    Title
                     <input
-                      type="time"
-                      value={draft.startTime}
-                      onChange={(e) => setDraft({ ...draft, startTime: e.target.value })}
+                      value={draft.title}
+                      onChange={(e) => setDraft({ ...draft, title: e.target.value })}
                     />
                   </label>
+
                   <label>
-                    End
-                    <input
-                      type="time"
-                      value={draft.endTime}
-                      onChange={(e) => setDraft({ ...draft, endTime: e.target.value })}
+                    Room
+                    <InlineRoomPicker
+                      value={draft.roomName}
+                      valueId={draft.roomId}
+                      rooms={roomsList}
+                      onChange={(roomName, roomId) =>
+                        setDraft({ ...draft, roomName, roomId })
+                      }
+                      placeholder="Select room"
+                    />
+                  </label>
+
+                  <label>
+                    Date
+                    <InlineDatePicker
+                      value={draft.date}
+                      onChange={(v) => setDraft({ ...draft, date: v })}
+                      placeholder="Select date"
+                    />
+                  </label>
+
+                  <div className="ra-row-2">
+                    <label>
+                      Start
+                      <input
+                        type="time"
+                        value={draft.startTime}
+                        onChange={(e) => setDraft({ ...draft, startTime: e.target.value })}
+                      />
+                    </label>
+                    <label>
+                      End
+                      <input
+                        type="time"
+                        value={draft.endTime}
+                        onChange={(e) => setDraft({ ...draft, endTime: e.target.value })}
+                      />
+                    </label>
+                  </div>
+
+                  <label>
+                    Reason
+                    <textarea
+                      rows={3}
+                      value={draft.reason}
+                      onChange={(e) => setDraft({ ...draft, reason: e.target.value })}
                     />
                   </label>
                 </div>
+              ) : (
+                <div className="ra-modal-summary">
+                  <div className="ra-modal-summary-row"><i className="fa-solid fa-bookmark"></i><span>{draft.title || "Untitled"}</span></div>
+                  <div className="ra-modal-summary-row"><i className="fa-solid fa-door-open"></i><span>{draft.roomName}</span></div>
+                  <div className="ra-modal-summary-row"><i className="fa-regular fa-calendar"></i><span>{fmtDate(draft.date)}</span></div>
+                  <div className="ra-modal-summary-row"><i className="fa-regular fa-clock"></i><span>{fmt12(draft.startTime)} – {fmt12(draft.endTime)}</span></div>
+                </div>
+              )}
+            </div>
 
-                <label>
-                  Reason
-                  <textarea
-                    rows={3}
-                    value={draft.reason}
-                    onChange={(e) => setDraft({ ...draft, reason: e.target.value })}
-                  />
-                </label>
-              </div>
-            ) : (
-              <div className="ra-modal-summary">
-                <div className="ra-modal-summary-row"><i className="fa-solid fa-bookmark"></i><span>{draft.title || "Untitled"}</span></div>
-                <div className="ra-modal-summary-row"><i className="fa-solid fa-door-open"></i><span>{draft.roomName}</span></div>
-                <div className="ra-modal-summary-row"><i className="fa-regular fa-calendar"></i><span>{fmtDate(draft.date)}</span></div>
-                <div className="ra-modal-summary-row"><i className="fa-regular fa-clock"></i><span>{fmt12(draft.startTime)} – {fmt12(draft.endTime)}</span></div>
-              </div>
-            )}
-
+            {/* ═════════════ FIXED FOOTER ═════════════ */}
             <div className="ra-modal-actions">
-              <button className="ra-modal-cancel" onClick={() => setReviewing(null)} disabled={processing}>Cancel</button>
+              <button className="ra-modal-cancel" onClick={() => setReviewing(null)} disabled={processing}>
+                Cancel
+              </button>
               <button className="ra-modal-confirm" onClick={handleApprove} disabled={processing}>
                 {processing ? "Approving…" : "Approve Request"}
               </button>
@@ -885,7 +938,6 @@ function ReviewCard({ item, onReview }) {
         )}
       </div>
 
-      {/* ═════════ Conflict preview sa card ═════════ */}
       {conflicts.length > 0 && (
         <div className="ra-review-conflict-preview">
           <div className="ra-review-conflict-preview-title">

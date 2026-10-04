@@ -70,7 +70,7 @@ const getTodayISO = () => {
 };
 
 // ══════════════════════════════════════════════════════════════
-// Inline Confirm Modal — may built-in loading state
+// Inline Confirm Modal
 // ══════════════════════════════════════════════════════════════
 function ConfirmModal({
   title,
@@ -78,7 +78,7 @@ function ConfirmModal({
   confirmText = "Confirm",
   cancelText = "Cancel",
   loadingText = "Processing…",
-  variant = "primary", // primary | warning | danger | success
+  variant = "primary",
   icon = "fa-solid fa-circle-question",
   loading = false,
   onCancel,
@@ -440,14 +440,19 @@ export default function ClerkRoomIssues() {
   };
 
   // ══════════════════════════════════════════════════════════
-  // ACTION: Restore Room
+  // ACTION: Mark as Resolved
+  // Now also restores the room to Available and notifies faculty.
   // ══════════════════════════════════════════════════════════
-  const restoreRoom = (issue) => {
+  const markResolved = (issue) => {
+    const wasUnderMaintenance = !!maintenanceRooms[issue.roomId];
+
     setConfirmAction({
-      title: "Restore Room?",
-      message: `Remove the Under Maintenance flag from ${issue.roomName}? All affected faculty will be notified that the room is available again.`,
-      confirmText: "Restore Room",
-      loadingText: "Restoring room…",
+      title: "Mark as Resolved?",
+      message: wasUnderMaintenance
+        ? `Mark the ${issue.category} issue in ${issue.roomName} as Resolved? The room will be restored to Available and all affected faculty will be notified that their classes can resume.`
+        : `Mark the ${issue.category} issue in ${issue.roomName} as Resolved? Affected faculty will be notified if applicable.`,
+      confirmText: "Mark as Resolved",
+      loadingText: "Resolving…",
       variant: "success",
       icon: "fa-solid fa-circle-check",
       onConfirm: async () => {
@@ -456,6 +461,14 @@ export default function ClerkRoomIssues() {
           const u = await getCurrentUser();
           const today = getTodayISO();
 
+          // 1. Resolve the issue
+          await updateDoc(doc(db, "roomIssues", issue.id), {
+            status: "Resolved",
+            resolvedBy: u.name,
+            resolvedAt: serverTimestamp(),
+          });
+
+          // 2. Restore room to Available (same as old restoreRoom)
           await updateDoc(doc(db, "rooms", issue.roomId), {
             status: "Available",
             roomStatus: "active",
@@ -468,20 +481,23 @@ export default function ClerkRoomIssues() {
             maintenanceEndDate: null,
           });
 
+          // 3. Log activity
           await logActivity({
             user: u.name, role: u.role,
-            action: "Restored room from maintenance",
+            action: "Marked issue as Resolved",
             actionType: "edit",
-            target: `${issue.roomName}`,
+            target: `${issue.roomName} • ${issue.category || ""}`,
             status: "Success",
           });
 
+          // 4. Notify the original reporter
           await notifyReporter(
             issue,
-            "Room Restored",
-            `${issue.roomName} has been restored and is now available again.`
+            "Issue Resolved",
+            `Your reported issue in ${issue.roomName} (${issue.category}) has been resolved. The room is now available. Thank you for reporting!`
           );
 
+          // 5. Notify all affected faculty that the room is back
           const { notifiedCount, totalSchedules } = await notifyAffectedFaculty({
             roomId: issue.roomId,
             roomName: issue.roomName,
@@ -491,57 +507,9 @@ export default function ClerkRoomIssues() {
 
           showToast(
             "success",
-            "Room Restored",
+            "Issue Resolved",
             `${issue.roomName} is now Available. ${notifiedCount} faculty notified (${totalSchedules} schedule${totalSchedules === 1 ? "" : "s"} back on track).`
           );
-        } catch (err) {
-          console.error(err);
-          showToast("error", "Update Failed", err.message);
-        } finally {
-          setBusy(false);
-          setConfirmAction(null);
-        }
-      },
-    });
-  };
-
-  // ══════════════════════════════════════════════════════════
-  // ACTION: Mark as Resolved
-  // ══════════════════════════════════════════════════════════
-  const markResolved = (issue) => {
-    setConfirmAction({
-      title: "Mark as Resolved?",
-      message: `Mark the ${issue.category} issue in ${issue.roomName} as Resolved?`,
-      confirmText: "Mark as Resolved",
-      loadingText: "Resolving…",
-      variant: "success",
-      icon: "fa-solid fa-check",
-      onConfirm: async () => {
-        setBusy(true);
-        try {
-          const u = await getCurrentUser();
-
-          await updateDoc(doc(db, "roomIssues", issue.id), {
-            status: "Resolved",
-            resolvedBy: u.name,
-            resolvedAt: serverTimestamp(),
-          });
-
-          await logActivity({
-            user: u.name, role: u.role,
-            action: "Marked issue as Resolved",
-            actionType: "edit",
-            target: `${issue.roomName} • ${issue.category || ""}`,
-            status: "Success",
-          });
-
-          await notifyReporter(
-            issue,
-            "Issue Resolved",
-            `Your reported issue in ${issue.roomName} (${issue.category}) has been resolved. Thank you for reporting!`
-          );
-
-          showToast("success", "Resolved", "Issue marked as resolved.");
         } catch (err) {
           console.error(err);
           showToast("error", "Failed", err.message);
@@ -867,7 +835,6 @@ export default function ClerkRoomIssues() {
                 busy={busy}
                 roomIsUnderMaintenance={!!maintenanceRooms[issue.roomId]}
                 onMarkMaintenance={markUnderMaintenance}
-                onRestore={restoreRoom}
                 onMarkResolved={markResolved}
               />
             ))}

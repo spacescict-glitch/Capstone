@@ -165,7 +165,7 @@ function ClerkReservations() {
   const [searchTerm, setSearchTerm] = useState("");
   const [filterRoom, setFilterRoom] = useState("");
   const [filterDate, setFilterDate] = useState("");
-  const [sortBy, setSortBy] = useState("date");
+  // Always sorts by date — only order toggles (Newest First / Oldest First)
   const [sortOrder, setSortOrder] = useState("desc");
 
   // ─── Room picker popover ────────────────────────────────────────────
@@ -289,24 +289,10 @@ function ClerkReservations() {
     return true;
   });
 
+  // Always sort by date — order toggles via sortOrder ("desc" = newest first)
   const sorted = [...filtered].sort((a, b) => {
-    let aVal, bVal;
-    switch (sortBy) {
-      case "date":
-        aVal = a.date || "";
-        bVal = b.date || "";
-        break;
-      case "room":
-        aVal = normalizeRoom(a.roomName);
-        bVal = normalizeRoom(b.roomName);
-        break;
-      case "faculty":
-        aVal = (a.facultyName || a.requesterName || "").toLowerCase();
-        bVal = (b.facultyName || b.requesterName || "").toLowerCase();
-        break;
-      default:
-        return 0;
-    }
+    const aVal = a.date || "";
+    const bVal = b.date || "";
     if (aVal < bVal) return sortOrder === "asc" ? -1 : 1;
     if (aVal > bVal) return sortOrder === "asc" ? 1 : -1;
     return 0;
@@ -338,12 +324,20 @@ function ClerkReservations() {
     return map;
   }, [reservations]);
 
+  // Alphabetical (A → Z) room options
   const roomOptions = useMemo(
     () =>
-      Array.from(roomMap.entries()).map(([normalized, original]) => ({
-        normalized,
-        original,
-      })),
+      Array.from(roomMap.entries())
+        .map(([normalized, original]) => ({
+          normalized,
+          original,
+        }))
+        .sort((a, b) =>
+          a.original.localeCompare(b.original, undefined, {
+            sensitivity: "base",
+            numeric: true,
+          })
+        ),
     [roomMap]
   );
 
@@ -363,7 +357,6 @@ function ClerkReservations() {
     setSearchTerm("");
     setFilterRoom("");
     setFilterDate("");
-    setSortBy("date");
     setSortOrder("desc");
   };
 
@@ -567,7 +560,8 @@ function ClerkReservations() {
       {/* ── Filter Bar ── */}
       <div className="clerk-filter-bar-outer">
         <div className="clerk-filter-row">
-          <div className="clerk-filter-group">
+          {/* ── SEARCH (wider, like Admin) ── */}
+          <div className="clerk-filter-group clerk-search-group">
             <i className="fa-solid fa-magnifying-glass"></i>
             <input
               type="text"
@@ -817,25 +811,28 @@ function ClerkReservations() {
             </div>
           </div>
 
-          <div className="clerk-filter-group clerk-sort-group">
-            <i className="fa-solid fa-arrow-up-wide-short"></i>
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value)}
-              className="clerk-filter-select"
-            >
-              <option value="date">Sort by Date</option>
-              <option value="room">Sort by Room</option>
-              <option value="faculty">Sort by Faculty</option>
-            </select>
-            <button
-              className="clerk-sort-order-btn"
-              onClick={() => setSortOrder((prev) => (prev === "asc" ? "desc" : "asc"))}
-              title={sortOrder === "asc" ? "Ascending" : "Descending"}
-            >
-              <i className={`fa-solid fa-arrow-${sortOrder === "asc" ? "up" : "down"}`}></i>
-            </button>
-          </div>
+          {/* ── SORT BY DATE — single toggle button (Newest / Oldest) ── */}
+          <button
+            type="button"
+            className={`clerk-date-sort-btn ${sortOrder}`}
+            onClick={() =>
+              setSortOrder((prev) => (prev === "asc" ? "desc" : "asc"))
+            }
+            title={
+              sortOrder === "asc"
+                ? "Currently showing oldest first — click for newest first"
+                : "Currently showing newest first — click for oldest first"
+            }
+          >
+            <i
+              className={`fa-solid fa-arrow-${
+                sortOrder === "asc" ? "up-long" : "down-long"
+              }`}
+            ></i>
+            <span>
+              {sortOrder === "asc" ? "Oldest First" : "Newest First"}
+            </span>
+          </button>
 
           <button className="clerk-clear-filters-btn" onClick={clearFilters}>
             <i className="fa-solid fa-rotate-left"></i> Clear
@@ -877,7 +874,6 @@ function ClerkReservations() {
         </div>
         <hr className="clerk-reservations-nav-divider" />
 
-        {/* ⬇️ Pure vertical list — wala nang grid class */}
         <div
           className={`clerk-reservations-content ${
             isEmpty ? "clerk-reservations-content--empty" : ""

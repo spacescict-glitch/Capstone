@@ -1,77 +1,72 @@
+/* ═══════════════════════════════════════════════════════════════
+   ISSUE REPORT CARD — minimalist, fixed-slot layout
+   Every card has the same structure and height:
+   header · photo row · description (2 lines) · footer · action slot
+   ═══════════════════════════════════════════════════════════════ */
 .irc {
-  background: #fff;
-  border-radius: 16px;
-  border: 1.5px solid #ececec;
-  padding: 14px 16px 14px;
+  --irc-accent: #9ca3af;
+  background: linear-gradient(180deg, var(--irc-tint) 0%, #ffffff 58%);
+  border: 1px solid var(--irc-line);
+  border-radius: 14px;
+  padding: 16px 16px 16px 20px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   font-family: 'Lexend', sans-serif;
-  transition: box-shadow 0.18s, border-color 0.18s, transform 0.15s;
-  /* No magic min-height here. Cards in a row match height because the
-     grid/flex row they sit in stretches items by default (align-items:
-     stretch) — .irc just needs to be able to grow to fill that, and
-     the description below (flex: 1 1 auto) absorbs any leftover space
-     so a short card doesn't leave a big dead gap at the bottom. */
   height: 100%;
+  box-sizing: border-box;
   position: relative;
   overflow: hidden;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
-
-/* Top accent bar, in addition to the left border, for a stronger
-   visual read of status at a glance. */
 .irc::before {
   content: "";
   position: absolute;
-  top: 0;
   left: 0;
-  right: 0;
-  height: 3px;
-  background: currentColor;
-  opacity: 0.9;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  background: var(--irc-accent);
 }
-
 .irc:hover {
-  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
-  transform: translateY(-2px);
+  border-color: var(--irc-accent);
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--irc-accent) 22%, transparent);
 }
 
-.irc.pending      { border-left: 4px solid #eab308; color: #eab308; }
-.irc.acknowledged { border-left: 4px solid #3b82f6; color: #3b82f6; }
-.irc.progress     { border-left: 4px solid #f97316; color: #f97316; }
-.irc.resolved     { border-left: 4px solid #16a34a; color: #16a34a; opacity: 0.94; }
+.irc.pending      { --irc-accent: #eab308; --irc-tint: #FEF6D8; --irc-line: #F3DE9A; }
+.irc.acknowledged { --irc-accent: #3b82f6; --irc-tint: #E3EEFE; --irc-line: #B9D3FA; }
+.irc.progress     { --irc-accent: #f97316; --irc-tint: #FFEBD9; --irc-line: #FAC9A0; }
+.irc.resolved     { --irc-accent: #16a34a; --irc-tint: #DFF6E6; --irc-line: #A9E0BA; }
 
-/* ── HEADER ─────────────────────────────────────────────────── */
+/* ── HEADER ── */
 .irc-top {
   display: flex;
   align-items: flex-start;
   gap: 12px;
+  height: 40px;
 }
 
 .irc-icon-wrap {
-  width: 38px;
-  height: 38px;
-  border-radius: 11px;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
+  font-size: 15px;
   flex-shrink: 0;
-  background: color-mix(in srgb, currentColor 12%, white);
-  transition: transform 0.15s;
+  background: var(--irc-accent);
+  color: #fff;
+  box-shadow: 0 4px 10px color-mix(in srgb, var(--irc-accent) 35%, transparent);
 }
 
-.irc:hover .irc-icon-wrap {
-  transform: scale(1.05);
-}
-
-.irc-headline { flex: 1; min-width: 0; color: #16213e; }
+.irc-headline { flex: 1; min-width: 0; }
 
 .irc-title-row {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .irc-room {
@@ -79,147 +74,88 @@
   font-size: 14.5px;
   font-weight: 800;
   color: #16213e;
-}
-
-.irc-floor {
-  font-size: 11px;
-  color: #6b7280;
-  font-weight: 600;
-  padding: 2px 8px;
-  background: #f3f4f6;
-  border-radius: 999px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .irc-category {
   font-size: 12px;
   color: #6b7280;
   font-weight: 600;
-  margin-top: 2px;
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
+.irc-category-floor { color: #9ca3af; font-weight: 500; }
+.irc-category-maint { color: #f57c00; font-weight: 700; }
 
-.irc-tags-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 6px;
-}
-
-.irc-category-tag {
-  font-size: 11px;
-  font-weight: 700;
-  padding: 3px 10px;
-  border-radius: 999px;
-  letter-spacing: 0.01em;
-}
-
-.irc-badges {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
+/* Severity — beside room name */
 .irc-sev {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 10px;
-  font-weight: 800;
-  padding: 3px 9px 3px 7px;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 8px;
   border-radius: 999px;
   color: var(--sev);
-  background: color-mix(in srgb, var(--sev) 12%, white);
-  border: 1px solid color-mix(in srgb, var(--sev) 30%, white);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  background: color-mix(in srgb, var(--sev) 11%, white);
+  flex-shrink: 0;
+  white-space: nowrap;
 }
-
 .irc-sev-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--sev);
-  flex-shrink: 0;
 }
 
+/* Status — upper right */
 .irc-status {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 10px;
-  font-weight: 800;
-  padding: 5px 11px;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 4px 10px;
   border-radius: 999px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
   flex-shrink: 0;
   white-space: nowrap;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
 }
+.irc-status.pending      { background: #FDE68A; color: #92400E; }
+.irc-status.acknowledged { background: #BFDBFE; color: #1E40AF; }
+.irc-status.progress     { background: #FED7AA; color: #9A3412; }
+.irc-status.resolved     { background: #BBF7D0; color: #166534; }
 
-.irc-status.pending      { background: #FEF3C7; color: #B45309; }
-.irc-status.acknowledged { background: #DBEAFE; color: #1D4ED8; }
-.irc-status.progress     { background: #FFEDD5; color: #C2410C; }
-.irc-status.resolved     { background: #DCFCE7; color: #15803D; }
-
-/* ══════════════════════════════════════════════════════════════
-   MEDIA — only rendered when photos exist
-   ══════════════════════════════════════════════════════════════ */
-.irc-media {
-  position: relative;
-  width: 100%;
-  height: 128px;
-  border-radius: 11px;
-  overflow: hidden;
-  background: #f3f4f6;
-  flex-shrink: 0;
-}
-
-/* ── Multi-photo grid ── */
-.irc-photo-grid {
+/* ── PHOTO ROW (fixed 56px, always rendered) ── */
+.irc-photos {
   display: grid;
-  width: 100%;
-  height: 100%;
-  gap: 3px;
-}
-
-.irc-photo-grid.count-1 {
-  grid-template-columns: 1fr;
-  grid-template-rows: 1fr;
-}
-
-.irc-photo-grid.count-2 {
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr;
-}
-
-.irc-photo-grid.count-3 {
-  grid-template-columns: 2fr 1fr;
-  grid-template-rows: 1fr 1fr;
-}
-.irc-photo-grid.count-3 .irc-photo-cell:nth-child(1) { grid-row: span 2; }
-
-.irc-photo-grid.count-4 {
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  height: 56px;
+  flex-shrink: 0;
 }
 
 .irc-photo-cell {
   position: relative;
   border: none;
   padding: 0;
-  background: #e5e7eb;
-  cursor: pointer;
+  border-radius: 8px;
   overflow: hidden;
+  background: #f3f4f6;
+  cursor: pointer;
   display: block;
-  width: 100%;
   height: 100%;
-  transition: transform 0.15s;
+  transition: opacity 0.15s;
 }
-.irc-photo-cell:hover { transform: scale(1.02); }
-
+.irc-photo-cell:hover { opacity: 0.85; }
+.irc-photo-cell:focus-visible {
+  outline: 2px solid #f57c00;
+  outline-offset: 2px;
+}
 .irc-photo-cell img {
   width: 100%;
   height: 100%;
@@ -227,119 +163,32 @@
   display: block;
 }
 
-.irc-photo-more-overlay {
+.irc-photo-more {
   position: absolute;
   inset: 0;
-  background: rgba(15, 23, 42, 0.65);
+  background: rgba(15, 23, 42, 0.6);
   color: #fff;
-  font-size: 20px;
+  font-size: 14px;
   font-weight: 800;
   display: flex;
   align-items: center;
   justify-content: center;
-  backdrop-filter: blur(2px);
 }
 
-.irc-photo-count {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 9px;
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.75);
-  color: #fff;
-  font-size: 10.5px;
-  font-weight: 700;
-  backdrop-filter: blur(3px);
-  z-index: 2;
-}
-.irc-photo-count i { font-size: 10.5px; }
-
-/* ── Maintenance ribbon, shown over an actual photo ── */
-.irc-maint-ribbon {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: #f57c00;
-  color: #fff;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  padding: 5px 9px;
-  border-radius: 999px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
-  z-index: 2;
-}
-.irc-maint-ribbon i { font-size: 9px; }
-
-/* ══════════════════════════════════════════════════════════════
-   NO PHOTO — a compact, quiet row instead of a big empty box.
-   Deliberately shorter than .irc-media: the description's flex
-   grow (below) takes up the difference, so cards still line up
-   without this state looking like padded-out dead space.
-   ══════════════════════════════════════════════════════════════ */
-.irc-no-media {
+.irc-photos--empty {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-shrink: 0;
-}
-
-.irc-photo-placeholder {
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-  padding: 8px 12px;
-  border-radius: 10px;
-  background: #fafafa;
-  border: 1px dashed #e5e7eb;
-}
-
-.irc-photo-placeholder-icon {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  background: #eef0f3;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px dashed var(--irc-line);
   color: #9ca3af;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  flex-shrink: 0;
-}
-
-.irc-photo-placeholder-text {
   font-size: 12px;
   font-weight: 600;
-  color: #9ca3af;
 }
 
-.irc-maint-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: #fff3e8;
-  color: #c2610a;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  padding: 6px 10px;
-  border-radius: 999px;
-  flex-shrink: 0;
-}
-.irc-maint-chip i { font-size: 9px; }
-
-/* ── DESCRIPTION — grows to soak up any leftover height so cards
-   of different content still line up cleanly at the bottom ── */
+/* ── DESCRIPTION — always exactly 2 lines tall ── */
 .irc-description {
   margin: 0;
   font-size: 13px;
@@ -351,151 +200,451 @@
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  flex: 1 1 auto;
-  min-height: calc(13px * 1.5 * 2);
-}
-
-/* ── META ── */
-.irc-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 14px;
-  font-size: 11px;
-  color: #6b7280;
-  font-weight: 600;
-  padding-top: 9px;
-  border-top: 1px dashed #f0f0f0;
-}
-
-.irc-meta span {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.irc-meta-reporter {
-  color: #374151;
-  font-weight: 700;
-}
-
-.irc-avatar-mini {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #ffb35c, #f57c00);
-  color: #fff;
-  font-size: 9px;
-  font-weight: 800;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  height: calc(13px * 1.5 * 2);
   flex-shrink: 0;
 }
 
-.irc-meta-ok { color: #16a34a; }
-.irc-meta-info { color: #2563eb; }
-
-/* ── NOTES ── */
-.irc-notes {
+/* ── FOOTER: meta left, details right ── */
+.irc-foot {
   display: flex;
-  gap: 8px;
-  padding: 9px 11px;
-  background: #FFF9F3;
-  border-radius: 10px;
-  font-size: 12px;
-  color: #7c4a1f;
-  border: 1px solid #FCE7D2;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  height: 28px;
+  padding-top: 10px;
+  border-top: 1px solid var(--irc-line);
+  box-sizing: content-box;
+  flex-shrink: 0;
 }
-.irc-notes i { color: #f57c00; margin-top: 2px; }
 
-/* ── ACTIONS (pushed to bottom) ── */
+.irc-meta {
+  min-width: 0;
+  font-size: 11.5px;
+  color: #6b7280;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.irc-view-details {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding: 0 4px 0 8px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: #f57c00;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+.irc-view-details:hover { background: rgba(245, 124, 0, 0.12); }
+.irc-view-details:focus-visible {
+  outline: 2px solid #f57c00;
+  outline-offset: 1px;
+}
+.irc-view-details-icons {
+  display: inline-flex;
+  gap: 5px;
+  color: #c9a27a;
+  font-size: 10.5px;
+}
+.irc-view-details-arrow { font-size: 9px; transition: transform 0.15s; }
+.irc-view-details:hover .irc-view-details-arrow { transform: translateX(2px); }
+
+/* ── ACTION SLOT — fixed 38px ── */
 .irc-actions {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
+  height: 38px;
   margin-top: auto;
-  padding-top: 10px;
-  border-top: 1px dashed #f0f0f0;
+  flex-shrink: 0;
 }
 
 .irc-hint {
   font-size: 11.5px;
+  line-height: 1.35;
   color: #6b7280;
-  font-weight: 600;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  background: #F8FAFC;
-  border: 1px dashed #E2E8F0;
-  border-radius: 10px;
-  padding: 8px 11px;
-}
-
-.irc-hint i {
-  color: #94a3b8;
-  font-size: 12px;
-  flex-shrink: 0;
+  font-weight: 500;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .irc-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 38px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 7px;
-  padding: 8px 13px;
+  padding: 0 12px;
   border-radius: 10px;
   border: 1.5px solid transparent;
   font-family: inherit;
   font-size: 12px;
   font-weight: 700;
+  white-space: nowrap;
   cursor: pointer;
   transition: 0.15s;
-  flex: 1 1 auto;
-  min-width: 140px;
 }
-
-.irc-btn.primary {
-  background: #f57c00;
-  color: #fff;
-  border-color: #f57c00;
-  box-shadow: 0 6px 16px rgba(245, 124, 0, 0.25);
-}
-.irc-btn.primary:hover:not(:disabled) {
-  background: #d96a00;
-  transform: translateY(-1px);
-}
-
-.irc-btn.outline {
-  background: transparent;
-  color: #f57c00;
-  border-color: #f57c00;
-}
-.irc-btn.outline:hover:not(:disabled) { background: #FFF3EA; }
-
-.irc-btn.success {
-  background: #16a34a;
-  color: #fff;
-  border-color: #16a34a;
-  box-shadow: 0 6px 16px rgba(22, 163, 74, 0.22);
-}
-.irc-btn.success:hover:not(:disabled) {
-  background: #15803d;
-  transform: translateY(-1px);
-}
-
-.irc-btn.danger {
-  background: transparent;
-  color: #dc2626;
-  border-color: #dc2626;
-}
-.irc-btn.danger:hover:not(:disabled) { background: #fee2e2; }
-
+.irc-btn.primary { background: #f57c00; color: #fff; border-color: #f57c00; }
+.irc-btn.primary:hover:not(:disabled) { background: #d96a00; border-color: #d96a00; }
+.irc-btn.success { background: #16a34a; color: #fff; border-color: #16a34a; }
+.irc-btn.success:hover:not(:disabled) { background: #15803d; border-color: #15803d; }
+.irc-btn.danger  { background: #fff; color: #dc2626; border-color: #f3c4c4; }
+.irc-btn.danger:hover:not(:disabled) { background: #fef2f2; border-color: #dc2626; }
 .irc-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.irc-btn:active:not(:disabled) { transform: translateY(0); }
 
-/* ── LIGHTBOX ── */
+/* ═══════════════════════════════════════════════════════════════
+   FULL DETAILS MODAL
+   ═══════════════════════════════════════════════════════════════ */
+.irc-details-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 99990;
+  padding: 20px;
+  animation: ircFade 0.18s ease;
+}
+
+.irc-details-modal {
+  position: relative;
+  width: 100%;
+  max-width: 560px;
+  max-height: 88vh;
+  overflow-y: auto;
+  background: #fff;
+  border-radius: 20px;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 25px 60px rgba(0, 0, 0, 0.28);
+  padding: 26px 26px 22px;
+  font-family: 'Lexend', sans-serif;
+  animation: ircDetailsPop 0.22s cubic-bezier(0.34, 1.4, 0.64, 1);
+  scrollbar-width: thin;
+  scrollbar-color: #e5e7eb transparent;
+}
+.irc-details-modal::-webkit-scrollbar { width: 8px; }
+.irc-details-modal::-webkit-scrollbar-thumb {
+  background: #e5e7eb;
+  border-radius: 999px;
+}
+
+@keyframes ircDetailsPop {
+  from { opacity: 0; transform: translateY(12px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.irc-details-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: none;
+  background: #f5f6fa;
+  color: #6b7280;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  transition: 0.15s;
+  z-index: 2;
+}
+.irc-details-close:hover { background: #fee2e2; color: #b91c1c; }
+
+/* Header — status sits left of the close button (upper right) */
+.irc-details-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #f0f0f0;
+  margin-bottom: 18px;
+  padding-right: 46px;
+}
+
+.irc-details-icon {
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  flex-shrink: 0;
+}
+.irc-details-icon.pending      { background: #FEF3C7; color: #B45309; }
+.irc-details-icon.acknowledged { background: #DBEAFE; color: #1D4ED8; }
+.irc-details-icon.progress     { background: #FFEDD5; color: #C2410C; }
+.irc-details-icon.resolved     { background: #DCFCE7; color: #15803D; }
+
+.irc-details-header-text { flex: 1; min-width: 0; }
+
+.irc-details-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.irc-details-title-row h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 800;
+  color: #16213e;
+  letter-spacing: -0.01em;
+  word-break: break-word;
+}
+.irc-details-header-text p {
+  margin: 0;
+  font-size: 12.5px;
+  color: #6b7280;
+  font-weight: 600;
+}
+
+.irc-details-status { margin-top: 2px; }
+
+.irc-details-modal.pending      { --irc-accent: #eab308; --irc-tint: #FEF6D8; }
+.irc-details-modal.acknowledged { --irc-accent: #3b82f6; --irc-tint: #E3EEFE; }
+.irc-details-modal.progress     { --irc-accent: #f97316; --irc-tint: #FFEBD9; }
+.irc-details-modal.resolved     { --irc-accent: #16a34a; --irc-tint: #DFF6E6; }
+.irc-details-modal {
+  background: linear-gradient(180deg, var(--irc-tint) 0%, #ffffff 160px);
+  border-top: 5px solid var(--irc-accent);
+}
+
+/* progress track (modal) */
+.irc-track { display: flex; align-items: flex-start; padding: 0 4px; }
+.irc-track-step {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.irc-track-step:not(:first-child)::before {
+  content: "";
+  position: absolute;
+  top: 7px;
+  right: 50%;
+  width: 100%;
+  height: 2px;
+  background: #e5e7eb;
+}
+.irc-track-step.done:not(:first-child)::before,
+.irc-track-step.current:not(:first-child)::before { background: var(--irc-accent); }
+.irc-track-dot {
+  position: relative;
+  z-index: 1;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #d1d5db;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+  color: #fff;
+}
+.irc-track-step.done .irc-track-dot { background: var(--irc-accent); border-color: var(--irc-accent); }
+.irc-track-step.current .irc-track-dot {
+  border-color: var(--irc-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--irc-accent) 25%, transparent);
+}
+.irc-track-step.current .irc-track-dot::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--irc-accent);
+}
+.irc-track-label { font-size: 11px; font-weight: 600; color: #9ca3af; text-align: center; }
+.irc-track-step.done .irc-track-label { color: #6b7280; }
+.irc-track-step.current .irc-track-label { color: #16213e; font-weight: 800; }
+
+/* overview grid */
+.irc-overview {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: #EFEAE4;
+  border: 1px solid #EFEAE4;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.irc-overview > div { background: #fff; padding: 10px 12px; min-width: 0; }
+.irc-overview dt { font-size: 11px; font-weight: 600; color: #9ca3af; margin-bottom: 3px; }
+.irc-overview dd {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: #16213e;
+  word-break: break-word;
+}
+.irc-overview-sub { font-weight: 500; color: #6b7280; text-transform: capitalize; }
+.irc-overview-warn { color: #c2610a; }
+
+.irc-details-body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.irc-details-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.irc-details-label {
+  font-size: 12px;
+  font-weight: 800;
+  color: #94a3b8;
+}
+
+.irc-details-text {
+  margin: 0;
+  font-size: 13.5px;
+  color: #374151;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #F8F7F5;
+  border-radius: 10px;
+  padding: 12px 14px;
+  border: 1px solid #EFEAE4;
+}
+
+.irc-details-photos {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+  gap: 8px;
+}
+
+.irc-details-photo {
+  aspect-ratio: 1;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1.5px solid #e5e7eb;
+  background: #f3f4f6;
+  cursor: pointer;
+  padding: 0;
+  transition: 0.15s;
+}
+.irc-details-photo:hover {
+  transform: scale(1.03);
+  border-color: #f57c00;
+}
+.irc-details-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Vertical activity timeline */
+.irc-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.irc-timeline-item {
+  position: relative;
+  display: flex;
+  gap: 12px;
+  padding-bottom: 16px;
+}
+.irc-timeline-item.last { padding-bottom: 0; }
+
+.irc-timeline-item:not(.last)::before {
+  content: "";
+  position: absolute;
+  left: 13px;
+  top: 28px;
+  bottom: 0;
+  width: 2px;
+  background: #e5e7eb;
+}
+
+.irc-timeline-dot {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--ev);
+  background: color-mix(in srgb, var(--ev) 14%, white);
+  border: 1.5px solid color-mix(in srgb, var(--ev) 35%, white);
+}
+
+.irc-timeline-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 3px;
+  min-width: 0;
+}
+.irc-timeline-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #16213e;
+}
+.irc-timeline-by { font-weight: 500; color: #6b7280; }
+.irc-timeline-time {
+  font-size: 11.5px;
+  color: #9ca3af;
+  font-weight: 500;
+}
+
+.irc-details-notes {
+  display: flex;
+  gap: 10px;
+  padding: 12px 14px;
+  background: #FFF9F3;
+  border: 1px solid #FCE7D2;
+  border-radius: 10px;
+  font-size: 12.5px;
+  color: #7c4a1f;
+  line-height: 1.55;
+  font-weight: 500;
+  word-break: break-word;
+}
+.irc-details-notes i { color: #f57c00; margin-top: 2px; flex-shrink: 0; }
+
+.irc-details-notes--maint {
+  background: #FFF3E8;
+  border-color: #FDE8C8;
+}
+
+/* ═══════════ LIGHTBOX ═══════════ */
 .irc-lightbox {
   position: fixed;
   inset: 0;
@@ -574,28 +723,31 @@
   letter-spacing: 0.04em;
 }
 
-/* ── RESPONSIVE ── */
+/* ═══════════ RESPONSIVE ═══════════ */
 @media (max-width: 560px) {
-  .irc { padding: 14px; height: auto; }
-  .irc-top { flex-wrap: wrap; }
-  .irc-badges { flex-direction: row; align-items: center; }
-  .irc-media { height: 150px; }
-  .irc-actions { flex-direction: column; }
-  .irc-btn { width: 100%; min-width: 0; }
-  .irc-hint { width: 100%; }
+  .irc { padding: 14px 14px 14px 18px; }
   .irc-lightbox { padding: 20px; }
   .irc-lightbox-nav { width: 40px; height: 40px; font-size: 16px; }
+
+  .irc-details-modal { padding: 22px 18px 18px; border-radius: 16px; max-height: 92vh; }
+  .irc-details-header { flex-wrap: wrap; }
+  .irc-details-header-text { flex-basis: calc(100% - 100px); }
+  .irc-details-status { order: 3; }
+  .irc-details-title-row h3 { font-size: 16px; }
+  .irc-track-label { font-size: 10px; }
+  .irc-overview { grid-template-columns: 1fr; }
+  .irc-details-photos { grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .irc, .irc-icon-wrap, .irc-btn, .irc-photo-cell {
+  .irc, .irc-btn, .irc-photo-cell,
+  .irc-details-modal, .irc-view-details, .irc-details-photo {
     transition: none;
+    animation: none;
   }
 }
 
-/* ═══════════════════════════════════════════════════════════════
-   ACKNOWLEDGE BUTTON SPINNER — para sa admin loading state
-   ═══════════════════════════════════════════════════════════════ */
+/* ═══════════ ACKNOWLEDGE BUTTON SPINNER ═══════════ */
 .irc-btn-spinner {
   display: inline-block;
   width: 12px;

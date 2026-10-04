@@ -406,3 +406,59 @@
 @media (prefers-reduced-motion: reduce) {
   .ralm-overlay, .ralm-panel { animation: none; }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   RESULT STRIP — archive toggle button
+   ═══════════════════════════════════════════════════════════════ */
+.ralm-result-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ralm-archive-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1.5px solid #e5e7eb;
+  background: #ffffff;
+  color: #6b7280;
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: 0.15s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.ralm-archive-toggle i {
+  font-size: 11px;
+}
+
+.ralm-archive-toggle:hover {
+  border-color: #f57c00;
+  color: #f57c00;
+  background: #fff7ed;
+}
+
+.ralm-archive-toggle.is-on {
+  background: #fff7ed;
+  border-color: #f57c00;
+  color: #f57c00;
+  box-shadow: 0 0 0 3px rgba(245, 124, 0, 0.12);
+}
+
+@media (max-width: 640px) {
+  .ralm-result-strip {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+}

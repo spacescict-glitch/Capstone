@@ -10,6 +10,7 @@ import { logActivity } from "../../utils/logActivity";
 import { isRoomUnderMaintenance } from "../../utils/Roommaintenance";
 import { findFacultyUser, findFacultyUserByName } from "../../utils/findFacultyUser";
 
+// ─── Time helpers ────────────────────────────────────────────────
 function parseTime(t) {
   if (!t) return null;
   const [h, m] = t.split(":").map(Number);
@@ -38,9 +39,11 @@ function formatDuration(start, end) {
 }
 function formatDateLong(dateStr) {
   if (!dateStr) return "";
-  const d = new Date(dateStr);
+  const d = new Date(`${dateStr}T00:00:00`);
   if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+  return d.toLocaleDateString("en-US", {
+    weekday: "long", month: "long", day: "numeric", year: "numeric",
+  });
 }
 
 const toDateInputValue = (date) => {
@@ -64,6 +67,8 @@ const addDaysLocal = (dateStr, days) => {
   d.setDate(d.getDate() + days);
   return toDateInputValue(d);
 };
+
+const ARCHIVE_AFTER_DAYS = 30;
 
 const buildCalendarGrid = (year, month) => {
   const firstOfMonth = new Date(year, month, 1);
@@ -97,24 +102,6 @@ const buildCalendarGrid = (year, month) => {
   return cells;
 };
 
-const buildDateChips = () => {
-  const chips = [];
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  for (let i = 0; i < 5; i++) {
-    const d = new Date(today);
-    d.setDate(today.getDate() + i);
-    const value = toDateInputValue(d);
-    let label;
-    if (i === 0) label = "Today";
-    else if (i === 1) label = "Tomorrow";
-    else label = d.toLocaleDateString("en-US", { weekday: "short" });
-    const sublabel = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-    chips.push({ value, label, sublabel });
-  }
-  return chips;
-};
-
 const buildTimeOptions = () => {
   const options = [];
   for (let m = 7 * 60; m <= 20 * 60; m += 30) {
@@ -138,6 +125,13 @@ const PRESET_SLOTS = [
   { label: "5:30 – 7:00 PM",   start: "17:30", end: "19:00" },
 ];
 
+const CONFLICT_KIND_ICON = {
+  schedule: "fa-solid fa-chalkboard-user",
+  event: "fa-solid fa-calendar-star",
+  reservation: "fa-solid fa-book-bookmark",
+  reassignment: "fa-solid fa-right-left",
+};
+
 export default function RoomActivity() {
   const [toast, setToast] = useState({ show: false, type: "success", title: "", message: "" });
   const showToast = (type, title, message) => {
@@ -153,11 +147,9 @@ export default function RoomActivity() {
   const [showListModal, setShowListModal] = useState(false);
   const [showCustomTime, setShowCustomTime] = useState(false);
 
-  // ─── Room picker ─────────────────────────────────────────────
   const [showRoomPicker, setShowRoomPicker] = useState(false);
   const [roomSearch, setRoomSearch] = useState("");
 
-  // ─── Date picker ─────────────────────────────────────────────
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [calendarCursor, setCalendarCursor] = useState(() => {
     const d = new Date();
@@ -172,15 +164,22 @@ export default function RoomActivity() {
   const [error, setError] = useState("");
   const [maintenanceBlocked, setMaintenanceBlocked] = useState(false);
 
-  const dateChips = buildDateChips();
-  const filteredRooms = rooms.filter((r) => {
-    const q = roomSearch.trim().toLowerCase();
-    if (!q) return true;
-    const name = String(r.roomName || r.name || "").toLowerCase();
-    const floor = String(r.floor || "").toLowerCase();
-    const building = String(r.building || r.bldg || "").toLowerCase();
-    return name.includes(q) || floor.includes(q) || building.includes(q);
-  });
+  const filteredRooms = rooms
+    .filter((r) => {
+      const q = roomSearch.trim().toLowerCase();
+      if (!q) return true;
+      const name = String(r.roomName || r.name || "").toLowerCase();
+      const floor = String(r.floor || "").toLowerCase();
+      const building = String(r.building || r.bldg || "").toLowerCase();
+      return name.includes(q) || floor.includes(q) || building.includes(q);
+    })
+    .sort((a, b) =>
+      String(a.roomName || a.name || "").localeCompare(
+        String(b.roomName || b.name || ""),
+        undefined,
+        { sensitivity: "base", numeric: true }
+      )
+    );
 
   const selectedRoom = rooms.find(
     (r) => (r.roomName || r.name) === form.room
@@ -194,6 +193,20 @@ export default function RoomActivity() {
     return () => unsub();
   }, []);
 
+  // ═════════════════════════════════════════════════════════════
+  // CONFLICT DETECTION — STRICTLY scoped to the SELECTED ROOM only.
+  //
+  // Sources:
+  //   1) Class schedules (this room, this weekday)
+  //      — exclude if cancelled/initialized
+  //      — exclude if reassigned AWAY on this date
+  //      — exclude if fully overridden by an EVENT on this date
+  //      — ✨ adjust end time using roomReleases (early release)
+  //      — exclude if effectively released before its start time
+  //   2) Events (this room, this date, overlapping)
+  //   3) Approved reservations (this room, this date, overlapping)
+  //   4) Approved reassignments INTO this room (this date, overlapping)
+  // ═════════════════════════════════════════════════════════════
   useEffect(() => {
     const checkConflict = async () => {
       setError("");
@@ -201,21 +214,201 @@ export default function RoomActivity() {
         setConflicts([]);
         return;
       }
-      const room = rooms.find((r) => r.roomName === form.room);
+      const room = rooms.find((r) => (r.roomName || r.name) === form.room);
       if (!room) return;
+
       setCheckingConflicts(true);
-      const snap = await getDocs(collection(db, "rooms", room.id, "schedules"));
       const reqStart = parseTime(form.startTime);
       const reqEnd = parseTime(form.endTime);
-      const day = new Date(form.date).toLocaleDateString("en-US", { weekday: "short" }).toUpperCase();
-      const found = snap.docs
-        .map((d) => ({ id: d.id, ...d.data() }))
-        .filter((s) =>
-          !s.cancelled &&
-          s.day === day &&
-          overlap(reqStart, reqEnd, parseTime(s.startTime), parseTime(s.endTime))
+      const day = new Date(`${form.date}T00:00:00`)
+        .toLocaleDateString("en-US", { weekday: "short" })
+        .toUpperCase();
+
+      const results = [];
+      const roomLabel = room.roomName || room.name;
+
+      try {
+        const [reSnap, schedSnap, evSnap, resSnap, relSnap] = await Promise.all([
+          getDocs(collection(db, "roomReassignments")),
+          getDocs(collection(db, "rooms", room.id, "schedules")),
+          getDocs(collection(db, "events")),
+          getDocs(collection(db, "reservationRequests")),
+          getDocs(collection(db, "roomReleases")),
+        ]);
+
+        const allReassignments = reSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const allSchedules = schedSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const allEvents = evSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const allReservations = resSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const allReleases = relSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+        // ── Schedule IDs reassigned AWAY from this room on this date ──
+        const reassignedAwayIds = new Set(
+          allReassignments
+            .filter(
+              (r) =>
+                String(r.status || "").toLowerCase() === "approved" &&
+                r.date === form.date &&
+                (r.oldRoomId === room.id || r.oldRoomName === roomLabel)
+            )
+            .map((r) => r.scheduleId)
+            .filter(Boolean)
         );
-      setConflicts(found);
+
+        // ── Map of scheduleId → release info (for THIS date) ──
+        // Only releases for the selected room + date matter.
+        const releaseMap = new Map();
+        allReleases
+          .filter(
+            (r) =>
+              r.date === form.date &&
+              (r.roomId === room.id || r.roomName === roomLabel)
+          )
+          .forEach((r) => {
+            if (r.scheduleId) releaseMap.set(r.scheduleId, r);
+          });
+
+        // ── Events happening IN THIS room on THIS date ──
+        const roomEventsForDate = allEvents.filter(
+          (e) =>
+            (e.roomId === room.id || e.roomName === roomLabel) &&
+            e.date === form.date
+        );
+
+        // ── 1) Class schedules (this room only) ──
+        allSchedules
+          .filter((s) => {
+            if (s.cancelled || s.initialized) return false;
+            if (s.day !== day) return false;
+            if (reassignedAwayIds.has(s.id)) return false;
+
+            // ✨ Compute effective time range using release info
+            const sStart = parseTime(s.startTime);
+            let sEnd = parseTime(s.endTime);
+
+            const release = releaseMap.get(s.id);
+            if (release) {
+              // Fully released → skip entirely
+              if (!release.effectiveEndTime) return false;
+              const effectiveEnd = parseTime(release.effectiveEndTime);
+              // Released before its start → skip entirely
+              if (effectiveEnd <= sStart) return false;
+              sEnd = effectiveEnd;
+            }
+
+            // Effective range must overlap the requested range
+            if (!overlap(reqStart, reqEnd, sStart, sEnd)) return false;
+
+            // Skip if overridden by an event on this date
+            const isOverriddenByEvent = roomEventsForDate.some((e) =>
+              overlap(sStart, sEnd, parseTime(e.startTime), parseTime(e.endTime))
+            );
+            return !isOverriddenByEvent;
+          })
+          .forEach((s) => {
+            const sStart = parseTime(s.startTime);
+            let sEnd = parseTime(s.endTime);
+            const release = releaseMap.get(s.id);
+            let isReleased = false;
+            if (release && release.effectiveEndTime) {
+              const effectiveEnd = parseTime(release.effectiveEndTime);
+              if (effectiveEnd > sStart) {
+                sEnd = effectiveEnd;
+                isReleased = true;
+              }
+            }
+
+            results.push({
+              id: s.id,
+              kind: "schedule",
+              sourceLabel: isReleased ? "Class Schedule (Released Early)" : "Class Schedule",
+              subject: s.subject || s.title || "Class",
+              section: s.section || "",
+              faculty: s.facultyName || s.faculty || "",
+              facultyLastName: s.facultyLastName || "",
+              facultyFirstName: s.facultyFirstName || "",
+              day: s.day,
+              startTime: s.startTime,
+              endTime: release?.effectiveEndTime || s.endTime,
+              isReleased,
+            });
+          });
+
+        // ── 2) Events happening in this room on this date ──
+        roomEventsForDate
+          .filter((e) =>
+            overlap(reqStart, reqEnd, parseTime(e.startTime), parseTime(e.endTime))
+          )
+          .forEach((e) => {
+            results.push({
+              id: e.id,
+              kind: "event",
+              sourceLabel: "Room Activity",
+              subject: e.title || e.purpose || "Room Activity",
+              section: "",
+              faculty: e.faculty || e.requestedByName || "Admin",
+              day,
+              startTime: e.startTime,
+              endTime: e.endTime,
+            });
+          });
+
+        // ── 3) Approved reservations for this room on this date ──
+        allReservations
+          .filter(
+            (r) =>
+              String(r.status || "").toLowerCase() === "approved" &&
+              (r.roomId === room.id || r.roomName === roomLabel) &&
+              r.date === form.date &&
+              overlap(reqStart, reqEnd, parseTime(r.startTime), parseTime(r.endTime))
+          )
+          .forEach((r) => {
+            results.push({
+              id: r.id,
+              kind: "reservation",
+              sourceLabel:
+                r.reservationType === "walk-in"
+                  ? "Walk-in Reservation"
+                  : "Faculty Reservation",
+              subject:
+                r.customPurpose || r.courseTitle || r.purpose || "Reservation",
+              section: r.yearSectionGroup || r.attendees?.yearSectionGroup || "",
+              faculty: r.requesterName || r.facultyName || "-",
+              day,
+              startTime: r.startTime,
+              endTime: r.endTime,
+            });
+          });
+
+        // ── 4) Approved reassignments INTO this room on this date ──
+        allReassignments
+          .filter(
+            (r) =>
+              String(r.status || "").toLowerCase() === "approved" &&
+              r.date === form.date &&
+              (r.newRoomId === room.id || r.newRoomName === roomLabel) &&
+              overlap(reqStart, reqEnd, parseTime(r.startTime), parseTime(r.endTime))
+          )
+          .forEach((r) => {
+            results.push({
+              id: r.id,
+              kind: "reassignment",
+              sourceLabel: "Reassigned Class",
+              subject: r.courseTitle || r.subject || "Class (Moved)",
+              section: r.section || "",
+              faculty: r.facultyName || "-",
+              facultyLastName: r.facultyLastName || "",
+              facultyFirstName: r.facultyFirstName || "",
+              day,
+              startTime: r.startTime,
+              endTime: r.endTime,
+            });
+          });
+      } catch (err) {
+        console.error("Conflict detection failed:", err);
+      }
+
+      setConflicts(results);
       setCheckingConflicts(false);
     };
     checkConflict();
@@ -226,7 +419,7 @@ export default function RoomActivity() {
       setMaintenanceBlocked(false);
       return;
     }
-    const room = rooms.find((r) => r.roomName === form.room);
+    const room = rooms.find((r) => (r.roomName || r.name) === form.room);
     if (!room) { setMaintenanceBlocked(false); return; }
     setMaintenanceBlocked(isRoomUnderMaintenance(room, form.date, form.startTime, form.endTime));
   }, [form.room, form.date, form.startTime, form.endTime, rooms]);
@@ -238,7 +431,8 @@ export default function RoomActivity() {
     if (!form.title) return "Title is required";
     if (!form.room) return "Please select a room";
     if (!form.date) return "Date is required";
-    if (form.date < todayString()) return "Past dates are not allowed. Please select today or a future date.";
+    if (form.date < todayString())
+      return "Past dates are not allowed. Please select today or a future date.";
     if (!form.startTime || !form.endTime) return "Time is required";
     if (parseTime(form.startTime) >= parseTime(form.endTime)) return "Invalid time range";
     if (maintenanceBlocked) return "This room is under maintenance during the selected date/time.";
@@ -251,7 +445,7 @@ export default function RoomActivity() {
     try {
       const err = validate();
       if (err) { setError(err); return; }
-      const roomDoc = rooms.find((r) => r.roomName === form.room);
+      const roomDoc = rooms.find((r) => (r.roomName || r.name) === form.room);
       if (!roomDoc) { showToast("error", "Error", "Room not found"); return; }
       if (isRoomUnderMaintenance(roomDoc, form.date, form.startTime, form.endTime)) {
         showToast("error", "Room Unavailable", "This room is under maintenance.");
@@ -266,6 +460,7 @@ export default function RoomActivity() {
       const fullName = `${currentUser.firstName} ${currentUser.lastName}`.trim();
 
       const usersSnap = await getDocs(collection(db, "users"));
+
       const enrichedConflicts = conflicts.map((c) => {
         let facultyId = "";
         if (c.facultyLastName && c.facultyFirstName) {
@@ -277,17 +472,28 @@ export default function RoomActivity() {
           if (fDoc) facultyId = fDoc.id;
         }
         return {
-          scheduleId: c.id, subject: c.subject || c.title || "",
-          section: c.section || "", faculty: c.faculty || "", facultyId,
-          day: c.day, startTime: c.startTime, endTime: c.endTime, status: "pending",
+          scheduleId: c.id,
+          kind: c.kind,
+          sourceLabel: c.sourceLabel,
+          subject: c.subject || c.title || "",
+          section: c.section || "",
+          faculty: c.faculty || "",
+          facultyId,
+          day: c.day,
+          startTime: c.startTime,
+          endTime: c.endTime,
+          isReleased: !!c.isReleased,
+          status: "pending",
         };
       });
+
+      const roomLabel = roomDoc.roomName || roomDoc.name;
 
       const requestRef = await addDoc(collection(db, "roomActivityRequests"), {
         title: form.title.trim(),
         reason: form.reason.trim(),
         roomId: roomDoc.id,
-        roomName: roomDoc.roomName,
+        roomName: roomLabel,
         floor: roomDoc.floor || "",
         date: form.date,
         startTime: form.startTime,
@@ -296,6 +502,8 @@ export default function RoomActivity() {
         requestedByName: fullName,
         requestedByRole: currentUser.role || "Clerk",
         status: "pending_admin",
+        archived: false,
+        archivedAt: null,
         conflicts: enrichedConflicts,
         reassignHistory: [],
         facultyResponses: [],
@@ -307,9 +515,15 @@ export default function RoomActivity() {
       await logActivity({
         userId: firebaseUser.uid, user: fullName, role: currentUser.role,
         action: "Submitted Room Activity Request", actionType: "create",
-        target: `${form.title} (${roomDoc.roomName})`, status: "PENDING",
-        details: { requestId: requestRef.id, room: roomDoc.roomName, date: form.date,
-          startTime: form.startTime, endTime: form.endTime, conflictCount: enrichedConflicts.length },
+        target: `${form.title} (${roomLabel})`, status: "PENDING",
+        details: {
+          requestId: requestRef.id,
+          room: roomLabel,
+          date: form.date,
+          startTime: form.startTime,
+          endTime: form.endTime,
+          conflictCount: enrichedConflicts.length,
+        },
       });
 
       const admins = usersSnap.docs.filter(
@@ -320,7 +534,7 @@ export default function RoomActivity() {
           userId: admin.id, ownerType: "admin",
           activityRequestId: requestRef.id,
           title: "New Room Activity Request",
-          message: `${fullName} submitted "${form.title}" for ${roomDoc.roomName} on ${form.date} (${formatTime12(form.startTime)} – ${formatTime12(form.endTime)}). ${enrichedConflicts.length} conflict(s) detected.`,
+          message: `${fullName} submitted "${form.title}" for ${roomLabel} on ${form.date} (${formatTime12(form.startTime)} – ${formatTime12(form.endTime)}). ${enrichedConflicts.length} conflict(s) detected.`,
           type: "room-activity-request", unread: true, archived: false, badge: "NEW",
           createdAt: serverTimestamp(),
         });
@@ -375,8 +589,90 @@ export default function RoomActivity() {
       )}
 
       <div className="ra-approval-notice">
-        <i className="fa-solid fa-circle-info"></i>
-        <span><strong>Approval Flow:</strong> Your request → Admin approval → Faculty notification (if applicable)</span>
+        <div className="ra-approval-head">
+          <div className="ra-approval-icon">
+            <i className="fa-solid fa-diagram-project"></i>
+          </div>
+          <div className="ra-approval-headtext">
+            <h4 className="ra-approval-title">How your request gets processed</h4>
+            <p className="ra-approval-desc">
+              Every room activity request goes through a short review cycle so
+              schedules stay fair, conflicts are caught early, and only the
+              faculty who are actually affected get notified. Here's exactly
+              what happens after you hit <strong>Submit</strong>:
+            </p>
+          </div>
+        </div>
+
+        <div className="ra-approval-steps">
+          <div className="ra-approval-step">
+            <div className="ra-step-num">1</div>
+            <div className="ra-step-body">
+              <div className="ra-step-title">
+                <i className="fa-solid fa-paper-plane"></i>
+                You submit the request
+              </div>
+              <p className="ra-step-text">
+                Fill in the activity title, room, date, and time slot. The
+                system instantly checks for conflicts with existing{" "}
+                <strong>class schedules</strong>, <strong>room activities</strong>,{" "}
+                <strong>approved reservations</strong>, and{" "}
+                <strong>reassigned classes</strong> — all scoped to the
+                selected room only.
+              </p>
+            </div>
+          </div>
+
+          <div className="ra-step-connector">
+            <i className="fa-solid fa-arrow-right-long"></i>
+          </div>
+
+          <div className="ra-approval-step">
+            <div className="ra-step-num">2</div>
+            <div className="ra-step-body">
+              <div className="ra-step-title">
+                <i className="fa-solid fa-user-shield"></i>
+                Admin reviews and decides
+              </div>
+              <p className="ra-step-text">
+                The Admin sees your request together with any detected
+                conflicts. They can <strong>approve</strong> it outright,{" "}
+                <strong>deny</strong> it, or <strong>reassign</strong> the
+                conflicting classes before approving. You'll see the decision
+                on your "View All Requests" list.
+              </p>
+            </div>
+          </div>
+
+          <div className="ra-step-connector">
+            <i className="fa-solid fa-arrow-right-long"></i>
+          </div>
+
+          <div className="ra-approval-step">
+            <div className="ra-step-num">3</div>
+            <div className="ra-step-body">
+              <div className="ra-step-title">
+                <i className="fa-solid fa-bell"></i>
+                Faculty are notified (if affected)
+              </div>
+              <p className="ra-step-text">
+                Only faculty whose classes overlap with your activity are
+                notified. If there are no conflicts,{" "}
+                <strong>no one else is disturbed</strong> — the room is simply
+                booked for your activity.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="ra-approval-footnote">
+          <i className="fa-solid fa-circle-info"></i>
+          <span>
+            <strong>Note:</strong> Request records older than{" "}
+            <strong>{ARCHIVE_AFTER_DAYS} days</strong> are automatically
+            hidden from the "View All Requests" list to keep it clean.
+          </span>
+        </div>
       </div>
 
       <div className="ra-layout">
@@ -494,7 +790,6 @@ export default function RoomActivity() {
               </div>
             </div>
 
-            {/* DATE */}
             <div className="ra-field">
               <div className="dt-section-header">
                 <label>Date</label>
@@ -554,8 +849,13 @@ export default function RoomActivity() {
                           disabled={calendarCursor.year === new Date().getFullYear() && calendarCursor.month === new Date().getMonth()}
                           onClick={() => setCalendarCursor((c) => {
                             const current = new Date();
-                            const previous = c.month === 0 ? { year: c.year - 1, month: 11 } : { year: c.year, month: c.month - 1 };
-                            if (previous.year < current.getFullYear() || (previous.year === current.getFullYear() && previous.month < current.getMonth())) return c;
+                            const previous = c.month === 0
+                              ? { year: c.year - 1, month: 11 }
+                              : { year: c.year, month: c.month - 1 };
+                            if (
+                              previous.year < current.getFullYear() ||
+                              (previous.year === current.getFullYear() && previous.month < current.getMonth())
+                            ) return c;
                             return previous;
                           })}
                           aria-label="Previous month"
@@ -609,7 +909,6 @@ export default function RoomActivity() {
               </div>
             </div>
 
-            {/* TIME */}
             <div className="ra-field">
               <div className="dt-section-header">
                 <label>Time</label>
@@ -687,15 +986,24 @@ export default function RoomActivity() {
           {selectedRoom && (
             <div className="ra-room-summary">
               <div className="ra-room-summary-header">
-                <i className="fa-solid fa-building"></i><span>{selectedRoom.roomName}</span>
+                <i className="fa-solid fa-building"></i>
+                <span>{selectedRoom.roomName || selectedRoom.name}</span>
               </div>
-              <div className={`ra-status-pill ${String(selectedRoom.roomStatus || "").toLowerCase() === "maintenance" ? "is-maintenance" : "is-available"}`}>
-                {String(selectedRoom.roomStatus || "").toLowerCase() === "maintenance" ? "Under Maintenance" : "Available"}
+              <div className={`ra-status-pill ${
+                String(selectedRoom.roomStatus || "").toLowerCase() === "maintenance"
+                  ? "is-maintenance"
+                  : "is-available"
+              }`}>
+                {String(selectedRoom.roomStatus || "").toLowerCase() === "maintenance"
+                  ? "Under Maintenance"
+                  : "Available"}
               </div>
             </div>
           )}
           {checkingConflicts && (
-            <div className="ra-checking"><span className="ra-spinner" /> Checking existing schedules…</div>
+            <div className="ra-checking">
+              <span className="ra-spinner" /> Checking schedules, events, reservations, reassignments & releases…
+            </div>
           )}
           {!checkingConflicts && conflicts.length > 0 && (
             <div className="ra-conflict-card">
@@ -704,14 +1012,21 @@ export default function RoomActivity() {
                 {conflicts.length} Conflict{conflicts.length > 1 ? "s" : ""} Detected
               </div>
               <p className="ra-conflict-desc">
-                These existing schedules overlap. Once approved, affected faculty will be notified.
+                These existing items overlap with your requested slot in{" "}
+                <strong>{form.room}</strong>. Once approved, affected faculty
+                will be notified.
               </p>
               <div className="ra-conflict-list">
                 {conflicts.map((c) => (
-                  <div key={c.id} className="ra-conflict-item">
-                    <div>
+                  <div key={`${c.kind}-${c.id}`} className="ra-conflict-item">
+                    <div className="ra-conflict-item-main">
+                      <span className={`ra-conflict-kind ra-conflict-kind--${c.kind}`}>
+                        <i className={CONFLICT_KIND_ICON[c.kind] || "fa-solid fa-circle-info"}></i>
+                        {c.sourceLabel}
+                      </span>
                       <div className="ra-conflict-code">
-                        {c.subject || c.title || "Untitled"}{c.section ? ` (${c.section})` : ""}
+                        {c.subject || c.title || "Untitled"}
+                        {c.section ? ` (${c.section})` : ""}
                       </div>
                       <div className="ra-conflict-time">
                         {formatTime12(c.startTime)} – {formatTime12(c.endTime)}
@@ -724,7 +1039,9 @@ export default function RoomActivity() {
             </div>
           )}
           {!checkingConflicts && conflicts.length === 0 && form.room && form.date && form.startTime && form.endTime && !maintenanceBlocked && (
-            <div className="ra-clear-card"><i className="fa-solid fa-circle-check"></i> No conflicts — clean schedule.</div>
+            <div className="ra-clear-card">
+              <i className="fa-solid fa-circle-check"></i> No conflicts in {form.room} — clean schedule.
+            </div>
           )}
         </div>
       </div>
@@ -736,7 +1053,9 @@ export default function RoomActivity() {
             <h3 className="ra-modal-title">Submit for Approval?</h3>
             <p className="ra-modal-text">
               Your request will be sent to the Admin for review
-              {conflicts.length > 0 ? ` — ${conflicts.length} conflict${conflicts.length > 1 ? "s" : ""} will be reported.` : "."}
+              {conflicts.length > 0
+                ? ` — ${conflicts.length} conflict${conflicts.length > 1 ? "s" : ""} will be reported.`
+                : "."}
             </p>
             <div className="ra-modal-summary">
               <div className="ra-modal-summary-row"><i className="fa-solid fa-bookmark"></i><span>{form.title || "Untitled"}</span></div>

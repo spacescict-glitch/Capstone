@@ -674,3 +674,17 @@
 @media (max-width: 768px) {
   .lrvs-building-popover, .lrvs-date-popover { width: 100%; max-width: 100%; }
 }
+
+.lrvs-cal-day.is-disabled,
+.lrvs-cal-day:disabled {
+  color: #e5e7eb;
+  background: #fff;
+  cursor: not-allowed;
+  font-weight: 500;
+}
+
+.lrvs-cal-day.is-disabled:hover,
+.lrvs-cal-day:disabled:hover {
+  background: #fff;
+  color: #e5e7eb;
+}

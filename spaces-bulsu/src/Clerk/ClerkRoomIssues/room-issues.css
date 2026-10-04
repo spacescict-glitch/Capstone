@@ -269,11 +269,13 @@
 }
 
 /* ── List ─────────────────────────────────────────────────── */
+/* Changed: default align-items (stretch) so all cards in the
+   same row get equal height. */
 .ri-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
   gap: 16px;
-  align-items: start;
+  align-items: stretch;
 }
 
 /* ── Empty ────────────────────────────────────────────────── */

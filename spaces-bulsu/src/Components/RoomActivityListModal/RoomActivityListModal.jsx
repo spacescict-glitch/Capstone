@@ -6,6 +6,35 @@ import { db } from "../../firebase";
 
 const ITEMS_PER_PAGE = 5;
 
+// ── Archive rule: records older than 30 days are auto-hidden ──────
+const ARCHIVE_AFTER_DAYS = 30;
+
+const todayISO = () => {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
+};
+
+const addDaysLocal = (dateStr, days) => {
+  const d = new Date(`${dateStr}T00:00:00`);
+  d.setDate(d.getDate() + days);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
+};
+
+// A request is considered archived if it's explicitly flagged OR its
+// activity date is older than the archive window.
+const isArchivedRequest = (r) => {
+  if (r.archived === true) return true;
+  const cutoff = addDaysLocal(todayISO(), -ARCHIVE_AFTER_DAYS);
+  const refDate = r.date || todayISO();
+  return refDate < cutoff;
+};
+
 // ── Professional tab labels ─────────────────────────────────────
 const TABS = [
   { key: "all",       label: "All Requests" },
@@ -28,6 +57,8 @@ export default function RoomActivityListModal({ open, onClose }) {
   const [roomFilter, setRoomFilter] = useState("");
   const [sortOrder, setSortOrder] = useState("newest");
   const [currentPage, setCurrentPage] = useState(1);
+  // ✅ Toggle to reveal archived / expired records
+  const [showArchived, setShowArchived] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -50,24 +81,42 @@ export default function RoomActivityListModal({ open, onClose }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
+  // Reset to page 1 when the modal opens or the archive toggle flips
+  useEffect(() => {
+    if (!open) {
+      setShowArchived(false);
+    }
+  }, [open]);
+
+  // ── Visible set: exclude archived / expired unless toggled on ─
+  const visibleRequests = useMemo(() => {
+    if (showArchived) return requests;
+    return requests.filter((r) => !isArchivedRequest(r));
+  }, [requests, showArchived]);
+
+  const archivedCount = useMemo(
+    () => requests.filter((r) => isArchivedRequest(r)).length,
+    [requests]
+  );
+
   const counts = useMemo(() => ({
-    all: requests.length,
-    pending: requests.filter((r) =>
+    all: visibleRequests.length,
+    pending: visibleRequests.filter((r) =>
       ["pending_admin", "pending_reassign", "pending_faculty"].includes(r.status)
     ).length,
-    approved: requests.filter((r) => r.status === "approved").length,
-  }), [requests]);
+    approved: visibleRequests.filter((r) => r.status === "approved").length,
+  }), [visibleRequests]);
 
-  // Unique rooms for the filter dropdown
+  // Unique rooms for the filter dropdown (based on visible set)
   const roomOptions = useMemo(() => {
     const set = new Set();
-    requests.forEach((r) => { if (r.roomName) set.add(r.roomName); });
+    visibleRequests.forEach((r) => { if (r.roomName) set.add(r.roomName); });
     return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [requests]);
+  }, [visibleRequests]);
 
   // ── Filter + Search + Sort ─────────────────────────────────
   const filtered = useMemo(() => {
-    let list = requests;
+    let list = visibleRequests;
 
     // Tab filter
     if (activeTab === "pending") {
@@ -104,20 +153,25 @@ export default function RoomActivityListModal({ open, onClose }) {
       sorted.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
     }
     return sorted;
-  }, [requests, activeTab, searchTerm, roomFilter, sortOrder]);
+  }, [visibleRequests, activeTab, searchTerm, roomFilter, sortOrder]);
 
-  useEffect(() => { setCurrentPage(1); }, [activeTab, searchTerm, roomFilter, sortOrder]);
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeTab, searchTerm, roomFilter, sortOrder, showArchived]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / ITEMS_PER_PAGE));
   const safePage = Math.min(currentPage, totalPages);
   const start = (safePage - 1) * ITEMS_PER_PAGE;
   const paginated = filtered.slice(start, start + ITEMS_PER_PAGE);
 
-  const hasActiveFilters = searchTerm || roomFilter || sortOrder !== "newest";
+  const hasActiveFilters =
+    searchTerm || roomFilter || sortOrder !== "newest" || showArchived;
+
   const clearAllFilters = () => {
     setSearchTerm("");
     setRoomFilter("");
     setSortOrder("newest");
+    setShowArchived(false);
   };
 
   if (!open) return null;
@@ -197,7 +251,7 @@ export default function RoomActivityListModal({ open, onClose }) {
           )}
         </div>
 
-        {/* ── RESULT COUNT ───────────────────────────────────── */}
+        {/* ── RESULT COUNT + ARCHIVE TOGGLE ──────────────────── */}
         <div className="ralm-result-strip">
           <span className="ralm-result-count">
             {filtered.length} result{filtered.length === 1 ? "" : "s"}
@@ -205,6 +259,22 @@ export default function RoomActivityListModal({ open, onClose }) {
               <span className="ralm-result-filter"> in {TABS.find((t) => t.key === activeTab)?.label}</span>
             )}
           </span>
+
+          {archivedCount > 0 && (
+            <button
+              type="button"
+              className={`ralm-archive-toggle ${showArchived ? "is-on" : ""}`}
+              onClick={() => setShowArchived((v) => !v)}
+              title={
+                showArchived
+                  ? "Hide archived requests"
+                  : "Show archived requests (older than 30 days)"
+              }
+            >
+              <i className={`fa-solid ${showArchived ? "fa-eye-slash" : "fa-box-archive"}`}></i>
+              {showArchived ? "Hide Archived" : `Show Archived (${archivedCount})`}
+            </button>
+          )}
         </div>
 
         {/* ── BODY ──────────────────────────────────────────── */}

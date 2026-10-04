@@ -45,6 +45,15 @@ const isUnderMaintenance = (roomData) => {
   return roomStatus === "maintenance";
 };
 
+// ✅ Sort rooms alphabetically by roomName (numeric-aware, case-insensitive)
+const sortRoomsByName = (list) =>
+  [...list].sort((a, b) =>
+    (a.roomName || "").localeCompare(b.roomName || "", undefined, {
+      numeric: true,
+      sensitivity: "base",
+    })
+  );
+
 // ✅ Accepts BOTH "approved" and "accepted" reassignment statuses.
 const isApprovedReassignment = (status) =>
   ["approved", "accepted"].includes(String(status || "").toLowerCase());
@@ -337,7 +346,8 @@ function LocalRegistrarViewAcademicSchedule() {
     if (selectedBuilding !== "All Buildings") list = list.filter((r) => r.building === selectedBuilding);
     if (selectedFloor !== "All Floors") list = list.filter((r) => r.floor === selectedFloor);
     if (selectedStatus !== "All Status") list = list.filter((r) => r.status === selectedStatus);
-    return list;
+    // ✅ Alphabetical order (numeric-aware)
+    return sortRoomsByName(list);
   }, [processedRooms, selectedBuilding, selectedFloor, selectedStatus]);
 
   const [currentPage, setCurrentPage] = useState(1);
@@ -582,10 +592,22 @@ function LocalRegistrarViewAcademicSchedule() {
                           {buildCalendarGrid(calendarCursor.year, calendarCursor.month).map((cell, i) => {
                             const cellStr = toDateInputValue(cell.date);
                             const isSelected = cellStr === selectedDate;
+                            const isPast = cellStr < getToday();
+
                             return (
                               <button type="button" key={i}
-                                className={["lrvs-cal-day", !cell.inMonth && "is-outside", isSelected && "is-selected"].filter(Boolean).join(" ")}
-                                onClick={() => { setSelectedDate(cellStr); setShowDatePicker(false); }}>
+                                disabled={isPast}
+                                className={[
+                                  "lrvs-cal-day",
+                                  !cell.inMonth && "is-outside",
+                                  isSelected && "is-selected",
+                                  isPast && "is-disabled",
+                                ].filter(Boolean).join(" ")}
+                                onClick={() => {
+                                  if (isPast) return;
+                                  setSelectedDate(cellStr);
+                                  setShowDatePicker(false);
+                                }}>
                                 {cell.day}
                               </button>
                             );

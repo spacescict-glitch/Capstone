@@ -106,39 +106,15 @@
 .clerk-reservations-content {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 0;
   padding: 12px 4px 4px;
   flex: 1;
 }
 
-/* Approved/Denied tabs use compact ticket-stub cards, so they get a
-   responsive 2-3 column grid instead of a single stacked column. */
-.clerk-reservations-content--grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  align-items: start;
-  gap: 16px;
+.clerk-reservations-content .reservation-card {
+  margin: 6px 20px;
 }
 
-@media (min-width: 720px) {
-  .clerk-reservations-content--grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
-@media (min-width: 1150px) {
-  .clerk-reservations-content--grid {
-    grid-template-columns: repeat(3, 1fr);
-  }
-}
-
-/* Cards keep their own 16/20px margin for the single-column list;
-   inside the grid, spacing is handled by grid gap instead. */
-.clerk-reservations-content--grid .rsv-ticket {
-  margin: 0;
-}
-
-/* Empty state should always span full width and center, grid or not. */
 .clerk-reservations-content--empty {
   display: flex;
 }
@@ -262,7 +238,10 @@
   transform: translateY(1px);
 }
 
-/* ─── Filter Bar (outer) ────────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════
+   FILTER BAR
+   ═══════════════════════════════════════════════════════════════ */
+
 .clerk-filter-bar-outer {
   background: #ffffff;
   border-radius: 14px;
@@ -282,6 +261,7 @@
   gap: 12px;
 }
 
+/* Default filter group — compact, with focus-within highlight */
 .clerk-filter-group {
   display: flex;
   align-items: center;
@@ -290,14 +270,33 @@
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   padding: 0 12px;
-  flex: 1 1 180px;
+  flex: 0 1 160px;
   min-width: 140px;
   height: 40px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
 
-.clerk-filter-group i {
+/* ✅ Search bar — pinakamahaba (2× grow, mas malaking min-width) */
+.clerk-search-group {
+  flex: 2 1 340px;
+  min-width: 240px;
+}
+
+.clerk-filter-group:focus-within {
+  border-color: #f57c00;
+  background: #ffffff;
+  box-shadow: 0 0 0 3px rgba(245, 124, 0, 0.12);
+}
+
+.clerk-filter-group:focus-within > i {
+  color: #f57c00;
+}
+
+.clerk-filter-group > i {
   color: #9ca3af;
   font-size: 14px;
+  flex-shrink: 0;
+  transition: color 0.15s ease;
 }
 
 .clerk-filter-input {
@@ -308,41 +307,79 @@
   background: transparent;
   height: 100%;
   min-width: 60px;
+  font-family: inherit;
+  color: #1a1a1a;
 }
 
-.clerk-filter-select {
-  border: none;
-  outline: none;
-  flex: 1;
-  font-size: 14px;
-  background: transparent;
-  height: 100%;
+.clerk-filter-input::placeholder {
+  color: #9ca3af;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SORT BY DATE — single toggle button (asc/desc)
+   ═══════════════════════════════════════════════════════════════ */
+
+.clerk-date-sort-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fafb;
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #4b5563;
   cursor: pointer;
-  appearance: none;
-  padding-right: 4px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease,
+    background 0.15s ease, color 0.15s ease, transform 0.12s ease;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
-.clerk-sort-group {
-  flex: 1 1 200px;
-}
-
-.clerk-sort-order-btn {
-  background: none;
-  border: none;
-  color: #6b7280;
-  cursor: pointer;
-  font-size: 14px;
-  padding: 0 4px;
-  transition: color 0.2s;
-}
-
-.clerk-sort-order-btn:hover {
+.clerk-date-sort-btn:hover {
+  border-color: #f57c00;
+  background: #fff7ed;
   color: #f57c00;
 }
 
+.clerk-date-sort-btn:focus-visible {
+  outline: none;
+  border-color: #f57c00;
+  background: #ffffff;
+  box-shadow: 0 0 0 3px rgba(245, 124, 0, 0.12);
+}
+
+.clerk-date-sort-btn:active {
+  transform: translateY(1px);
+}
+
+.clerk-date-sort-btn i {
+  font-size: 13px;
+  flex-shrink: 0;
+  transition: color 0.15s ease;
+}
+
+.clerk-date-sort-btn.asc i {
+  color: #16a34a;
+}
+
+.clerk-date-sort-btn.desc i {
+  color: #f57c00;
+}
+
+.clerk-date-sort-btn span {
+  line-height: 1;
+}
+
+/* ─── Clear button ───────────────────────────────────────────── */
 .clerk-clear-filters-btn {
-  display: flex;
+  display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   background: transparent;
   border: 1px solid #e5e7eb;
@@ -355,6 +392,8 @@
   cursor: pointer;
   transition: 0.2s;
   white-space: nowrap;
+  flex: 0 0 auto;
+  font-family: inherit;
 }
 
 .clerk-clear-filters-btn:hover {
@@ -363,7 +402,7 @@
   color: #1a1a1a;
 }
 
-/* ─── Filter summary ────────────────────────────────────────────────── */
+/* ─── Filter summary ────────────────────────────────────────── */
 .clerk-filter-summary {
   display: flex;
   flex-wrap: wrap;
@@ -388,32 +427,6 @@
   margin-left: auto;
   font-weight: 600;
   color: #f57c00;
-}
-
-/* ─── Responsive ────────────────────────────────────────────────────── */
-@media (max-width: 768px) {
-  .clerk-filter-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .clerk-filter-group {
-    flex: 1 1 100%;
-  }
-
-  .clerk-clear-filters-btn {
-    justify-content: center;
-  }
-
-  .clerk-filter-summary {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 4px;
-  }
-
-  .clerk-filter-result-count {
-    margin-left: 0;
-  }
 }
 
 /* ─── Header with export dropdown ──────────────────────────────────── */
@@ -529,25 +542,6 @@
   background: #fde8c8;
 }
 
-/* ─── Responsive ────────────────────────────────────────────────────── */
-@media (max-width: 768px) {
-  .clerk-reservations-header-top {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .clerk-export-btn {
-    justify-content: center;
-    width: 100%;
-  }
-
-  .clerk-export-menu {
-    right: auto;
-    left: 0;
-    width: 100%;
-  }
-}
-
 /* ═══════════════════════════════════════════════════════════════
    ROOM PICKER + DATE PICKER (popover UI)
    ═══════════════════════════════════════════════════════════════ */
@@ -559,8 +553,8 @@
   background: transparent !important;
   border: none !important;
   height: auto !important;
-  min-width: 200px;
-  flex: 1 1 220px;
+  min-width: 190px;
+  flex: 1 1 200px;
   overflow: visible;
 }
 
@@ -577,7 +571,7 @@
   align-items: center;
   gap: 8px;
   height: 40px;
-  padding: 0 12px;
+  padding: 0 34px 0 14px;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   background: #f9fafb;
@@ -588,7 +582,9 @@
   transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s;
   text-align: left;
   box-sizing: border-box;
+  position: relative;
 }
+
 .cr-room-trigger > i:first-child,
 .cr-date-trigger > i:first-child {
   color: #9ca3af;
@@ -596,8 +592,12 @@
   flex-shrink: 0;
   transition: color 0.15s;
 }
+
 .cr-room-trigger:hover,
-.cr-date-trigger:hover { border-color: #d1d5db; }
+.cr-date-trigger:hover {
+  border-color: #d1d5db;
+}
+
 .cr-room-trigger.open,
 .cr-date-trigger.open,
 .cr-room-trigger:focus,
@@ -607,8 +607,11 @@
   background: #fff;
   box-shadow: 0 0 0 3px rgba(245, 124, 0, 0.12);
 }
+
 .cr-room-trigger.open > i:first-child,
-.cr-date-trigger.open > i:first-child { color: #f57c00; }
+.cr-date-trigger.open > i:first-child {
+  color: #f57c00;
+}
 
 .cr-room-trigger-text {
   flex: 1;
@@ -619,29 +622,38 @@
   font-weight: 500;
   font-size: 14px;
 }
+
 .cr-date-trigger > span {
   flex: 1;
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-weight: 500;
   font-size: 14px;
 }
 
 .cr-room-caret,
 .cr-date-caret {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
   font-size: 10px;
   color: #9ca3af;
   transition: transform 0.2s ease;
-  flex-shrink: 0;
+  pointer-events: none;
 }
+
 .cr-room-caret.open,
-.cr-date-caret.open { transform: rotate(180deg); }
+.cr-date-caret.open {
+  transform: translateY(-50%) rotate(180deg);
+}
 
 .cr-picker-clickaway {
   position: fixed;
   inset: 0;
-  z-index: 40;
+  z-index: 99998;
   background: transparent;
 }
 
@@ -651,13 +663,11 @@
   top: calc(100% + 8px);
   left: 0;
   background: #fff;
-  border-radius: 14px;
-  box-shadow:
-    0 4px 6px rgba(0, 0, 0, 0.05),
-    0 12px 40px rgba(0, 0, 0, 0.18);
-  padding: 12px;
-  z-index: 60;
-  width: 320px;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05), 0 12px 40px rgba(0, 0, 0, 0.18);
+  padding: 10px;
+  z-index: 99999;
+  width: 300px;
   max-width: calc(100vw - 40px);
   animation: cr-pop-in 0.15s ease-out;
 }
@@ -678,20 +688,30 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 7px 10px;
   border: 1.5px solid #e5e7eb;
-  border-radius: 10px;
+  border-radius: 9px;
   background: #fafafa;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
   transition: border-color 0.15s, background 0.15s;
 }
+
 .cr-search-wrap:focus-within {
   border-color: #f57c00;
   background: #fff;
   box-shadow: 0 0 0 3px rgba(245, 124, 0, 0.1);
 }
-.cr-search-wrap > i { color: #9ca3af; font-size: 12px; flex-shrink: 0; }
-.cr-search-wrap:focus-within > i { color: #f57c00; }
+
+.cr-search-wrap > i {
+  color: #9ca3af;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.cr-search-wrap:focus-within > i {
+  color: #f57c00;
+}
+
 .cr-search {
   flex: 1;
   min-width: 0;
@@ -699,34 +719,45 @@
   outline: none;
   background: transparent;
   font-family: inherit;
-  font-size: 13px;
+  font-size: 12.5px;
   color: #1a1a1a;
 }
-.cr-search::placeholder { color: #9ca3af; font-weight: 400; }
+
+.cr-search::placeholder {
+  color: #9ca3af;
+}
+
 .cr-search-clear {
   background: #e5e7eb;
   border: none;
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   display: grid;
   place-items: center;
   cursor: pointer;
   color: #6b7280;
-  font-size: 10px;
+  font-size: 9px;
   flex-shrink: 0;
-  transition: 0.15s;
 }
-.cr-search-clear:hover { background: #fee2e2; color: #dc2626; }
+
+.cr-search-clear:hover {
+  background: #fee2e2;
+  color: #dc2626;
+}
 
 .cr-room-list {
-  max-height: 260px;
+  max-height: 240px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
-.cr-room-list::-webkit-scrollbar { width: 6px; }
+
+.cr-room-list::-webkit-scrollbar {
+  width: 5px;
+}
+
 .cr-room-list::-webkit-scrollbar-thumb {
   background: #d1d5db;
   border-radius: 999px;
@@ -735,9 +766,9 @@
 .cr-room-option {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: 10px;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 9px;
   border: none;
   background: transparent;
   cursor: pointer;
@@ -746,40 +777,48 @@
   transition: background 0.12s ease;
   width: 100%;
 }
-.cr-room-option:hover { background: #fef0e7; }
+
+.cr-room-option:hover {
+  background: #fef0e7;
+}
+
 .cr-room-option.is-active {
   background: #fff7ed;
   box-shadow: inset 0 0 0 1.5px #f57c00;
 }
+
 .cr-room-option-icon {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
   background: #f4f6f9;
   color: #6b7280;
   display: grid;
   place-items: center;
-  font-size: 12px;
+  font-size: 11px;
   flex-shrink: 0;
   transition: 0.15s;
 }
+
 .cr-room-option:hover .cr-room-option-icon,
 .cr-room-option.is-active .cr-room-option-icon {
   background: #f57c00;
   color: #fff;
 }
+
 .cr-room-option-name {
   flex: 1;
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 600;
   color: #1a1a1a;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
 .cr-room-option-check {
   color: #f57c00;
-  font-size: 14px;
+  font-size: 13px;
   flex-shrink: 0;
 }
 
@@ -787,21 +826,26 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 32px 16px;
+  gap: 6px;
+  padding: 24px 12px;
   color: #9ca3af;
-  font-size: 13px;
+  font-size: 12px;
   text-align: center;
 }
-.cr-picker-empty i { font-size: 28px; color: #d1d5db; }
+
+.cr-picker-empty i {
+  font-size: 24px;
+  color: #d1d5db;
+}
 
 /* ── Date popover ── */
 .cr-date-quick-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 6px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
+
 .cr-date-quick-row > button {
   padding: 8px 10px;
   border-radius: 8px;
@@ -814,11 +858,13 @@
   cursor: pointer;
   transition: 0.15s;
 }
+
 .cr-date-quick-row > button:hover {
   border-color: #f57c00;
   color: #f57c00;
   background: #fff7ed;
 }
+
 .cr-date-quick-row > button.active {
   background: #f57c00;
   border-color: #f57c00;
@@ -829,43 +875,50 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
   padding: 0 2px;
 }
+
 .cr-cal-title {
-  font-size: 13.5px;
+  font-size: 12.5px;
   font-weight: 700;
   color: #1a1a1a;
 }
+
 .cr-cal-nav {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
   border: none;
   background: #f4f6f9;
   color: #5c6378;
   cursor: pointer;
   display: grid;
   place-items: center;
-  font-size: 11px;
+  font-size: 10px;
   transition: 0.15s;
 }
-.cr-cal-nav:hover { background: #fef0e7; color: #f57c00; }
+
+.cr-cal-nav:hover {
+  background: #fef0e7;
+  color: #f57c00;
+}
 
 .cr-cal-weekdays {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
   gap: 2px;
-  margin-bottom: 4px;
+  margin-bottom: 3px;
 }
+
 .cr-cal-weekdays > span {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 800;
   color: #9ca3af;
   text-align: center;
-  letter-spacing: 0.05em;
   text-transform: uppercase;
-  padding: 4px 0;
+  letter-spacing: 0.04em;
+  padding: 3px 0;
 }
 
 .cr-cal-grid {
@@ -873,43 +926,131 @@
   grid-template-columns: repeat(7, 1fr);
   gap: 2px;
 }
+
 .cr-cal-day {
   aspect-ratio: 1;
-  border-radius: 8px;
+  border-radius: 7px;
   border: none;
   background: #fff;
   color: #1a1a1a;
   font-family: inherit;
-  font-size: 12.5px;
+  font-size: 11.5px;
   font-weight: 600;
   cursor: pointer;
   display: grid;
   place-items: center;
   transition: all 0.12s ease;
 }
+
 .cr-cal-day:hover:not(:disabled):not(.is-selected) {
   background: #fef0e7;
   color: #f57c00;
 }
+
 .cr-cal-day.is-outside {
   color: #cbd5e1;
   font-weight: 500;
 }
+
 .cr-cal-day.is-selected {
   background: #f57c00;
   color: #fff;
-  box-shadow: 0 3px 8px rgba(245, 124, 0, 0.3);
+  box-shadow: 0 2px 6px rgba(245, 124, 0, 0.3);
 }
 
 @keyframes cr-pop-in {
-  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
-/* ─── Tighter card spacing inside the reservations content ─── */
-.clerk-reservations-content {
-  gap: 0;
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
-.clerk-reservations-content .reservation-card {
-  margin: 6px 20px;
+/* ═══════════════════════════════════════════════════════════════
+   RESPONSIVE
+   ═══════════════════════════════════════════════════════════════ */
+
+@media (max-width: 900px) {
+  .clerk-filter-row {
+    flex-wrap: wrap;
+  }
+
+  .clerk-search-group {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .cr-picker-group,
+  .clerk-date-sort-btn {
+    flex: 1 1 calc(50% - 6px);
+    min-width: 0;
+  }
+
+  .clerk-date-sort-btn {
+    justify-content: center;
+  }
+
+  .clerk-clear-filters-btn {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 600px) {
+  .clerk-filter-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .clerk-filter-group,
+  .clerk-search-group,
+  .cr-picker-group,
+  .clerk-date-sort-btn,
+  .clerk-clear-filters-btn {
+    flex: 1 1 100%;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .clerk-date-sort-btn,
+  .clerk-clear-filters-btn {
+    justify-content: center;
+  }
+
+  .clerk-filter-summary {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .clerk-filter-result-count {
+    margin-left: 0;
+  }
+
+  .clerk-reservations-header-top {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .clerk-export-btn {
+    justify-content: center;
+    width: 100%;
+  }
+
+  .clerk-export-menu {
+    right: auto;
+    left: 0;
+    width: 100%;
+  }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .cr-room-popover,
+  .cr-date-popover {
+    animation: none;
+  }
 }

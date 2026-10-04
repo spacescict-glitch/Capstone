@@ -56,6 +56,14 @@ const getStatusInfo = (status) => {
   }
 };
 
+const sortRoomsByName = (list) =>
+  [...list].sort((a, b) =>
+    (a.id || "").localeCompare(b.id || "", undefined, {
+      numeric: true,
+      sensitivity: "base",
+    })
+  );
+
 function ToggleSwitch({ checked, onClick }) {
   return (
     <button
@@ -727,11 +735,12 @@ function RoomManagementView({
     return <div className="rooms-loading">Loading rooms...</div>;
   }
 
-  const totalRooms = rooms.length;
-  const totalPages = Math.ceil(totalRooms / itemsPerPage);
+  const sortedRooms = sortRoomsByName(rooms);
+  const totalRooms = sortedRooms.length;
+  const totalPages = Math.ceil(totalRooms / itemsPerPage) || 1;
   const startIndex = (currentPage - 1) * itemsPerPage;
   const endIndex = startIndex + itemsPerPage;
-  const paginatedRooms = rooms.slice(startIndex, endIndex);
+  const paginatedRooms = sortedRooms.slice(startIndex, endIndex);
 
   const renderPages = () => {
     const pages = [];
@@ -851,17 +860,6 @@ function RoomManagementView({
                   >
                     <td>
                       <div className="room-name-cell">
-                        <span
-                          className={`room-icon room-icon--${
-                            room.roomStatus !== "active"
-                              ? "muted"
-                              : room.type === "lab"
-                                ? "orange"
-                                : "peach"
-                          }`}
-                        >
-                          {room.id}
-                        </span>
                         <span>
                           <div className="rm-room-name">{room.id}</div>
                           <span className="room-floor">{room.floor}</span>

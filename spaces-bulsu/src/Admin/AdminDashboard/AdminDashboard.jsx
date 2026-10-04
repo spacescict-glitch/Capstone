@@ -605,7 +605,7 @@ export default function AdminDashboard() {
         <div>
           <h1 className="dept-db-title">Admin Dashboard</h1>
           <p className="dept-db-subtitle">
-            Monitor room status and system activity in real-time.
+            Monitor room status and system activities.
           </p>
         </div>
       </div>
@@ -637,7 +637,7 @@ export default function AdminDashboard() {
           <div className="dept-db-panel-header">
             <div className="dept-db-panel-title">
               <i className="fa-solid fa-table-columns"></i>
-              <h3>Live Room Status</h3>
+              <h3>Current Room Status</h3>
             </div>
             <div className="dept-db-legend">
               <span className="dept-db-legend-item green">AVAILABLE</span>

@@ -733,3 +733,17 @@
     width: 100%; max-width: 100%;
   }
 }
+
+.cvas-cal-day.is-disabled,
+.cvas-cal-day:disabled {
+  color: #e5e7eb;
+  background: #fff;
+  cursor: not-allowed;
+  font-weight: 500;
+}
+
+.cvas-cal-day.is-disabled:hover,
+.cvas-cal-day:disabled:hover {
+  background: #fff;
+  color: #e5e7eb;
+}

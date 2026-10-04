@@ -942,3 +942,18 @@ html, body {
     width: 100%; max-width: 100%;
   }
 }
+
+.fr-cal-day.is-disabled,
+.fr-cal-day:disabled {
+  color: #E5E7EB;
+  background: #fff;
+  cursor: not-allowed;
+  font-weight: 500;
+}
+
+.fr-cal-day.is-disabled:hover,
+.fr-cal-day:disabled:hover {
+  background: #fff;
+  color: #E5E7EB;
+}
+

@@ -46,6 +46,15 @@ const isUnderMaintenance = (roomData) => {
   return roomStatus === "maintenance";
 };
 
+// Sort rooms alphabetically by roomName (numeric-aware: "Room 2" < "Room 10")
+const sortRoomsByName = (list) =>
+  [...list].sort((a, b) =>
+    (a.roomName || "").localeCompare(b.roomName || "", undefined, {
+      numeric: true,
+      sensitivity: "base",
+    }),
+  );
+
 // ─── Latest schedule helpers ─────────────────────────────────────────
 const semesterRank = (sem = "") => {
   const s = sem.toLowerCase();
@@ -327,7 +336,7 @@ function ClerkViewAcademicSchedule() {
         return acc;
       }, {});
 
-    return rooms
+    const list = rooms
       .map((room) => {
         const maintenance = isUnderMaintenance(room);
         const schedules = roomSchedules[room.id] || [];
@@ -434,6 +443,8 @@ function ClerkViewAcademicSchedule() {
           return false;
         return true;
       });
+
+    return sortRoomsByName(list);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     rooms,
@@ -477,8 +488,8 @@ function ClerkViewAcademicSchedule() {
       <div className="lr-page-header">
         <h1>Academic Schedule</h1>
         <p>
-          View classroom schedules by building, floor, date, and time. Status
-          updates automatically in real time.
+          View classroom schedules by building, floor, date, and time. Room status
+          updates automatically.
         </p>
       </div>
 
@@ -596,21 +607,6 @@ function ClerkViewAcademicSchedule() {
               </button>
             ))}
           </div>
-        </div>
-
-        <div className="active-filter-chips">
-          <span className="filter-chip">
-            <i className="fa-regular fa-calendar"></i>
-            {selectedDate}
-          </span>
-          <span className="filter-chip">
-            <i className="fa-regular fa-clock"></i>
-            {startTime || "--:--"} – {endTime || "--:--"}
-          </span>
-          <span className="filter-chip">
-            <i className="fa-solid fa-circle-info"></i>
-            {selectedStatus}
-          </span>
         </div>
 
         <div className="lr-room-cards">
@@ -779,18 +775,23 @@ function ClerkViewAcademicSchedule() {
                           ).map((cell, i) => {
                             const cellStr = toDateInputValue(cell.date);
                             const isSelected = cellStr === selectedDate;
+                            const isPast = cellStr < getToday();
+
                             return (
                               <button
                                 type="button"
                                 key={i}
+                                disabled={isPast}
                                 className={[
                                   "cvas-cal-day",
                                   !cell.inMonth && "is-outside",
                                   isSelected && "is-selected",
+                                  isPast && "is-disabled",
                                 ]
                                   .filter(Boolean)
                                   .join(" ")}
                                 onClick={() => {
+                                  if (isPast) return;
                                   setSelectedDate(cellStr);
                                   setShowDatePicker(false);
                                 }}

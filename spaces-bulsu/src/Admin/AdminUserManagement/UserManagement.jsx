@@ -13,7 +13,6 @@ import {
 import { sendPasswordResetEmail } from "firebase/auth";
 import { initializeApp, deleteApp } from "firebase/app";
 import { getAuth, createUserWithEmailAndPassword } from "firebase/auth";
-import { getFunctions, httpsCallable } from "firebase/functions";
 import { auth, db } from "../../firebase";
 import { logActivity } from "../../utils/logActivity";
 import "./user-management.css";
@@ -33,9 +32,6 @@ const firebaseConfig = {
   appId: "1:268419005346:web:6c2bb5f113f46ff28890fb",
 };
 
-const functions = getFunctions();
-const deleteUserFn = httpsCallable(functions, "deleteUser");
-
 const ROLE_COLORS = {
   Faculty: { bg: "#EDE9FE", text: "#5B21B6" },
   "Local Registrar": { bg: "#FEF3C7", text: "#92400E" },
@@ -46,17 +42,29 @@ const ROLE_COLORS = {
 const ROLES = ["Faculty", "Local Registrar", "Clerk", "Admin"];
 
 const SORT_OPTIONS = [
-  { value: "name-asc", label: "Name (A–Z)", icon: "fa-arrow-down-a-z" },
+  { value: "name-asc",  label: "Name (A–Z)", icon: "fa-arrow-down-a-z" },
   { value: "name-desc", label: "Name (Z–A)", icon: "fa-arrow-down-z-a" },
-  { value: "role", label: "Role", icon: "fa-user-tag" },
-  { value: "status", label: "Status", icon: "fa-circle-dot" },
+  { value: "role",      label: "Role",       icon: "fa-user-tag" },
+  { value: "status",    label: "Status",     icon: "fa-circle-dot" },
+];
+
+const ROLE_FILTER_OPTIONS = [
+  { value: "All",             label: "All Roles",       icon: "fa-layer-group" },
+  { value: "Faculty",         label: "Faculty",         icon: "fa-chalkboard-user" },
+  { value: "Local Registrar", label: "Local Registrar", icon: "fa-book" },
+  { value: "Clerk",           label: "Clerk",           icon: "fa-clipboard" },
+  { value: "Admin",           label: "Admin",           icon: "fa-user-shield" },
+];
+
+const STATUS_FILTER_OPTIONS = [
+  { value: "All",     label: "Any Status", icon: "fa-circle-dot" },
+  { value: "Active",  label: "Active",     icon: "fa-circle-check" },
+  { value: "Blocked", label: "Blocked",    icon: "fa-ban" },
 ];
 
 const steps = [{ number: 1, label: "DETAILS" }, { number: 2, label: "CONFIRM" }];
 
-const DELETE_PHRASE = "DELETE USER";
-
-const PER_PAGE = 10; // ← Max users per page
+const PER_PAGE = 10;
 
 async function createUserSecondaryApp(email, password) {
   const secondaryApp = initializeApp(firebaseConfig, `secondary-${Date.now()}`);
@@ -110,10 +118,11 @@ function Stepper({ current }) {
   );
 }
 
-function SortMenu({ sortBy, setSortBy }) {
+// ── Generic filter dropdown (Sort / Role / Status) ──
+function FilterMenu({ label, value, setValue, options, icon, minWidth }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
-  const current = SORT_OPTIONS.find((o) => o.value === sortBy) || SORT_OPTIONS[0];
+  const current = options.find((o) => o.value === value) || options[0];
 
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -125,26 +134,34 @@ function SortMenu({ sortBy, setSortBy }) {
 
   return (
     <div className="um-sort-menu" ref={ref}>
-      <button className="um-filter-btn" onClick={() => setOpen((v) => !v)} type="button">
-        <i className={`fa-solid ${current.icon}`} />
-        Sort: {current.label}
+      <button
+        className="um-filter-btn"
+        onClick={() => setOpen((v) => !v)}
+        type="button"
+        style={minWidth ? { minWidth } : undefined}
+      >
+        <i className={`fa-solid ${current?.icon || icon || "fa-filter"}`} />
+        <span className="um-filter-btn-text">
+          <span className="um-filter-btn-prefix">{label}:</span>{" "}
+          <span className="um-filter-btn-value">{current?.label}</span>
+        </span>
         <i className={`fa-solid fa-chevron-down um-sort-chevron ${open ? "is-open" : ""}`} />
       </button>
 
       {open && (
         <div className="um-sort-dropdown">
-          {SORT_OPTIONS.map((opt) => (
+          {options.map((opt) => (
             <button
               key={opt.value}
-              className={`um-sort-option ${sortBy === opt.value ? "active" : ""}`}
+              className={`um-sort-option ${value === opt.value ? "active" : ""}`}
               onClick={() => {
-                setSortBy(opt.value);
+                setValue(opt.value);
                 setOpen(false);
               }}
             >
               <i className={`fa-solid ${opt.icon}`} />
               {opt.label}
-              {sortBy === opt.value && <i className="fa-solid fa-check um-sort-check" />}
+              {value === opt.value && <i className="fa-solid fa-check um-sort-check" />}
             </button>
           ))}
         </div>
@@ -157,7 +174,6 @@ function SortMenu({ sortBy, setSortBy }) {
 function Pagination({ currentPage, totalPages, onPageChange, totalItems, startIndex, endIndex }) {
   if (totalPages <= 1) return null;
 
-  // Build visible page numbers (window of 5)
   const getPageNumbers = () => {
     const pages = [];
     const maxVisible = 5;
@@ -236,79 +252,13 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(null);
-  const [deleteTarget, setDeleteTarget] = useState(null);
   const [resetTarget, setResetTarget] = useState(null);
   const [sortBy, setSortBy] = useState("name-asc");
   const [roleFilter, setRoleFilter] = useState("All");
   const [statusFilter, setStatusFilter] = useState("All");
-  const [deleting, setDeleting] = useState(false);
 
   // ── Pagination state ──
   const [currentPage, setCurrentPage] = useState(1);
-
-  // ── 2-step strong warning delete ──
-  const [deleteStep, setDeleteStep] = useState(1);
-  const [deleteAcknowledged, setDeleteAcknowledged] = useState(false);
-  const [deleteConfirmText, setDeleteConfirmText] = useState("");
-
-  const handleDeleteUser = (user) => {
-    setDeleteTarget(user);
-    setDeleteStep(1);
-    setDeleteAcknowledged(false);
-    setDeleteConfirmText("");
-  };
-
-  const closeDeleteModal = () => {
-    if (deleting) return;
-    setDeleteTarget(null);
-    setDeleteStep(1);
-    setDeleteAcknowledged(false);
-    setDeleteConfirmText("");
-  };
-
-  const confirmDeleteUser = async () => {
-    if (!deleteTarget) return;
-    setDeleting(true);
-    const targetUser = deleteTarget;
-
-    try {
-      const result = await deleteUserFn({ userId: targetUser.id });
-      if (!result.data?.success) throw new Error("Cloud function did not return success.");
-
-      setUsers((prev) => prev.filter((u) => u.id !== targetUser.id));
-
-      await logActivity({
-        userId: targetUser.id,
-        user: getFullName(targetUser),
-        role: targetUser.role,
-        action: "Deleted User (Auth + Firestore)",
-        actionType: "failed",
-        target: targetUser.email,
-        status: "SUCCESS",
-      });
-
-      showToast("success", "User Deleted", `${targetUser.email} was removed. The email can now be reused.`);
-      closeDeleteModal();
-    } catch (e) {
-      console.error("Delete error:", e);
-      if (e?.code === "functions/not-found" || e?.code === "functions/unavailable") {
-        showToast("error", "Function Not Deployed", "The deleteUser Cloud Function is not deployed yet. Run: firebase deploy --only functions");
-      } else if (e?.code === "functions/permission-denied") {
-        showToast("error", "Permission Denied", e.message || "You cannot delete this user.");
-      } else if (e?.code === "functions/failed-precondition") {
-        showToast("error", "Not Allowed", e.message || "Action blocked by server.");
-      } else {
-        showToast("error", "Delete Failed", e?.message || "Could not delete the user.");
-      }
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  const isDeleteReady =
-    deleteStep === 2 &&
-    deleteAcknowledged &&
-    deleteConfirmText.trim() === DELETE_PHRASE;
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -325,11 +275,6 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
   };
 
   useEffect(() => { fetchUsers(); }, []);
-
-  const roleCounts = ROLES.reduce((acc, r) => {
-    acc[r] = users.filter((u) => u.role === r).length;
-    return acc;
-  }, {});
 
   const totalCount = users.length;
   const activeCount = users.filter((u) => u.status === "Active").length;
@@ -365,17 +310,14 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
   const endIndex = Math.min(startIndex + PER_PAGE, filtered.length);
   const paginatedUsers = filtered.slice(startIndex, endIndex);
 
-  // Reset to page 1 whenever filters/search/sort change
   useEffect(() => {
     setCurrentPage(1);
   }, [search, roleFilter, statusFilter, sortBy]);
 
-  // Guard: if current page exceeds total pages (e.g., after deletion), clamp
   useEffect(() => {
     if (currentPage > totalPages) setCurrentPage(totalPages);
   }, [currentPage, totalPages]);
 
-  // ── Toggle Active ↔ Blocked (unified) ──
   const handleToggleStatus = async (user) => {
     const isUnblocking = user.status === "Blocked";
     const newStatus = isUnblocking ? "Active" : "Blocked";
@@ -500,7 +442,8 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
         </div>
       </div>
 
-      <div className="um-search-row">
+      {/* ── SINGLE-LINE TOOLBAR: Search (longest) + Sort + Role + Status ── */}
+      <div className="um-toolbar">
         <div className="um-search-bar">
           <i className="fa-solid fa-magnifying-glass" />
           <input
@@ -508,50 +451,44 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
-        </div>
-        <SortMenu sortBy={sortBy} setSortBy={setSortBy} />
-      </div>
-
-      <div className="um-chip-row">
-        <button className={`um-chip ${roleFilter === "All" ? "active" : ""}`} onClick={() => setRoleFilter("All")}>
-          All <span className="um-chip-count">{totalCount}</span>
-        </button>
-
-        {ROLES.map((r) => {
-          const rc = ROLE_COLORS[r];
-          return (
+          {search && (
             <button
-              key={r}
-              className={`um-chip ${roleFilter === r ? "active" : ""}`}
-              style={roleFilter === r ? { background: rc.bg, color: rc.text, borderColor: rc.text } : undefined}
-              onClick={() => setRoleFilter(r)}
+              type="button"
+              className="um-search-clear"
+              onClick={() => setSearch("")}
+              aria-label="Clear search"
             >
-              {r} <span className="um-chip-count">{roleCounts[r]}</span>
+              <i className="fa-solid fa-xmark" />
             </button>
-          );
-        })}
-      </div>
+          )}
+        </div>
 
-      {/* ── STATUS FILTER CHIPS ── */}
-      <div className="um-chip-row um-status-chip-row">
-        <button
-          className={`um-chip ${statusFilter === "All" ? "active" : ""}`}
-          onClick={() => setStatusFilter("All")}
-        >
-          Any Status
-        </button>
-        <button
-          className={`um-chip ${statusFilter === "Active" ? "active" : ""}`}
-          onClick={() => setStatusFilter("Active")}
-        >
-          Active
-        </button>
-        <button
-          className={`um-chip ${statusFilter === "Blocked" ? "active" : ""}`}
-          onClick={() => setStatusFilter("Blocked")}
-        >
-          Blocked {blockedCount > 0 && <span className="um-chip-count">{blockedCount}</span>}
-        </button>
+        <FilterMenu
+          label="Sort"
+          value={sortBy}
+          setValue={setSortBy}
+          options={SORT_OPTIONS}
+          icon="fa-arrow-down-short-wide"
+          minWidth={180}
+        />
+
+        <FilterMenu
+          label="Role"
+          value={roleFilter}
+          setValue={setRoleFilter}
+          options={ROLE_FILTER_OPTIONS}
+          icon="fa-user-tag"
+          minWidth={180}
+        />
+
+        <FilterMenu
+          label="Status"
+          value={statusFilter}
+          setValue={setStatusFilter}
+          options={STATUS_FILTER_OPTIONS}
+          icon="fa-circle-dot"
+          minWidth={170}
+        />
       </div>
 
       <div className="um-table-card">
@@ -622,10 +559,6 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
                       </td>
                       <td>
                         <div className="um-actions">
-                          <button className="um-action-icon danger" title="Delete User" onClick={() => handleDeleteUser(u)}>
-                            <i className="fa-solid fa-trash" />
-                          </button>
-
                           <button
                             className="um-action-icon"
                             title="Send password reset email"
@@ -662,7 +595,6 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
           </table>
         )}
 
-        {/* ── PAGINATION ── */}
         {!loading && filtered.length > 0 && (
           <Pagination
             currentPage={currentPage}
@@ -674,164 +606,6 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
           />
         )}
       </div>
-
-      {/* ═══════════════════════════════════════════════════════
-          DELETE USER — 2-step strong warning modal
-          ═══════════════════════════════════════════════════════ */}
-      {deleteTarget && (
-        <div className="um-modal-overlay" onClick={closeDeleteModal}>
-          <div className="um-modal um-modal-delete-warning" onClick={(e) => e.stopPropagation()}>
-            {deleteStep === 1 && (
-              <>
-                <div className="um-modal-icon is-danger um-modal-icon-pulse">
-                  <i className="fa-solid fa-triangle-exclamation" />
-                </div>
-                <h3 className="um-modal-title">Delete User Account?</h3>
-                <p className="um-modal-text">
-                  This is a <strong>permanent and irreversible</strong> action.
-                  Please read carefully before continuing.
-                </p>
-
-                <div className="um-modal-target">
-                  <i className="fa-solid fa-user-xmark" />
-                  <div>
-                    <span className="um-target-label">Target Account</span>
-                    <span className="um-target-value">{deleteTarget.email}</span>
-                  </div>
-                </div>
-
-                <div className="um-delete-warning-box">
-                  <div className="um-delete-warning-title">
-                    <i className="fa-solid fa-circle-exclamation" />
-                    What will be permanently destroyed
-                  </div>
-                  <ul className="um-delete-warning-list">
-                    <li><i className="fa-solid fa-xmark" />The Firebase Authentication account (email becomes reusable)</li>
-                    <li><i className="fa-solid fa-xmark" />All profile data — name, role, status, temp password</li>
-                    <li><i className="fa-solid fa-xmark" />All rooms the user is currently watching ("Notify Me")</li>
-                    <li><i className="fa-solid fa-xmark" />Entire notification history and unread alerts</li>
-                    <li><i className="fa-solid fa-xmark" />All class schedules, reservations, and bookings tied to this account</li>
-                    <li><i className="fa-solid fa-xmark" />Login audit trail and account activity logs</li>
-                  </ul>
-                </div>
-
-                <label className="um-delete-ack">
-                  <input
-                    type="checkbox"
-                    checked={deleteAcknowledged}
-                    onChange={(e) => setDeleteAcknowledged(e.target.checked)}
-                  />
-                  <span>
-                    I understand this action is <strong>permanent</strong> and
-                    cannot be undone. All data associated with{" "}
-                    <strong>{deleteTarget.email}</strong> will be erased.
-                  </span>
-                </label>
-
-                <div className="um-modal-actions">
-                  <button
-                    type="button"
-                    className="um-modal-cancel"
-                    onClick={closeDeleteModal}
-                    disabled={deleting}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    className="um-modal-confirm is-danger"
-                    disabled={!deleteAcknowledged}
-                    onClick={() => setDeleteStep(2)}
-                  >
-                    Continue to Confirmation <i className="fa-solid fa-arrow-right" />
-                  </button>
-                </div>
-              </>
-            )}
-
-            {deleteStep === 2 && (
-              <>
-                <div className="um-modal-icon is-danger um-modal-icon-pulse">
-                  <i className="fa-solid fa-trash-can" />
-                </div>
-                <h3 className="um-modal-title">Final Confirmation</h3>
-                <p className="um-modal-text">
-                  This is your <strong>last chance</strong>. Once you click the delete
-                  button below, this account is gone forever.
-                </p>
-
-                <div className="um-delete-danger-banner">
-                  <i className="fa-solid fa-skull-crossbones" />
-                  <span>Point of no return</span>
-                </div>
-
-                <div className="um-modal-target is-danger">
-                  <i className="fa-solid fa-user-xmark" />
-                  <div>
-                    <span className="um-target-label">Deleting</span>
-                    <span className="um-target-value">{deleteTarget.email}</span>
-                  </div>
-                </div>
-
-                <div className="um-form-group" style={{ width: "100%", textAlign: "left" }}>
-                  <label>
-                    Type <span className="um-danger-text">{DELETE_PHRASE}</span> to confirm
-                  </label>
-                  <input
-                    type="text"
-                    className="um-input"
-                    value={deleteConfirmText}
-                    onChange={(e) => setDeleteConfirmText(e.target.value)}
-                    placeholder={DELETE_PHRASE}
-                    autoComplete="off"
-                    spellCheck="false"
-                  />
-                  <small
-                    className={
-                      deleteConfirmText === DELETE_PHRASE
-                        ? "um-phrase-ok"
-                        : deleteConfirmText.length > 0
-                        ? "um-phrase-bad"
-                        : ""
-                    }
-                  >
-                    {deleteConfirmText === DELETE_PHRASE ? (
-                      <><i className="fa-solid fa-circle-check" /> Phrase matched</>
-                    ) : deleteConfirmText.length > 0 ? (
-                      <><i className="fa-solid fa-circle-xmark" /> Phrase doesn't match</>
-                    ) : (
-                      "Type the exact phrase to enable the delete button."
-                    )}
-                  </small>
-                </div>
-
-                <div className="um-modal-actions">
-                  <button
-                    type="button"
-                    className="um-modal-cancel"
-                    onClick={() => setDeleteStep(1)}
-                    disabled={deleting}
-                  >
-                    <i className="fa-solid fa-arrow-left" /> Back
-                  </button>
-                  <button
-                    type="button"
-                    className="um-modal-confirm is-danger"
-                    onClick={confirmDeleteUser}
-                    disabled={!isDeleteReady || deleting}
-                  >
-                    {deleting ? (
-                      <><i className="fa-solid fa-spinner fa-spin" /> Deleting…</>
-                    ) : (
-                      <><i className="fa-solid fa-trash-can" /> Delete Forever</>
-                    )}
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* ── Reset password modal ── */}
       {resetTarget && (

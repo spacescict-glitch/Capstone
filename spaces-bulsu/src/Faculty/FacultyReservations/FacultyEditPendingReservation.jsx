@@ -757,10 +757,6 @@ function FacultyEditPendingReservation() {
               Update the room, schedule, or details of your pending reservation.
             </p>
           </div>
-          <span className="fepr-live-badge" title="Realtime updates enabled">
-            <span className="fepr-live-dot"></span>
-            Live
-          </span>
         </div>
 
         {loadingLive && (

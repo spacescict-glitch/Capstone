@@ -364,7 +364,16 @@ export default function RoomUsageTracking() {
         .filter((r) => String(r.status || "").toLowerCase() === "approved")
         .map((r) => normalizeReassignment(r));
 
-      setRooms(roomList);
+            // ✅ Alphabetical (A → Z) room list, case-insensitive & numeric-aware
+      const sortedRoomList = [...roomList].sort((a, b) =>
+        (a.roomName || a.name || "").localeCompare(
+          b.roomName || b.name || "",
+          undefined,
+          { sensitivity: "base", numeric: true }
+        )
+      );
+
+      setRooms(sortedRoomList);
       setAllSchedules(scheduleList);
       setAllEvents(eventList);
       setAllReservations(reservationList);
@@ -373,7 +382,9 @@ export default function RoomUsageTracking() {
 
       setRoom((prev) => {
         if (prev) return prev;
-        return roomList.length ? roomList[0].roomName || roomList[0].name : "";
+        return sortedRoomList.length
+          ? sortedRoomList[0].roomName || sortedRoomList[0].name
+          : "";
       });
 
       // ✅ Success feedback only for manual refresh
@@ -1095,7 +1106,7 @@ export default function RoomUsageTracking() {
               className={`rut-tab ${activeTab === "history" ? "active" : ""}`}
               onClick={() => setActiveTab("history")}
             >
-              Historical Log
+              Last User
             </button>
           </div>
 
@@ -1107,7 +1118,7 @@ export default function RoomUsageTracking() {
                     {isToday && <span className="rut-live-dot"></span>}
                     <span className="rut-live-label">
                       {isToday
-                        ? `Live Status : ${room}`
+                        ? `Current Status of ${room}`
                         : `Schedule for ${date} : ${room}`}
                     </span>
                   </div>
@@ -1176,14 +1187,7 @@ export default function RoomUsageTracking() {
                         </span>
                       </div>
                     </div>
-                    <div className="rut-progress-bar">
-                      <div
-                        className="rut-progress-fill"
-                        style={{
-                          width: `${calculateProgress(currentSchedule)}%`,
-                        }}
-                      />
-                    </div>
+            
                   </>
                 ) : (
                   <div className="rut-empty-live">
@@ -1229,7 +1233,7 @@ export default function RoomUsageTracking() {
 
                 <div className="rut-next-card">
                   <span className="rut-next-label">
-                    {isToday ? "TODAY'S UPCOMING" : `SCHEDULE FOR ${date}`}
+                    {isToday ? "UPCOMING SCHEDULE/S" : `SCHEDULE FOR ${date}`}
                   </span>
                   {upcomingSchedules.length === 0 ? (
                     <div className="rut-no-upcoming">
@@ -1265,7 +1269,7 @@ export default function RoomUsageTracking() {
           {activeTab === "history" && (
             <div className="rut-live-card">
               <h2 className="rut-history-last-title">
-                Historical Room Usage
+                Last User of the Room
               </h2>
               <div className="rut-last-user">
                 <strong className="rut-last-user-title">Last User</strong>

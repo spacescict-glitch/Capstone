@@ -25,6 +25,8 @@
   align-items: flex-start;
   gap: 16px;
   margin-bottom: 24px;
+  justify-content: space-between;
+  flex-wrap: wrap;
 }
 
 .ra-header-icon {
@@ -493,12 +495,55 @@
 .ra-conflict-item {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
   background: #fff;
   border-radius: 10px;
   padding: 12px 14px;
   border: 1px solid var(--ra-accent-border);
+}
+
+.ra-conflict-item-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.ra-conflict-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  align-self: flex-start;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.ra-conflict-kind i {
+  font-size: 10px;
+}
+
+.ra-conflict-kind--schedule {
+  background: #eef2ff;
+  color: #4f46e5;
+}
+.ra-conflict-kind--event {
+  background: #fef3c7;
+  color: #b45309;
+}
+.ra-conflict-kind--reservation {
+  background: #ecfdf5;
+  color: #047857;
+}
+.ra-conflict-kind--reassignment {
+  background: #fce7f3;
+  color: #be185d;
 }
 
 .ra-conflict-code {
@@ -511,26 +556,6 @@
   font-size: 11.5px;
   color: var(--ra-muted);
   margin-top: 2px;
-}
-
-.ra-reassign-btn {
-  background: var(--ra-danger-bg);
-  border: none;
-  color: var(--ra-danger);
-  font-size: 11px;
-  font-weight: 700;
-  font-family: "Lexend", sans-serif;
-  cursor: pointer;
-  letter-spacing: 0.03em;
-  white-space: nowrap;
-  padding: 7px 12px;
-  border-radius: 6px;
-  transition: background 0.15s;
-  flex-shrink: 0;
-}
-
-.ra-reassign-btn:hover {
-  background: #fecaca;
 }
 
 /* ---------------- MODAL ---------------- */
@@ -692,31 +717,24 @@
   .ra-page {
     padding: 16px;
   }
-
   .ra-title {
     font-size: 26px;
   }
-
   .ra-layout {
     grid-template-columns: 1fr;
   }
-
   .ra-card {
     padding: 20px 18px;
   }
-
   .ra-row {
     grid-template-columns: 1fr;
   }
-
   .ra-confirm-btn {
     width: 100%;
   }
-
   .ra-footer {
     justify-content: stretch;
   }
-
   .ra-room-summary {
     flex-direction: column;
     align-items: flex-start;
@@ -727,19 +745,17 @@
   .ra-title {
     font-size: 22px;
   }
-
   .ra-card {
     padding: 16px 14px;
   }
-
   .ra-modal {
     padding: 24px 18px;
   }
-
   .ra-header-icon {
     display: none;
   }
 }
+
 /* ═══════════════ NEW DATE & TIME UI ═══════════════ */
 .dt-section-header {
   display: flex;
@@ -991,6 +1007,8 @@
     transform: rotate(90deg);
   }
 }
+
+/* ─── View All Requests button ────────────────────────────── */
 .ra-secondary-btn {
   display: inline-flex;
   align-items: center;
@@ -1010,31 +1028,196 @@
 .ra-secondary-btn:hover {
   background: #fef0e7;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   APPROVAL FLOW NOTICE — informative, multi-step
+   ═══════════════════════════════════════════════════════════════ */
 .ra-approval-notice {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 22px 24px 18px;
+  background: linear-gradient(180deg, #eff6ff 0%, #f8fbff 100%);
+  border: 1px solid #bfdbfe;
+  border-radius: 14px;
+  margin-bottom: 20px;
+  overflow: hidden;
+}
+
+.ra-approval-notice::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at top right, rgba(59, 130, 246, 0.08), transparent 55%),
+    radial-gradient(circle at bottom left, rgba(245, 124, 0, 0.06), transparent 60%);
+  pointer-events: none;
+}
+
+.ra-approval-head {
+  position: relative;
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.ra-approval-icon {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #2563eb;
+  display: grid;
+  place-items: center;
+  font-size: 18px;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.15);
+  border: 1px solid #dbeafe;
+}
+
+.ra-approval-headtext {
+  flex: 1;
+  min-width: 0;
+}
+
+.ra-approval-title {
+  margin: 2px 0 4px;
+  font-size: 15.5px;
+  font-weight: 800;
+  color: #1e3a8a;
+  letter-spacing: -0.01em;
+}
+
+.ra-approval-desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #334155;
+  font-weight: 400;
+}
+
+.ra-approval-desc strong {
+  color: #1e3a8a;
+  font-weight: 700;
+}
+
+.ra-approval-steps {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr auto 1fr;
+  align-items: stretch;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.ra-approval-step {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  background: #ffffff;
+  border: 1px solid #e0ecff;
+  border-radius: 12px;
+  padding: 14px;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04);
+}
+
+.ra-step-num {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #f57c00;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 800;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 2px 6px rgba(245, 124, 0, 0.3);
+}
+
+.ra-step-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.ra-step-title {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 16px;
-  background: #eff6ff;
-  border: 1px solid #bfdbfe;
-  border-radius: 10px;
+  gap: 6px;
   font-size: 13px;
-  color: #1e40af;
-  margin-bottom: 16px;
+  font-weight: 800;
+  color: #1e293b;
+  margin-bottom: 4px;
+  line-height: 1.3;
 }
-.ra-approval-notice i {
-  color: #3b82f6;
-  font-size: 15px;
+
+.ra-step-title i {
+  color: #f57c00;
+  font-size: 12px;
+}
+
+.ra-step-text {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #64748b;
+}
+
+.ra-step-text strong {
+  color: #1e293b;
+  font-weight: 700;
+}
+
+.ra-step-connector {
+  display: grid;
+  place-items: center;
+  color: #93c5fd;
+  font-size: 16px;
+  padding: 0 2px;
+}
+
+.ra-approval-footnote {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px dashed #cbd5e1;
+  border-radius: 10px;
+  font-size: 12.5px;
+  color: #475569;
+  line-height: 1.55;
+}
+
+.ra-approval-footnote i {
+  color: #f57c00;
+  font-size: 13px;
+  margin-top: 2px;
   flex-shrink: 0;
 }
-.ra-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 16px;
-  flex-wrap: wrap;
+
+.ra-approval-footnote strong {
+  color: #1e293b;
+  font-weight: 800;
 }
-integrate mo yung date and room picker dito, and past date is not allowed ha.rut-datepicker {
+
+@media (max-width: 900px) {
+  .ra-approval-steps {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .ra-step-connector {
+    padding: 4px 0;
+    transform: rotate(90deg);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   DATE PICKER (rut-datepicker)
+   ═══════════════════════════════════════════════════════════════ */
+.rut-datepicker {
   position: relative;
   width: 100%;
 }
@@ -1094,7 +1277,6 @@ integrate mo yung date and room picker dito, and past date is not allowed ha.rut
   transform: rotate(180deg);
 }
 
-/* ── Click-away layer ── */
 .rut-date-clickaway {
   position: fixed;
   inset: 0;
@@ -1102,7 +1284,6 @@ integrate mo yung date and room picker dito, and past date is not allowed ha.rut
   background: transparent;
 }
 
-/* ── Popover ── */
 .rut-date-popover {
   position: absolute;
   top: calc(100% + 8px);
@@ -1130,7 +1311,6 @@ integrate mo yung date and room picker dito, and past date is not allowed ha.rut
   box-shadow: -2px -2px 4px rgba(0, 0, 0, 0.03);
 }
 
-/* ── Quick row (Today / Tomorrow) ── */
 .rut-date-quick-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1163,7 +1343,6 @@ integrate mo yung date and room picker dito, and past date is not allowed ha.rut
   color: #fff;
 }
 
-/* ── Calendar header ── */
 .rut-cal-header {
   display: flex;
   align-items: center;
@@ -1193,12 +1372,17 @@ integrate mo yung date and room picker dito, and past date is not allowed ha.rut
   transition: 0.15s;
 }
 
-.rut-cal-nav:hover {
+.rut-cal-nav:hover:not(:disabled) {
   background: #fef0e7;
   color: #f57c00;
 }
 
-/* ── Weekday labels ── */
+.rut-cal-nav:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 .rut-cal-weekdays {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
@@ -1216,7 +1400,6 @@ integrate mo yung date and room picker dito, and past date is not allowed ha.rut
   padding: 4px 0;
 }
 
-/* ── Calendar grid ── */
 .rut-cal-grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
@@ -1258,6 +1441,7 @@ integrate mo yung date and room picker dito, and past date is not allowed ha.rut
   color: #d1d5db;
   cursor: not-allowed;
   background: #fafafa;
+  opacity: 0.65;
 }
 
 .rut-cal-day.is-disabled:hover {
@@ -1277,7 +1461,7 @@ integrate mo yung date and room picker dito, and past date is not allowed ha.rut
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   ROOM PICKER — custom popover (may search)
+   ROOM PICKER
    ═══════════════════════════════════════════════════════════════ */
 .rut-roompicker {
   position: relative;
@@ -1351,7 +1535,6 @@ integrate mo yung date and room picker dito, and past date is not allowed ha.rut
   transform: rotate(180deg);
 }
 
-/* ── Click-away ── */
 .rut-room-clickaway {
   position: fixed;
   inset: 0;
@@ -1359,7 +1542,6 @@ integrate mo yung date and room picker dito, and past date is not allowed ha.rut
   background: transparent;
 }
 
-/* ── Popover ── */
 .rut-room-popover {
   position: absolute;
   top: calc(100% + 8px);
@@ -1388,7 +1570,6 @@ integrate mo yung date and room picker dito, and past date is not allowed ha.rut
   box-shadow: -2px -2px 4px rgba(0, 0, 0, 0.03);
 }
 
-/* ── Search input ── */
 .rut-room-search-wrap {
   display: flex;
   align-items: center;
@@ -1453,7 +1634,6 @@ integrate mo yung date and room picker dito, and past date is not allowed ha.rut
   color: #dc2626;
 }
 
-/* ── Room list ── */
 .rut-room-list {
   max-height: 300px;
   overflow-y: auto;
@@ -1560,7 +1740,6 @@ integrate mo yung date and room picker dito, and past date is not allowed ha.rut
   flex-shrink: 0;
 }
 
-/* ── Empty state ── */
 .rut-room-empty {
   display: flex;
   flex-direction: column;
@@ -1577,26 +1756,7 @@ integrate mo yung date and room picker dito, and past date is not allowed ha.rut
   color: #d1d5db;
 }
 
-/* ─── Refresh button: loading state ──────────────────────── */
-.rut-track-btn:disabled {
-  opacity: 0.75;
-  cursor: not-allowed;
-  filter: saturate(0.85);
-}
-
-.rut-track-btn:disabled:hover {
-  background: #f57c00;
-  color: #fff;
-  border-color: #f57c00;
-}
-
-
-
-
-/* ============================================================
-   ROOM ACTIVITY PICKER OVERRIDES
-   Past dates are not selectable.
-   ============================================================ */
+/* ─── Picker overrides inside Room Activity ─────────────── */
 .ra-roompicker,
 .ra-datepicker {
   position: relative;
@@ -1606,24 +1766,6 @@ integrate mo yung date and room picker dito, and past date is not allowed ha.rut
 .ra-roompicker .rut-room-trigger,
 .ra-datepicker .rut-date-trigger {
   width: 100%;
-}
-
-.ra-datepicker .rut-cal-day.is-disabled {
-  color: #d1d5db;
-  cursor: not-allowed;
-  background: #fafafa;
-  opacity: 0.65;
-}
-
-.ra-datepicker .rut-cal-day.is-disabled:hover {
-  background: #fafafa;
-  color: #d1d5db;
-}
-
-.ra-datepicker .rut-cal-nav:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-  pointer-events: none;
 }
 
 @media (max-width: 600px) {

@@ -6,7 +6,19 @@ import Toast from "../../Popup/Toast/Toast";
 
 const CLOUDINARY_CLOUD_NAME    = "dqn1s5ujs";
 const CLOUDINARY_UPLOAD_PRESET = "SpaceSCICT";
-const MAX_PHOTOS = 5;
+
+// ── Upload limits ────────────────────────────────────────────
+const MAX_PHOTOS        = 5;
+const MAX_FILE_MB       = 5;    // per image
+const MAX_TOTAL_MB      = 15;   // all images combined
+const MAX_FILE_BYTES    = MAX_FILE_MB  * 1024 * 1024;
+const MAX_TOTAL_BYTES   = MAX_TOTAL_MB * 1024 * 1024;
+
+const formatBytes = (bytes) => {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
 
 const CATEGORIES = [
   { value: "Electrical",         icon: "fa-bolt",            label: "Electrical" },
@@ -65,7 +77,7 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
   const [toast, setToast] = useState({ show: false, type: "success", title: "", message: "" });
   const showToast = (type, title, message) => {
     setToast({ show: true, type, title, message });
-    setTimeout(() => setToast(p => ({ ...p, show: false })), 3000);
+    setTimeout(() => setToast(p => ({ ...p, show: false })), 3500);
   };
 
   useEffect(() => {
@@ -97,13 +109,11 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, presetRoomId]);
 
-  // ─── Selected room object ────────────────────────────────
   const selectedRoom = useMemo(
     () => rooms.find(r => r.id === form.roomId) || null,
     [rooms, form.roomId]
   );
 
-  // ─── Filtered room list (for search) ─────────────────────
   const filteredRooms = useMemo(() => {
     const q = roomSearch.trim().toLowerCase();
     if (!q) return rooms;
@@ -115,7 +125,6 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
     });
   }, [rooms, roomSearch]);
 
-  // ─── Selected category label for preview ─────────────────
   const selectedCategoryMeta = useMemo(
     () => CATEGORIES.find(c => c.value === form.category) || null,
     [form.category]
@@ -126,8 +135,18 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
     [form.severity]
   );
 
+  // ── Total size of all attached images ────────────────────
+  const totalBytes = useMemo(
+    () => photoFiles.reduce((sum, f) => sum + f.size, 0),
+    [photoFiles]
+  );
+  const totalPercent = Math.min(100, (totalBytes / MAX_TOTAL_BYTES) * 100);
+  const meterState =
+    totalPercent >= 90 ? "danger" : totalPercent >= 70 ? "warn" : "ok";
+
   const handlePhotosChange = (e) => {
     const files = Array.from(e.target.files || []);
+    e.target.value = "";
     if (files.length === 0) return;
 
     const remaining = MAX_PHOTOS - photoFiles.length;
@@ -137,25 +156,44 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
     }
 
     const accepted = [];
+    const problems = [];
+    let runningTotal = totalBytes;
+
     for (const file of files) {
-      if (accepted.length >= remaining) break;
+      if (accepted.length >= remaining) {
+        problems.push(`Only ${MAX_PHOTOS} photos are allowed.`);
+        break;
+      }
       if (!file.type.startsWith("image/")) {
-        showToast("error", "Invalid File", `${file.name} is not an image.`);
+        problems.push(`${file.name} is not an image.`);
         continue;
       }
-      if (file.size > 5 * 1024 * 1024) {
-        showToast("error", "File Too Large", `${file.name} exceeds 5 MB.`);
+      if (file.size > MAX_FILE_BYTES) {
+        problems.push(`${file.name} is ${formatBytes(file.size)} (max ${MAX_FILE_MB} MB each).`);
         continue;
       }
+      if (runningTotal + file.size > MAX_TOTAL_BYTES) {
+        problems.push(
+          `${file.name} would exceed the ${MAX_TOTAL_MB} MB total limit.`
+        );
+        continue;
+      }
+      runningTotal += file.size;
       accepted.push(file);
+    }
+
+    if (problems.length > 0) {
+      showToast(
+        "error",
+        accepted.length > 0 ? "Some photos were skipped" : "Photo not added",
+        problems.join(" ")
+      );
     }
 
     if (accepted.length === 0) return;
 
     setPhotoFiles(prev => [...prev, ...accepted]);
     setPreviewUrls(prev => [...prev, ...accepted.map(f => URL.createObjectURL(f))]);
-
-    e.target.value = "";
   };
 
   const removePhotoAt = (index) => {
@@ -167,17 +205,17 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
     });
   };
 
-  // ─── Validate and open preview ───────────────────────────
   const handleSubmitClick = () => {
     if (!form.roomId) return showToast("error", "Select Room", "Please select the room.");
     if (!form.category) return showToast("error", "Select Category", "Please choose a category.");
     if (!form.description.trim() || form.description.trim().length < 5)
       return showToast("error", "Description Required", "Please describe the issue (min 5 characters).");
+    if (totalBytes > MAX_TOTAL_BYTES)
+      return showToast("error", "Photos Too Large", `Total photo size must be ${MAX_TOTAL_MB} MB or less.`);
 
     setShowPreview(true);
   };
 
-  // ─── Actual submit (from preview modal) ─────────────────
   const handleConfirmSubmit = async () => {
     setSubmitting(true);
     try {
@@ -189,7 +227,6 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
       const reporterName = `${ud.firstName || ""} ${ud.lastName || ""}`.trim() || user.email;
       const reporterRole = ud.role || "";
 
-      // Upload all photos
       const photoUrls = [];
       if (photoFiles.length > 0) {
         setUploading(true);
@@ -231,7 +268,8 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
         "success",
         "Issue Reported ✓",
         "Your report was sent to the Admin. Please wait for their acknowledgment. Thank you for reporting!"
-      );      onSubmitted?.();
+      );
+      onSubmitted?.();
       setShowPreview(false);
       setTimeout(() => onClose?.(), 800);
     } catch (err) {
@@ -262,7 +300,7 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
           </div>
 
           <div className="sim-body">
-            {/* ═════════ ROOM PICKER (custom popover) ═════════ */}
+            {/* ═════════ ROOM PICKER ═════════ */}
             <div className="sim-field">
               <label>Room <span className="sim-required">*</span></label>
 
@@ -282,7 +320,7 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
                     {loadingRooms
                       ? "Loading rooms..."
                       : selectedRoom
-                      ? `${selectedRoom.roomName}${selectedRoom.floor ? ` — ${selectedRoom.floor}` : ""}`
+                      ? selectedRoom.roomName
                       : "Select a room"}
                   </span>
                   {selectedRoom?.floor && (
@@ -437,31 +475,60 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
               <span className="sim-counter">{form.description.length}/500</span>
             </div>
 
-            {/* Multiple Photos */}
+            {/* Photos — limits are visible up front */}
             <div className="sim-field">
               <label>
                 Photos <span className="sim-optional">
-                  (optional · up to {MAX_PHOTOS} · {photoFiles.length}/{MAX_PHOTOS})
+                  (optional · {photoFiles.length}/{MAX_PHOTOS})
                 </span>
               </label>
 
+              <p className="sim-photo-rules">
+                <i className="fa-solid fa-circle-info" />
+                <span>
+                  Up to <strong>{MAX_PHOTOS} photos</strong>, <strong>{MAX_FILE_MB} MB</strong> each,
+                  and <strong>{MAX_TOTAL_MB} MB</strong> in total. Clear photos help the
+                  Admin and Clerk act faster.
+                </span>
+              </p>
+
               {previewUrls.length > 0 && (
-                <div className="sim-photo-grid">
-                  {previewUrls.map((url, i) => (
-                    <div key={i} className="sim-photo-cell">
-                      <img src={url} alt={`Preview ${i + 1}`} />
-                      <button
-                        type="button"
-                        className="sim-photo-remove-icon"
-                        onClick={() => removePhotoAt(i)}
-                        aria-label={`Remove photo ${i + 1}`}
-                        disabled={uploading}
-                      >
-                        <i className="fa-solid fa-xmark" />
-                      </button>
+                <>
+                  <div className="sim-photo-grid">
+                    {previewUrls.map((url, i) => (
+                      <div key={url} className="sim-photo-cell">
+                        <img src={url} alt={`Preview ${i + 1}`} />
+                        <span className="sim-photo-size">
+                          {formatBytes(photoFiles[i]?.size || 0)}
+                        </span>
+                        <button
+                          type="button"
+                          className="sim-photo-remove-icon"
+                          onClick={() => removePhotoAt(i)}
+                          aria-label={`Remove photo ${i + 1}`}
+                          disabled={uploading}
+                        >
+                          <i className="fa-solid fa-xmark" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className={`sim-size-meter ${meterState}`}>
+                    <div className="sim-size-meter-top">
+                      <span>Total size</span>
+                      <span>
+                        <strong>{formatBytes(totalBytes)}</strong> / {MAX_TOTAL_MB} MB
+                      </span>
                     </div>
-                  ))}
-                </div>
+                    <div className="sim-size-meter-bar">
+                      <div
+                        className="sim-size-meter-fill"
+                        style={{ width: `${totalPercent}%` }}
+                      />
+                    </div>
+                  </div>
+                </>
               )}
 
               {photoFiles.length < MAX_PHOTOS && !uploading && (
@@ -511,9 +578,7 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
         </div>
       </div>
 
-      {/* ═══════════════════════════════════════════════════════
-          PREVIEW MODAL — review before submitting
-         ═══════════════════════════════════════════════════════ */}
+      {/* ═══════════ PREVIEW MODAL ═══════════ */}
       {showPreview && (
         <div
           className="sim-preview-overlay"
@@ -534,16 +599,20 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
             </div>
 
             <div className="sim-preview-body">
-              {/* Room */}
               <div className="sim-preview-row">
                 <span className="sim-preview-label">Room</span>
                 <span className="sim-preview-value">
                   {selectedRoom?.roomName || "—"}
-                  {selectedRoom?.floor ? ` — ${selectedRoom.floor}` : ""}
                 </span>
               </div>
 
-              {/* Category */}
+              <div className="sim-preview-row">
+                <span className="sim-preview-label">Floor</span>
+                <span className="sim-preview-value">
+                  {selectedRoom?.floor || "—"}
+                </span>
+              </div>
+
               <div className="sim-preview-row">
                 <span className="sim-preview-label">Category</span>
                 <span className="sim-preview-value">
@@ -561,7 +630,6 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
                 </span>
               </div>
 
-              {/* Severity */}
               <div className="sim-preview-row">
                 <span className="sim-preview-label">Severity</span>
                 <span
@@ -573,7 +641,6 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
                 </span>
               </div>
 
-              {/* Description */}
               <div className="sim-preview-row sim-preview-row--stacked">
                 <span className="sim-preview-label">Description</span>
                 <span className="sim-preview-value sim-preview-description">
@@ -581,15 +648,14 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
                 </span>
               </div>
 
-              {/* Photos */}
               {previewUrls.length > 0 && (
                 <div className="sim-preview-row sim-preview-row--stacked">
                   <span className="sim-preview-label">
-                    Photos ({previewUrls.length})
+                    Photos ({previewUrls.length}) · {formatBytes(totalBytes)}
                   </span>
                   <div className="sim-preview-photo-grid">
                     {previewUrls.map((url, i) => (
-                      <div key={i} className="sim-preview-photo-cell">
+                      <div key={url} className="sim-preview-photo-cell">
                         <img src={url} alt={`Preview ${i + 1}`} />
                       </div>
                     ))}
@@ -597,7 +663,6 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
                 </div>
               )}
 
-              {/* Status note */}
               <div className="sim-preview-note">
                 <i className="fa-solid fa-circle-info"></i>
                 <span>

@@ -347,19 +347,6 @@ margin-top: 0px;
 
 .rut-item-sub.orange { color: #f57c00; font-weight: 500; }
 
-.rut-progress-bar {
-  height: 6px;
-  background: #e5e7eb;
-  border-radius: 10px;
-  overflow: hidden;
-}
-
-.rut-progress-fill {
-  height: 100%;
-  background: #f57c00;
-  border-radius: 10px;
-}
-
 /* ── Empty live state ── */
 .rut-empty-live {
   display: flex;

@@ -123,48 +123,54 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   SEARCH + SORT
+   SINGLE-LINE TOOLBAR
+   [ Search (flexes, longest) ][ Sort ][ Role ][ Status ]
    ═══════════════════════════════════════════════════════════════ */
-.um-search-row {
+.um-toolbar {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 14px;
-  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 10px;
+  margin-bottom: 18px;
+  flex-wrap: nowrap;
 }
 
 .um-search-bar {
-  flex: 1;
-  min-width: 260px;
-  max-width: 500px;
+  flex: 1 1 320px;
+  min-width: 0;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   background: #fff;
   border: 1.5px solid var(--um-border);
   border-radius: 10px;
-  padding: 12px 16px;
+  padding: 0 14px;
+  height: 44px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  box-sizing: border-box;
 }
 
 .um-search-bar:focus-within {
   border-color: var(--um-accent);
+  box-shadow: 0 0 0 3px rgba(245, 124, 0, 0.10);
 }
 
-.um-search-bar i {
+.um-search-bar > i {
   color: var(--um-accent);
-  font-size: 15px;
+  font-size: 14px;
+  flex-shrink: 0;
 }
 
 .um-search-bar input {
   border: none;
   outline: none;
   font-family: "Lexend", sans-serif;
-  font-size: 14px;
+  font-size: 13.5px;
   color: var(--um-ink);
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   background: transparent;
+  height: 100%;
 }
 
 .um-search-bar input::placeholder {
@@ -172,29 +178,87 @@
   font-weight: 300;
 }
 
+.um-search-clear {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: none;
+  background: #f3f4f6;
+  color: #6b7280;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  transition: 0.15s;
+}
+
+.um-search-clear:hover {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+/* Dropdown trigger button — reused by all 3 filter menus */
+.um-sort-menu {
+  position: relative;
+  flex-shrink: 0;
+}
+
 .um-filter-btn {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 8px;
   background: #fff;
   border: 1.5px solid var(--um-border);
   border-radius: 10px;
-  padding: 12px 16px;
+  padding: 0 14px;
+  height: 44px;
   font-size: 13px;
   font-weight: 600;
   font-family: "Lexend", sans-serif;
   color: #374151;
   cursor: pointer;
   white-space: nowrap;
-  transition: border-color 0.15s, color 0.15s;
+  transition: border-color 0.15s, color 0.15s, box-shadow 0.15s;
+  box-sizing: border-box;
 }
+
 .um-filter-btn:hover {
   border-color: var(--um-accent);
   color: var(--um-accent);
 }
 
-.um-sort-menu {
-  position: relative;
+.um-filter-btn > i:first-child {
+  color: #9ca3af;
+  font-size: 12.5px;
+  flex-shrink: 0;
+}
+
+.um-filter-btn:hover > i:first-child {
+  color: var(--um-accent);
+}
+
+.um-filter-btn-text {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.um-filter-btn-prefix {
+  color: #9ca3af;
+  font-weight: 500;
+}
+
+.um-filter-btn-value {
+  color: inherit;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .um-sort-chevron {
@@ -202,6 +266,7 @@
   color: #9ca3af;
   margin-left: 2px;
   transition: transform 0.15s;
+  flex-shrink: 0;
 }
 
 .um-sort-chevron.is-open {
@@ -217,7 +282,7 @@
   border-radius: 12px;
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.12);
   padding: 6px;
-  min-width: 200px;
+  min-width: 210px;
   z-index: 20;
   animation: um-menu-in 0.12s ease;
 }
@@ -263,6 +328,7 @@
 .um-sort-option i:first-child {
   width: 14px;
   color: #9ca3af;
+  text-align: center;
 }
 
 .um-sort-option.active i:first-child {
@@ -272,52 +338,6 @@
 .um-sort-check {
   margin-left: auto;
   font-size: 11px;
-}
-
-/* ═══════════════════════════════════════════════════════════════
-   ROLE FILTER CHIPS
-   ═══════════════════════════════════════════════════════════════ */
-.um-chip-row {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-bottom: 18px;
-}
-
-.um-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
-  border-radius: 999px;
-  border: 1.5px solid var(--um-border);
-  background: #fff;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: #4b5563;
-  cursor: pointer;
-  font-family: "Lexend", sans-serif;
-  transition: 0.15s;
-}
-
-.um-chip:hover {
-  border-color: var(--um-accent);
-  color: var(--um-accent);
-}
-
-.um-chip.active {
-  background: var(--um-accent);
-  border-color: var(--um-accent);
-  color: #fff;
-}
-
-.um-chip-count {
-  font-size: 11px;
-  opacity: 0.75;
-}
-
-.um-status-chip-row {
-  margin-top: -6px;
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -353,8 +373,8 @@
 
 .um-table td:last-child,
 .um-table th:last-child {
-  width: 160px;
-  min-width: 160px;
+  width: 120px;
+  min-width: 120px;
 }
 
 .um-table td {
@@ -887,11 +907,6 @@
   margin-bottom: 4px;
 }
 
-.um-modal-icon.is-danger {
-  background: var(--um-danger-bg);
-  color: var(--um-danger);
-}
-
 .um-modal-title {
   font-size: 20px;
   font-weight: 800;
@@ -960,16 +975,6 @@
 .um-modal-confirm:disabled {
   opacity: 0.7;
   cursor: not-allowed;
-}
-
-.um-modal-confirm.is-danger {
-  border-color: var(--um-danger);
-  background-color: var(--um-danger);
-}
-.um-modal-confirm.is-danger:hover:not(:disabled) {
-  background: #fff0f0;
-  border: 1px solid var(--um-danger);
-  color: var(--um-danger);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -1138,7 +1143,7 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   TEMP PASSWORD COLUMN (legacy — hindi na ginagamit sa table)
+   TEMP PASSWORD COLUMN (legacy)
    ═══════════════════════════════════════════════════════════════ */
 .um-pw-cell {
   display: flex;
@@ -1186,218 +1191,6 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   STRONG DELETE WARNING MODAL
-   ═══════════════════════════════════════════════════════════════ */
-.um-modal-delete-warning {
-  max-width: 470px;
-  padding: 34px 30px 26px;
-  width: 100%;
-}
-
-/* Pulsing danger icon */
-.um-modal-icon-pulse {
-  animation: um-icon-pulse 1.8s ease-in-out infinite;
-}
-
-@keyframes um-icon-pulse {
-  0%, 100% { transform: scale(1);    box-shadow: 0 0 0 0    rgba(239, 68, 68, 0.5); }
-  50%      { transform: scale(1.06); box-shadow: 0 0 0 14px rgba(239, 68, 68, 0);   }
-}
-
-/* Target account pill */
-.um-modal-target {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  background: #fff7ed;
-  border: 1.5px solid #fed7aa;
-  border-radius: 12px;
-  padding: 12px 16px;
-  margin: 4px 0 8px;
-  text-align: left;
-}
-
-.um-modal-target i {
-  font-size: 18px;
-  color: #f97316;
-  background: #ffedd5;
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.um-modal-target > div {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.um-target-label {
-  font-size: 10.5px;
-  font-weight: 800;
-  color: #9a3412;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.um-target-value {
-  font-size: 13.5px;
-  font-weight: 700;
-  color: #7c2d12;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.um-modal-target.is-danger {
-  background: #fef2f2;
-  border-color: #fecaca;
-}
-.um-modal-target.is-danger i {
-  background: #fee2e2;
-  color: #dc2626;
-}
-.um-modal-target.is-danger .um-target-label { color: #b91c1c; }
-.um-modal-target.is-danger .um-target-value { color: #991b1b; }
-
-/* Warning box with checklist */
-.um-delete-warning-box {
-  width: 100%;
-  background: #fef2f2;
-  border: 1.5px solid #fecaca;
-  border-radius: 12px;
-  padding: 14px 16px;
-  margin: 4px 0 14px;
-  text-align: left;
-}
-
-.um-delete-warning-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  font-weight: 800;
-  color: #b91c1c;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  margin-bottom: 10px;
-}
-.um-delete-warning-title i { font-size: 14px; color: #dc2626; }
-
-.um-delete-warning-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-
-.um-delete-warning-list li {
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
-  font-size: 12px;
-  color: #7f1d1d;
-  line-height: 1.45;
-}
-
-.um-delete-warning-list li i {
-  color: #dc2626;
-  font-size: 10px;
-  margin-top: 4px;
-  flex-shrink: 0;
-}
-
-/* Acknowledgment checkbox */
-.um-delete-ack {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  width: 100%;
-  padding: 12px 14px;
-  border-radius: 10px;
-  background: #fff7ed;
-  border: 1.5px solid #fed7aa;
-  cursor: pointer;
-  font-size: 12.5px;
-  color: #7c2d12;
-  line-height: 1.5;
-  text-align: left;
-  margin-bottom: 14px;
-  transition: background 0.15s, border-color 0.15s;
-}
-.um-delete-ack:hover { background: #ffedd5; }
-
-.um-delete-ack input {
-  margin-top: 2px;
-  accent-color: #dc2626;
-  width: 16px;
-  height: 16px;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.um-delete-ack span strong { color: #991b1b; }
-
-/* Point-of-no-return banner */
-.um-delete-danger-banner {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 10px 14px;
-  background: linear-gradient(90deg, #dc2626, #991b1b);
-  color: #fff;
-  border-radius: 10px;
-  font-size: 11.5px;
-  font-weight: 800;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  margin: 4px 0 14px;
-  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
-}
-.um-delete-danger-banner i { font-size: 13px; }
-
-/* Phrase match indicator */
-.um-phrase-ok,
-.um-phrase-bad {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 6px;
-  font-size: 11.5px;
-  font-weight: 700;
-}
-.um-phrase-ok  { color: #16a34a; }
-.um-phrase-bad { color: #dc2626; }
-.um-phrase-ok i,
-.um-phrase-bad i { font-size: 11px; }
-
-.um-danger-text {
-  color: #dc2626;
-  font-weight: 800;
-  letter-spacing: 0.05em;
-}
-
-/* Disabled danger button visual */
-.um-modal-confirm.is-danger:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-  filter: grayscale(0.4);
-}
-
-/* Back button icon spacing */
-.um-modal-cancel i { margin-right: 6px; }
-.um-modal-confirm i { margin-right: 6px; }
-
-/* ═══════════════════════════════════════════════════════════════
    RESPONSIVE — 1200px
    ═══════════════════════════════════════════════════════════════ */
 @media (max-width: 1200px) {
@@ -1426,6 +1219,29 @@
 
   .um-stats-row {
     grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   TOOLBAR — wrap behavior on narrow screens
+   Search becomes full-width on its own row; the 3 filter buttons
+   wrap together underneath.
+   ═══════════════════════════════════════════════════════════════ */
+@media (max-width: 980px) {
+  .um-toolbar {
+    flex-wrap: wrap;
+  }
+  .um-search-bar {
+    flex: 1 1 100%;
+    order: 1;
+  }
+  .um-sort-menu {
+    flex: 1 1 auto;
+    order: 2;
+  }
+  .um-filter-btn {
+    width: 100%;
+    justify-content: space-between;
   }
 }
 
@@ -1463,13 +1279,15 @@
     width: 100%;
   }
 
-  .um-search-row {
+  .um-toolbar {
     flex-direction: column;
     align-items: stretch;
   }
 
-  .um-search-bar {
-    max-width: none;
+  .um-search-bar,
+  .um-sort-menu,
+  .um-filter-btn {
+    width: 100%;
   }
 }
 
@@ -1477,18 +1295,15 @@
    RESPONSIVE — 520px
    ═══════════════════════════════════════════════════════════════ */
 @media (max-width: 520px) {
-  .um-modal-delete-warning {
-    padding: 26px 20px 20px;
-    max-width: calc(100vw - 24px);
-  }
-  .um-modal-delete-warning .um-modal-actions {
-    flex-direction: column-reverse;
-  }
-  .um-modal-delete-warning .um-modal-actions button {
-    width: 100%;
-  }
   .um-modal-title { font-size: 18px; }
   .um-modal-text  { font-size: 13px; }
+
+  .um-filter-btn-text {
+    gap: 3px;
+  }
+  .um-filter-btn-prefix {
+    display: none; /* keep buttons compact on tiny screens */
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -1498,8 +1313,7 @@
   .um-spinner,
   .um-modal-overlay,
   .um-modal,
-  .um-sort-dropdown,
-  .um-modal-icon-pulse {
+  .um-sort-dropdown {
     animation: none;
   }
 }

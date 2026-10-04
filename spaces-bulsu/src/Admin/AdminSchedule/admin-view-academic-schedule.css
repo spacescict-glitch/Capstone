@@ -675,3 +675,17 @@
 @media (max-width: 768px) {
   .avs-building-popover, .avs-date-popover { width: 100%; max-width: 100%; }
 }
+
+.avs-cal-day.is-disabled,
+.avs-cal-day:disabled {
+  color: #e5e7eb;
+  background: #fff;
+  cursor: not-allowed;
+  font-weight: 500;
+}
+
+.avs-cal-day.is-disabled:hover,
+.avs-cal-day:disabled:hover {
+  background: #fff;
+  color: #e5e7eb;
+}

@@ -134,7 +134,6 @@ function AdminReservations() {
   const [searchTerm, setSearchTerm] = useState("");
   const [filterRoom, setFilterRoom] = useState("");
   const [filterDate, setFilterDate] = useState("");
-  const [sortBy, setSortBy] = useState("date");
   const [sortOrder, setSortOrder] = useState("desc");
 
   // ── Room picker ──
@@ -201,24 +200,10 @@ function AdminReservations() {
     return true;
   });
 
+  // ─── Sort by date only (asc/desc) ─────────────────────────────────
   const sorted = [...filtered].sort((a, b) => {
-    let aVal, bVal;
-    switch (sortBy) {
-      case "date":
-        aVal = a.date || "";
-        bVal = b.date || "";
-        break;
-      case "room":
-        aVal = normalizeRoom(a.roomName);
-        bVal = normalizeRoom(b.roomName);
-        break;
-      case "faculty":
-        aVal = (a.facultyName || a.requesterName || "").toLowerCase();
-        bVal = (b.facultyName || b.requesterName || "").toLowerCase();
-        break;
-      default:
-        return 0;
-    }
+    const aVal = a.date || "";
+    const bVal = b.date || "";
     if (aVal < bVal) return sortOrder === "asc" ? -1 : 1;
     if (aVal > bVal) return sortOrder === "asc" ? 1 : -1;
     return 0;
@@ -249,10 +234,17 @@ function AdminReservations() {
 
   const roomOptions = useMemo(
     () =>
-      Array.from(roomMap.entries()).map(([normalized, original]) => ({
-        normalized,
-        original,
-      })),
+      Array.from(roomMap.entries())
+        .map(([normalized, original]) => ({
+          normalized,
+          original,
+        }))
+        .sort((a, b) =>
+          a.original.localeCompare(b.original, undefined, {
+            numeric: true,
+            sensitivity: "base",
+          })
+        ),
     [roomMap]
   );
 
@@ -272,7 +264,6 @@ function AdminReservations() {
     setSearchTerm("");
     setFilterRoom("");
     setFilterDate("");
-    setSortBy("date");
     setSortOrder("desc");
   };
 
@@ -283,14 +274,12 @@ function AdminReservations() {
       return <EmptyState label={activeTab.toLowerCase()} />;
 
     return visibleReservations.map((reservation) => {
-      const isPending = normalizeStatus(reservation.status) === "pending";
-
       return (
         <ReservationCard
           key={reservation.id}
           reservation={reservation}
           basePath={getBasePathForStatus(reservation.status)}
-          readOnly={true}   /* ⬅️ buttons lang kung Pending */
+          readOnly={true}
         />
       );
     });
@@ -309,7 +298,8 @@ function AdminReservations() {
 
       <div className="dph-filter-bar-outer">
         <div className="dph-filter-row">
-          <div className="dph-filter-group">
+          {/* 🔍 SEARCH — pinakamahaba */}
+          <div className="dph-filter-group dph-search-group">
             <i className="fa-solid fa-magnifying-glass"></i>
             <input
               type="text"
@@ -560,31 +550,28 @@ function AdminReservations() {
             </div>
           </div>
 
-          <div className="dph-filter-group dph-sort-group">
-            <i className="fa-solid fa-arrow-up-wide-short"></i>
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value)}
-              className="dph-filter-select"
-            >
-              <option value="date">Sort by Date</option>
-              <option value="room">Sort by Room</option>
-              <option value="faculty">Sort by Faculty</option>
-            </select>
-            <button
-              className="dph-sort-order-btn"
-              onClick={() =>
-                setSortOrder((prev) => (prev === "asc" ? "desc" : "asc"))
-              }
-              title={sortOrder === "asc" ? "Ascending" : "Descending"}
-            >
-              <i
-                className={`fa-solid fa-arrow-${
-                  sortOrder === "asc" ? "up" : "down"
-                }`}
-              ></i>
-            </button>
-          </div>
+          {/* SORT BY DATE — single toggle (asc/desc) */}
+          <button
+            type="button"
+            className={`dph-date-sort-btn ${sortOrder}`}
+            onClick={() =>
+              setSortOrder((prev) => (prev === "asc" ? "desc" : "asc"))
+            }
+            title={
+              sortOrder === "asc"
+                ? "Currently showing oldest first — click for newest first"
+                : "Currently showing newest first — click for oldest first"
+            }
+          >
+            <i
+              className={`fa-solid fa-arrow-${
+                sortOrder === "asc" ? "up-long" : "down-long"
+              }`}
+            ></i>
+            <span>
+              {sortOrder === "asc" ? "Oldest First" : "Newest First"}
+            </span>
+          </button>
 
           <button className="dph-clear-filters-btn" onClick={clearFilters}>
             <i className="fa-solid fa-rotate-left"></i> Clear
@@ -636,7 +623,6 @@ function AdminReservations() {
         </div>
         <hr className="dph-reservations-nav-divider" />
 
-        {/* ⬇️ Wala nang grid class — pure vertical list na ang lahat ng tabs */}
         <div
           className={`dph-reservations-content ${
             loading || isEmpty ? "dph-reservations-content--empty" : ""

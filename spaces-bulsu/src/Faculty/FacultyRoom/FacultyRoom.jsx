@@ -52,6 +52,15 @@ const getDayFromDate = (dateStr) => {
   return days[new Date(dateStr + "T00:00:00").getDay()];
 };
 
+// ✅ Sort rooms alphabetically by roomName (numeric-aware, case-insensitive)
+const sortRoomsByName = (list) =>
+  [...list].sort((a, b) =>
+    (a.roomName || "").localeCompare(b.roomName || "", undefined, {
+      numeric: true,
+      sensitivity: "base",
+    })
+  );
+
 // ✅ Accepts BOTH "approved" and "accepted" reassignment statuses.
 const isApprovedReassignment = (status) =>
   ["approved", "accepted"].includes(String(status || "").toLowerCase());
@@ -612,7 +621,8 @@ export default function FacultyRoom() {
     if (selectedStatus !== "All Status") {
       list = list.filter((r) => r.status === selectedStatus);
     }
-    return list;
+    // ✅ Alphabetical order (numeric-aware)
+    return sortRoomsByName(list);
   }, [processedRooms, selectedBuilding, selectedFloor, selectedStatus]);
 
   const clearFilters = () => {
@@ -697,7 +707,7 @@ export default function FacultyRoom() {
         <div className="faculty-room-header">
           <h1>Rooms</h1>
           <p>
-            Browse all classrooms and check their real-time availability by
+            Browse all classrooms and check their availability by
             building, floor, date, and time.
           </p>
         </div>
@@ -817,27 +827,6 @@ export default function FacultyRoom() {
                 </button>
               ))}
             </div>
-          </div>
-
-          <div className="active-filter-chips">
-            <span className="filter-chip">
-              <i className="fa-regular fa-calendar"></i>
-              {selectedDate}
-            </span>
-            <span className="filter-chip">
-              <i className="fa-regular fa-clock"></i>
-              {startTime || "--:--"} – {endTime || "--:--"}
-            </span>
-            <span className="filter-chip">
-              <i className="fa-solid fa-circle-info"></i>
-              {selectedStatus}
-            </span>
-            {myWatches.length > 0 && (
-              <span className="filter-chip is-watching">
-                <i className="fa-solid fa-bell"></i>
-                {myWatches.length} watching
-              </span>
-            )}
           </div>
 
           {loading ? (
@@ -995,18 +984,23 @@ export default function FacultyRoom() {
                             ).map((cell, i) => {
                               const cellStr = toDateInputValue(cell.date);
                               const isSelected = cellStr === selectedDate;
+                              const isPast = cellStr < getToday();
+
                               return (
                                 <button
                                   type="button"
                                   key={i}
+                                  disabled={isPast}
                                   className={[
                                     "fr-cal-day",
                                     !cell.inMonth && "is-outside",
                                     isSelected && "is-selected",
+                                    isPast && "is-disabled",
                                   ]
                                     .filter(Boolean)
                                     .join(" ")}
                                   onClick={() => {
+                                    if (isPast) return;
                                     setSelectedDate(cellStr);
                                     setShowDatePicker(false);
                                   }}
