@@ -824,26 +824,52 @@ function ReassignmentCard({ item, onAction }) {
 
       <div className="dhr-card-grid">
         <div className="dhr-info">
-          <span className="dhr-info-label">From</span>
-          <span className="dhr-info-value">{item.oldRoomName || "—"}</span>
+          <div className="dhr-info-icon">
+            <i className="fa-solid fa-arrow-right-from-bracket"></i>
+          </div>
+          <div className="dhr-info-text">
+            <span className="dhr-info-label">From Room</span>
+            <span className="dhr-info-value">{item.oldRoomName || "—"}</span>
+          </div>
         </div>
+
         <div className="dhr-info">
-          <span className="dhr-info-label">To</span>
-          <span className="dhr-info-value" style={isNoRoom ? { color: "#b45309" } : undefined}>
-            {isNoRoom
-              ? (noRoomMeta?.label || "No Room")
-              : (item.newRoomName || "—")}
-          </span>
+          <div className="dhr-info-icon">
+            <i className="fa-solid fa-arrow-right-to-bracket"></i>
+          </div>
+          <div className="dhr-info-text">
+            <span className="dhr-info-label">To Room</span>
+            <span
+              className="dhr-info-value"
+              style={isNoRoom ? { color: "#b45309" } : undefined}
+            >
+              {isNoRoom
+                ? (noRoomMeta?.label || "No Room")
+                : (item.newRoomName || "—")}
+            </span>
+          </div>
         </div>
+
         <div className="dhr-info">
-          <span className="dhr-info-label">Date</span>
-          <span className="dhr-info-value">{fmtDate(item.date)}</span>
+          <div className="dhr-info-icon">
+            <i className="fa-regular fa-calendar"></i>
+          </div>
+          <div className="dhr-info-text">
+            <span className="dhr-info-label">Date</span>
+            <span className="dhr-info-value">{fmtDate(item.date)}</span>
+          </div>
         </div>
+
         <div className="dhr-info">
-          <span className="dhr-info-label">Time</span>
-          <span className="dhr-info-value">
-            {fmt12(item.startTime)} – {fmt12(item.endTime)}
-          </span>
+          <div className="dhr-info-icon">
+            <i className="fa-regular fa-clock"></i>
+          </div>
+          <div className="dhr-info-text">
+            <span className="dhr-info-label">Time</span>
+            <span className="dhr-info-value">
+              {fmt12(item.startTime)} – {fmt12(item.endTime)}
+            </span>
+          </div>
         </div>
       </div>
 

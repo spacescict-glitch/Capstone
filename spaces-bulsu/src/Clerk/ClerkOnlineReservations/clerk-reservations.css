@@ -1054,3 +1054,51 @@
     animation: none;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   SIMPLIFIED EXPORT BUTTON (replaces old dropdown)
+   ═══════════════════════════════════════════════════════════════ */
+
+.clerk-export-btn {
+  padding: 10px 20px;
+  border: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  background-color: #f57c00;
+  box-shadow: 0px 2px 8px rgba(0, 0, 0, 0.2);
+  gap: 8px;
+  color: white;
+  height: 46px;
+  border-radius: 10px;
+  font-weight: 700;
+  font-size: 14px;
+  transition: 0.15s;
+  flex-shrink: 0;
+  font-family: inherit;
+}
+
+.clerk-export-btn:hover:not(:disabled) {
+  background: #fff3e8;
+  border: 1px solid #f57c00;
+  color: #f57c00;
+}
+
+.clerk-export-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.clerk-export-btn:disabled:hover {
+  background-color: #f57c00;
+  border: none;
+  color: white;
+}
+
+/* Mobile: full width para malinis */
+@media (max-width: 600px) {
+  .clerk-export-btn {
+    justify-content: center;
+    width: 100%;
+  }
+}

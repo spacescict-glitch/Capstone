@@ -12,6 +12,7 @@ import {
 } from "firebase/firestore";
 import { db } from "../../firebase";
 import Toast from "../../Popup/Toast/Toast";
+import ExportModal from "../../Components/ExportModal/ExportModal";
 
 // ─── PDF Libraries & Logos ──────────────────────────────────────────
 import jsPDF from "jspdf";
@@ -165,7 +166,6 @@ function ClerkReservations() {
   const [searchTerm, setSearchTerm] = useState("");
   const [filterRoom, setFilterRoom] = useState("");
   const [filterDate, setFilterDate] = useState("");
-  // Always sorts by date — only order toggles (Newest First / Oldest First)
   const [sortOrder, setSortOrder] = useState("desc");
 
   // ─── Room picker popover ────────────────────────────────────────────
@@ -181,7 +181,8 @@ function ClerkReservations() {
 
   // ─── Export state ──────────────────────────────────────────────────
   const [exporting, setExporting] = useState(false);
-  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
+
   const [toast, setToast] = useState({
     show: false,
     type: "",
@@ -258,7 +259,7 @@ function ClerkReservations() {
     setVisibleCount(PAGE_SIZE);
   }, [activeTab]);
 
-  // ─── Status mapping — "All" has null (no filter) ─────────────────
+  // ─── Status mapping ─────────────────────────────────────────────
   const statusMap = {
     All: null,
     Pending: "pending",
@@ -289,7 +290,6 @@ function ClerkReservations() {
     return true;
   });
 
-  // Always sort by date — order toggles via sortOrder ("desc" = newest first)
   const sorted = [...filtered].sort((a, b) => {
     const aVal = a.date || "";
     const bVal = b.date || "";
@@ -301,7 +301,6 @@ function ClerkReservations() {
   const visibleReservations = sorted.slice(0, visibleCount);
   const hasMore = visibleCount < sorted.length;
 
-  // ─── Counts — kasama "All" ────────────────────────────────────────
   const counts = {
     All: reservations.length,
     Pending: reservations.filter((r) => normalizeStatus(r.status) === "pending").length,
@@ -310,7 +309,6 @@ function ClerkReservations() {
     Cancelled: reservations.filter((r) => normalizeStatus(r.status) === "cancelled").length,
   };
 
-  // Unique rooms for filter dropdown
   const roomMap = useMemo(() => {
     const map = new Map();
     reservations.forEach((r) => {
@@ -324,7 +322,6 @@ function ClerkReservations() {
     return map;
   }, [reservations]);
 
-  // Alphabetical (A → Z) room options
   const roomOptions = useMemo(
     () =>
       Array.from(roomMap.entries())
@@ -360,142 +357,153 @@ function ClerkReservations() {
     setSortOrder("desc");
   };
 
-  // ─── EXPORT FUNCTIONS ──────────────────────────────────────────────
-  const exportCSV = () => {
-    if (sorted.length === 0) {
-      showToast("error", "Nothing to Export", "No reservations match your filters.");
-      return;
-    }
-    showToast("loading", "Preparing CSV...", "Please wait.");
-    try {
-      const headers = [
-        "Faculty/Requester", "Room", "Date", "Start Time", "End Time",
-        "Purpose", "Status", "Organization", "Section",
-      ];
-      const rows = sorted.map((r) => [
-        r.facultyName || r.requesterName || "-",
-        r.roomName || "-",
-        r.date || "-",
-        r.startTime ? format12Hour(r.startTime) : "-",
-        r.endTime ? format12Hour(r.endTime) : "-",
-        r.customPurpose || r.purpose || r.courseTitle || "-",
-        r.status || "-",
-        r.organizationName || r.attendees?.organization || "-",
-        r.yearSectionGroup || r.attendees?.yearSectionGroup || "-",
-      ]);
-      const csvContent = [
-        headers.join(","),
-        ...rows.map((row) => row.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")),
-      ].join("\n");
-      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `reservations-${activeTab.toLowerCase()}-${new Date().toISOString().slice(0, 10)}.csv`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-      showToast("success", "CSV Downloaded", `${sorted.length} reservations exported.`);
-    } catch (err) {
-      console.error("CSV export failed:", err);
-      showToast("error", "Export Failed", "Could not generate CSV.");
-    }
-    setExportMenuOpen(false);
-  };
+  // ─── EXPORT HANDLER (via shared ExportModal) ───────────────────────
+  const handleExportReport = async ({ range, from, to, format }) => {
+    let rows = sorted;
 
-  const exportPDF = () => {
-    if (sorted.length === 0) {
-      showToast("error", "Nothing to Export", "No reservations match your filters.");
-      return;
-    }
-    showToast("loading", "Generating PDF...", "Please wait.");
-    try {
-      const pdf = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const marginX = 40;
-      const logoSize = 40;
-      const centerX = pageWidth / 2;
-
-      if (SCHOOL_HEADER.universityLogoUrl) {
-        pdf.addImage(SCHOOL_HEADER.universityLogoUrl, "PNG", marginX, 20, logoSize, logoSize);
-      }
-      if (SCHOOL_HEADER.collegeLogoUrl) {
-        pdf.addImage(
-          SCHOOL_HEADER.collegeLogoUrl, "PNG",
-          pageWidth - marginX - logoSize, 20, logoSize, logoSize
-        );
-      }
-      pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(13);
-      pdf.setTextColor(20, 27, 45);
-      pdf.text(SCHOOL_HEADER.universityName, centerX, 34, { align: "center" });
-      pdf.setFont("helvetica", "normal");
-      pdf.setFontSize(9);
-      pdf.setTextColor(107, 114, 128);
-      pdf.text(SCHOOL_HEADER.collegeName, centerX, 48, { align: "center" });
-      pdf.text(SCHOOL_HEADER.systemName, centerX, 58, { align: "center" });
-      pdf.setDrawColor(245, 124, 0);
-      pdf.setLineWidth(1.5);
-      pdf.line(marginX, 74, pageWidth - marginX, 74);
-      pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(16);
-      pdf.setTextColor(245, 124, 0);
-      pdf.text(`Reservation Report — ${activeTab}`, marginX, 98);
-      pdf.setFont("helvetica", "normal");
-      pdf.setFontSize(9);
-      pdf.setTextColor(107, 114, 128);
-      let filterSummary = "";
-      if (searchTerm) filterSummary += `Faculty: ${searchTerm} | `;
-      if (filterRoom) filterSummary += `Room: ${selectedRoomLabel} | `;
-      if (filterDate) filterSummary += `Date: ${filterDate} | `;
-      if (!filterSummary) filterSummary = "All reservations";
-      pdf.text(`Filters: ${filterSummary}`, marginX, 112);
-      pdf.text(
-        `Generated: ${new Date().toLocaleString()}`,
-        pageWidth - marginX, 112, { align: "right" }
-      );
-
-      const tableRows = sorted.map((r) => [
-        r.facultyName || r.requesterName || "-",
-        r.roomName || "-",
-        r.date || "-",
-        r.startTime ? format12Hour(r.startTime) : "-",
-        r.endTime ? format12Hour(r.endTime) : "-",
-        r.customPurpose || r.purpose || r.courseTitle || "-",
-        r.status || "-",
-        r.organizationName || r.attendees?.organization || "-",
-        r.yearSectionGroup || r.attendees?.yearSectionGroup || "-",
-      ]);
-
-      autoTable(pdf, {
-        startY: 130,
-        head: [["Faculty", "Room", "Date", "Start", "End", "Purpose", "Status", "Organization", "Section"]],
-        body: tableRows,
-        theme: "grid",
-        styles: { font: "helvetica", fontSize: 7, cellPadding: 4, valign: "middle" },
-        headStyles: { fillColor: [245, 124, 0], textColor: [255, 255, 255], fontStyle: "bold", fontSize: 7 },
-        bodyStyles: { textColor: [26, 26, 26] },
-        alternateRowStyles: { fillColor: [253, 246, 240] },
-        margin: { left: marginX, right: marginX },
+    if (range === "range" && from && to) {
+      const start = new Date(from + "T00:00:00");
+      const end = new Date(to + "T23:59:59");
+      rows = sorted.filter((r) => {
+        if (!r.date) return false;
+        const d = new Date(r.date + "T00:00:00");
+        return d >= start && d <= end;
       });
-
-      const pageCount = pdf.internal.getNumberOfPages();
-      for (let i = 1; i <= pageCount; i++) {
-        pdf.setPage(i);
-        pdf.setFont("helvetica", "normal");
-        pdf.setFontSize(7);
-        pdf.setTextColor(150, 150, 150);
-        pdf.text(`Page ${i} of ${pageCount}`, pageWidth - marginX, pdf.internal.pageSize.getHeight() - 16, { align: "right" });
-        pdf.text(`${SCHOOL_HEADER.systemName} — Confidential`, marginX, pdf.internal.pageSize.getHeight() - 16);
-      }
-      pdf.save(`reservations-${activeTab.toLowerCase()}-${new Date().toISOString().slice(0, 10)}.pdf`);
-      showToast("success", "PDF Downloaded", `${sorted.length} reservations exported.`);
-    } catch (err) {
-      console.error("PDF export failed:", err);
-      showToast("error", "Export Failed", "Could not generate PDF.");
     }
-    setExportMenuOpen(false);
+
+    if (rows.length === 0) {
+      showToast("error", "Nothing to Export", "No reservations in the selected range.");
+      return;
+    }
+
+    setExporting(true);
+    showToast("loading", "Generating...", "Please wait.");
+
+    try {
+      if (format === "csv") {
+        const headers = [
+          "Faculty/Requester", "Room", "Date", "Start Time", "End Time",
+          "Purpose", "Status", "Organization", "Section",
+        ];
+        const body = rows.map((r) => [
+          r.facultyName || r.requesterName || "-",
+          r.roomName || "-",
+          r.date || "-",
+          r.startTime ? format12Hour(r.startTime) : "-",
+          r.endTime ? format12Hour(r.endTime) : "-",
+          r.customPurpose || r.purpose || r.courseTitle || "-",
+          r.status || "-",
+          r.organizationName || r.attendees?.organization || "-",
+          r.yearSectionGroup || r.attendees?.yearSectionGroup || "-",
+        ]);
+        const csvContent = [headers, ...body]
+          .map((row) => row.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))
+          .join("\n");
+        const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `SpaceSCICT_Reservations(${getToday()}).csv`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      } else {
+        const pdf = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+        const pageWidth = pdf.internal.pageSize.getWidth();
+        const marginX = 40;
+        const logoSize = 40;
+        const centerX = pageWidth / 2;
+
+        if (SCHOOL_HEADER.universityLogoUrl) {
+          pdf.addImage(SCHOOL_HEADER.universityLogoUrl, "PNG", marginX, 20, logoSize, logoSize);
+        }
+        if (SCHOOL_HEADER.collegeLogoUrl) {
+          pdf.addImage(SCHOOL_HEADER.collegeLogoUrl, "PNG", pageWidth - marginX - logoSize, 20, logoSize, logoSize);
+        }
+
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(13);
+        pdf.setTextColor(20, 27, 45);
+        pdf.text(SCHOOL_HEADER.universityName, centerX, 34, { align: "center" });
+
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(9);
+        pdf.setTextColor(107, 114, 128);
+        pdf.text(SCHOOL_HEADER.collegeName, centerX, 48, { align: "center" });
+        pdf.text(SCHOOL_HEADER.systemName, centerX, 58, { align: "center" });
+
+        pdf.setDrawColor(245, 124, 0);
+        pdf.setLineWidth(1.5);
+        pdf.line(marginX, 74, pageWidth - marginX, 74);
+
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(16);
+        pdf.setTextColor(245, 124, 0);
+        pdf.text(`Reservation Report — ${activeTab}`, marginX, 98);
+
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(9);
+        pdf.setTextColor(107, 114, 128);
+
+        let filterSummary = "";
+        if (searchTerm) filterSummary += `Faculty: ${searchTerm} | `;
+        if (filterRoom) filterSummary += `Room: ${selectedRoomLabel} | `;
+        if (filterDate) filterSummary += `Date: ${filterDate} | `;
+        if (range === "range") filterSummary += `Range: ${from} to ${to} | `;
+        if (!filterSummary) filterSummary = "All reservations";
+
+        pdf.text(`Filters: ${filterSummary}`, marginX, 112);
+        pdf.text(
+          `Generated: ${new Date().toLocaleString()}`,
+          pageWidth - marginX, 112, { align: "right" }
+        );
+
+        const tableRows = rows.map((r) => [
+          r.facultyName || r.requesterName || "-",
+          r.roomName || "-",
+          r.date || "-",
+          r.startTime ? format12Hour(r.startTime) : "-",
+          r.endTime ? format12Hour(r.endTime) : "-",
+          r.customPurpose || r.purpose || r.courseTitle || "-",
+          r.status || "-",
+          r.organizationName || r.attendees?.organization || "-",
+          r.yearSectionGroup || r.attendees?.yearSectionGroup || "-",
+        ]);
+
+        autoTable(pdf, {
+          startY: 130,
+          head: [["Faculty", "Room", "Date", "Start", "End", "Purpose", "Status", "Organization", "Section"]],
+          body: tableRows,
+          theme: "grid",
+          styles: { font: "helvetica", fontSize: 7, cellPadding: 4, valign: "middle" },
+          headStyles: { fillColor: [245, 124, 0], textColor: [255, 255, 255], fontStyle: "bold", fontSize: 7 },
+          bodyStyles: { textColor: [26, 26, 26] },
+          alternateRowStyles: { fillColor: [253, 246, 240] },
+          margin: { left: marginX, right: marginX },
+        });
+
+        const pageCount = pdf.internal.getNumberOfPages();
+        for (let i = 1; i <= pageCount; i++) {
+          pdf.setPage(i);
+          pdf.setFont("helvetica", "normal");
+          pdf.setFontSize(7);
+          pdf.setTextColor(150, 150, 150);
+          pdf.text(`Page ${i} of ${pageCount}`, pageWidth - marginX, pdf.internal.pageSize.getHeight() - 16, { align: "right" });
+          pdf.text(`${SCHOOL_HEADER.systemName} — Confidential`, marginX, pdf.internal.pageSize.getHeight() - 16);
+        }
+
+        pdf.save(`SpaceSCICT_Reservations(${getToday()}).pdf`);
+      }
+
+      showToast("success", "Exported", `${rows.length} reservation(s) exported.`);
+      setShowExportModal(false);
+    } catch (err) {
+      console.error("Export failed:", err);
+      showToast("error", "Export Failed", "Could not export. Please try again.");
+    } finally {
+      setExporting(false);
+    }
   };
 
   // ─── renderList — ReservationCard for ALL tabs ────────────────────
@@ -515,7 +523,7 @@ function ClerkReservations() {
           key={reservation.id}
           reservation={reservation}
           basePath={getBasePathForStatus(reservation.status)}
-          readOnly={!isPending}   /* ⬅️ buttons lang kapag Pending */
+          readOnly={!isPending}
         />
       );
     });
@@ -534,33 +542,20 @@ function ClerkReservations() {
             </p>
           </div>
 
-          <div className="clerk-export-dropdown">
-            <button
-              className="clerk-export-btn"
-              onClick={() => setExportMenuOpen(!exportMenuOpen)}
-              disabled={loading || sorted.length === 0}
-            >
-              <i className="fa-solid fa-download"></i> Export Report
-              <i className={`fa-solid fa-chevron-down ${exportMenuOpen ? "rotate" : ""}`}></i>
-            </button>
-            {exportMenuOpen && (
-              <div className="clerk-export-menu">
-                <button onClick={exportPDF}>
-                  <i className="fa-regular fa-file-pdf"></i> Export as PDF
-                </button>
-                <button onClick={exportCSV}>
-                  <i className="fa-solid fa-file-csv"></i> Export as CSV
-                </button>
-              </div>
-            )}
-          </div>
+          <button
+            className="clerk-export-btn"
+            onClick={() => setShowExportModal(true)}
+            disabled={loading || sorted.length === 0}
+          >
+            <i className="fa-solid fa-download"></i> Export Report
+          </button>
         </div>
       </div>
 
       {/* ── Filter Bar ── */}
       <div className="clerk-filter-bar-outer">
         <div className="clerk-filter-row">
-          {/* ── SEARCH (wider, like Admin) ── */}
+          {/* SEARCH */}
           <div className="clerk-filter-group clerk-search-group">
             <i className="fa-solid fa-magnifying-glass"></i>
             <input
@@ -572,7 +567,7 @@ function ClerkReservations() {
             />
           </div>
 
-          {/* ── ROOM PICKER ── */}
+          {/* ROOM PICKER */}
           <div className="clerk-filter-group cr-picker-group">
             <div className="cr-roompicker">
               <button
@@ -585,19 +580,12 @@ function ClerkReservations() {
               >
                 <i className="fa-solid fa-building"></i>
                 <span className="cr-room-trigger-text">{selectedRoomLabel}</span>
-                <i
-                  className={`fa-solid fa-chevron-down cr-room-caret ${
-                    showRoomPicker ? "open" : ""
-                  }`}
-                ></i>
+                <i className={`fa-solid fa-chevron-down cr-room-caret ${showRoomPicker ? "open" : ""}`}></i>
               </button>
 
               {showRoomPicker && (
                 <>
-                  <div
-                    className="cr-picker-clickaway"
-                    onClick={() => setShowRoomPicker(false)}
-                  ></div>
+                  <div className="cr-picker-clickaway" onClick={() => setShowRoomPicker(false)}></div>
                   <div className="cr-room-popover">
                     <span className="cr-popover-arrow"></span>
 
@@ -612,11 +600,7 @@ function ClerkReservations() {
                         autoFocus
                       />
                       {roomSearch && (
-                        <button
-                          type="button"
-                          className="cr-search-clear"
-                          onClick={() => setRoomSearch("")}
-                        >
+                        <button type="button" className="cr-search-clear" onClick={() => setRoomSearch("")}>
                           <i className="fa-solid fa-xmark"></i>
                         </button>
                       )}
@@ -636,9 +620,7 @@ function ClerkReservations() {
                           <i className="fa-solid fa-layer-group"></i>
                         </div>
                         <span className="cr-room-option-name">All Rooms</span>
-                        {!filterRoom && (
-                          <i className="fa-solid fa-circle-check cr-room-option-check"></i>
-                        )}
+                        {!filterRoom && <i className="fa-solid fa-circle-check cr-room-option-check"></i>}
                       </button>
 
                       {filteredRoomOptions.length === 0 && roomSearch ? (
@@ -664,9 +646,7 @@ function ClerkReservations() {
                                 <i className="fa-solid fa-door-open"></i>
                               </div>
                               <span className="cr-room-option-name">{original}</span>
-                              {isActive && (
-                                <i className="fa-solid fa-circle-check cr-room-option-check"></i>
-                              )}
+                              {isActive && <i className="fa-solid fa-circle-check cr-room-option-check"></i>}
                             </button>
                           );
                         })
@@ -678,16 +658,14 @@ function ClerkReservations() {
             </div>
           </div>
 
-          {/* ── DATE PICKER ── */}
+          {/* DATE PICKER */}
           <div className="clerk-filter-group cr-picker-group">
             <div className="cr-datepicker">
               <button
                 type="button"
                 className={`cr-date-trigger ${showDatePicker ? "open" : ""}`}
                 onClick={() => {
-                  const base = filterDate
-                    ? new Date(`${filterDate}T00:00:00`)
-                    : new Date();
+                  const base = filterDate ? new Date(`${filterDate}T00:00:00`) : new Date();
                   setCalendarCursor({
                     year: base.getFullYear(),
                     month: base.getMonth(),
@@ -696,22 +674,13 @@ function ClerkReservations() {
                 }}
               >
                 <i className="fa-regular fa-calendar"></i>
-                <span>
-                  {filterDate ? formatDateLong(filterDate) : "All Dates"}
-                </span>
-                <i
-                  className={`fa-solid fa-chevron-down cr-date-caret ${
-                    showDatePicker ? "open" : ""
-                  }`}
-                ></i>
+                <span>{filterDate ? formatDateLong(filterDate) : "All Dates"}</span>
+                <i className={`fa-solid fa-chevron-down cr-date-caret ${showDatePicker ? "open" : ""}`}></i>
               </button>
 
               {showDatePicker && (
                 <>
-                  <div
-                    className="cr-picker-clickaway"
-                    onClick={() => setShowDatePicker(false)}
-                  ></div>
+                  <div className="cr-picker-clickaway" onClick={() => setShowDatePicker(false)}></div>
                   <div className="cr-date-popover">
                     <span className="cr-popover-arrow"></span>
 
@@ -745,9 +714,7 @@ function ClerkReservations() {
                         onClick={() =>
                           setCalendarCursor((c) => {
                             const m = c.month - 1;
-                            return m < 0
-                              ? { year: c.year - 1, month: 11 }
-                              : { year: c.year, month: m };
+                            return m < 0 ? { year: c.year - 1, month: 11 } : { year: c.year, month: m };
                           })
                         }
                       >
@@ -762,9 +729,7 @@ function ClerkReservations() {
                         onClick={() =>
                           setCalendarCursor((c) => {
                             const m = c.month + 1;
-                            return m > 11
-                              ? { year: c.year + 1, month: 0 }
-                              : { year: c.year, month: m };
+                            return m > 11 ? { year: c.year + 1, month: 0 } : { year: c.year, month: m };
                           })
                         }
                       >
@@ -773,37 +738,27 @@ function ClerkReservations() {
                     </div>
 
                     <div className="cr-cal-weekdays">
-                      {WEEKDAY_LABELS.map((w) => (
-                        <span key={w}>{w}</span>
-                      ))}
+                      {WEEKDAY_LABELS.map((w) => <span key={w}>{w}</span>)}
                     </div>
 
                     <div className="cr-cal-grid">
-                      {buildCalendarGrid(calendarCursor.year, calendarCursor.month).map(
-                        (cell, i) => {
-                          const cellStr = toDateInputValue(cell.date);
-                          const isSelected = cellStr === filterDate;
-                          return (
-                            <button
-                              type="button"
-                              key={i}
-                              className={[
-                                "cr-cal-day",
-                                !cell.inMonth && "is-outside",
-                                isSelected && "is-selected",
-                              ]
-                                .filter(Boolean)
-                                .join(" ")}
-                              onClick={() => {
-                                setFilterDate(cellStr);
-                                setShowDatePicker(false);
-                              }}
-                            >
-                              {cell.day}
-                            </button>
-                          );
-                        }
-                      )}
+                      {buildCalendarGrid(calendarCursor.year, calendarCursor.month).map((cell, i) => {
+                        const cellStr = toDateInputValue(cell.date);
+                        const isSelected = cellStr === filterDate;
+                        return (
+                          <button
+                            type="button"
+                            key={i}
+                            className={["cr-cal-day", !cell.inMonth && "is-outside", isSelected && "is-selected"].filter(Boolean).join(" ")}
+                            onClick={() => {
+                              setFilterDate(cellStr);
+                              setShowDatePicker(false);
+                            }}
+                          >
+                            {cell.day}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 </>
@@ -811,27 +766,19 @@ function ClerkReservations() {
             </div>
           </div>
 
-          {/* ── SORT BY DATE — single toggle button (Newest / Oldest) ── */}
+          {/* SORT BY DATE */}
           <button
             type="button"
             className={`clerk-date-sort-btn ${sortOrder}`}
-            onClick={() =>
-              setSortOrder((prev) => (prev === "asc" ? "desc" : "asc"))
-            }
+            onClick={() => setSortOrder((prev) => (prev === "asc" ? "desc" : "asc"))}
             title={
               sortOrder === "asc"
                 ? "Currently showing oldest first — click for newest first"
                 : "Currently showing newest first — click for oldest first"
             }
           >
-            <i
-              className={`fa-solid fa-arrow-${
-                sortOrder === "asc" ? "up-long" : "down-long"
-              }`}
-            ></i>
-            <span>
-              {sortOrder === "asc" ? "Oldest First" : "Newest First"}
-            </span>
+            <i className={`fa-solid fa-arrow-${sortOrder === "asc" ? "up-long" : "down-long"}`}></i>
+            <span>{sortOrder === "asc" ? "Oldest First" : "Newest First"}</span>
           </button>
 
           <button className="clerk-clear-filters-btn" onClick={clearFilters}>
@@ -843,9 +790,7 @@ function ClerkReservations() {
           <div className="clerk-filter-summary">
             <span>Active filters:</span>
             {searchTerm && <span className="clerk-filter-tag">Faculty: {searchTerm}</span>}
-            {filterRoom && (
-              <span className="clerk-filter-tag">Room: {selectedRoomLabel}</span>
-            )}
+            {filterRoom && <span className="clerk-filter-tag">Room: {selectedRoomLabel}</span>}
             {filterDate && <span className="clerk-filter-tag">Date: {filterDate}</span>}
             <span className="clerk-filter-result-count">
               {sorted.length} result{sorted.length !== 1 ? "s" : ""}
@@ -874,11 +819,7 @@ function ClerkReservations() {
         </div>
         <hr className="clerk-reservations-nav-divider" />
 
-        <div
-          className={`clerk-reservations-content ${
-            isEmpty ? "clerk-reservations-content--empty" : ""
-          }`}
-        >
+        <div className={`clerk-reservations-content ${isEmpty ? "clerk-reservations-content--empty" : ""}`}>
           {renderList()}
         </div>
 
@@ -893,6 +834,15 @@ function ClerkReservations() {
           </div>
         )}
       </div>
+
+      <ExportModal
+        isOpen={showExportModal}
+        onClose={() => setShowExportModal(false)}
+        title="Export Reservation Report"
+        filenamePrefix="SpaceSCICT_Reservations"
+        exporting={exporting}
+        onExport={handleExportReport}
+      />
 
       <Toast
         show={toast.show}

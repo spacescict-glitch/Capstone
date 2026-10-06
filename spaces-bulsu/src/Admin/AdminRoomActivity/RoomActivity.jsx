@@ -914,35 +914,80 @@ function ReviewCard({ item, onReview }) {
 
   return (
     <div className={`ra-review-card ${statusMeta.cls}`}>
+      {/* Header */}
       <div className="ra-review-card-top">
         <div className="ra-review-card-title-block">
           <div className="ra-review-card-title">{item.title}</div>
           <div className="ra-review-card-sub">
-            <span><i className="fa-solid fa-door-open"></i> {item.roomName}</span>
-            <span><i className="fa-regular fa-calendar"></i> {fmtDate(item.date)}</span>
-            <span><i className="fa-regular fa-clock"></i> {fmt12(item.startTime)} – {fmt12(item.endTime)}</span>
+            <span>
+              <i className="fa-regular fa-user"></i>
+              {item.requestedByName || "Unknown"}
+              {item.requestedByRole && (
+                <span className="ra-role-pill" style={{ marginLeft: 8 }}>
+                  {item.requestedByRole}
+                </span>
+              )}
+            </span>
           </div>
         </div>
         <span className={`ra-review-status ${statusMeta.cls}`}>{statusMeta.label}</span>
       </div>
 
-      <div className="ra-review-card-meta">
-        <span className="ra-review-requester">
-          <i className="fa-regular fa-user"></i> {item.requestedByName}
-          <span className="ra-role-pill">{item.requestedByRole}</span>
-        </span>
-        {conflicts.length > 0 && (
-          <span className="ra-review-conflict-chip">
-            <i className="fa-solid fa-triangle-exclamation"></i> {conflicts.length} conflict{conflicts.length > 1 ? "s" : ""}
-          </span>
-        )}
+      {/* Info grid — same layout as ReassignmentCard */}
+      <div className="ra-review-info-grid">
+        <div className="ra-review-info-item">
+          <div className="ra-review-info-icon">
+            <i className="fa-solid fa-door-open"></i>
+          </div>
+          <div className="ra-review-info-text">
+            <span className="ra-review-info-label">Room</span>
+            <span className="ra-review-info-value">{item.roomName || "—"}</span>
+          </div>
+        </div>
+
+        <div className="ra-review-info-item">
+          <div className="ra-review-info-icon">
+            <i className="fa-regular fa-calendar"></i>
+          </div>
+          <div className="ra-review-info-text">
+            <span className="ra-review-info-label">Date</span>
+            <span className="ra-review-info-value">{fmtDate(item.date)}</span>
+          </div>
+        </div>
+
+        <div className="ra-review-info-item">
+          <div className="ra-review-info-icon">
+            <i className="fa-regular fa-clock"></i>
+          </div>
+          <div className="ra-review-info-text">
+            <span className="ra-review-info-label">Time</span>
+            <span className="ra-review-info-value">
+              {fmt12(item.startTime)} – {fmt12(item.endTime)}
+            </span>
+          </div>
+        </div>
+
+        <div className="ra-review-info-item">
+          <div className="ra-review-info-icon">
+            <i className="fa-solid fa-triangle-exclamation"></i>
+          </div>
+          <div className="ra-review-info-text">
+            <span className="ra-review-info-label">Conflicts</span>
+            <span className="ra-review-info-value">
+              {conflicts.length > 0
+                ? `${conflicts.length} schedule${conflicts.length > 1 ? "s" : ""}`
+                : "None"}
+            </span>
+          </div>
+        </div>
       </div>
 
+      {/* Conflicts preview */}
       {conflicts.length > 0 && (
         <div className="ra-review-conflict-preview">
           <div className="ra-review-conflict-preview-title">
             <i className="fa-solid fa-triangle-exclamation"></i>
-            Conflicts with:
+            Conflicts with
           </div>
           {conflicts.slice(0, 3).map((conflict, i) => (
             <div key={conflict.scheduleId || i} className="ra-review-conflict-line">
@@ -967,10 +1012,15 @@ function ReviewCard({ item, onReview }) {
         </div>
       )}
 
+      {/* Reason */}
       {item.reason && (
-        <div className="ra-review-reason"><i className="fa-solid fa-note-sticky"></i><span>{item.reason}</span></div>
+        <div className="ra-review-reason">
+          <i className="fa-solid fa-note-sticky"></i>
+          <span>{item.reason}</span>
+        </div>
       )}
 
+      {/* Actions */}
       {item.status === "pending_admin" && (
         <div className="ra-review-actions">
           <button className="ra-review-btn is-approve" onClick={onReview}>
