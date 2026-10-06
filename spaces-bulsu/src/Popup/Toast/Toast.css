@@ -1,41 +1,139 @@
 /* ═══════════════════════════════════════════════════════════════
-   Toast — Responsive
+   Toast — Fully Responsive & Polished
    Desktop: top-right, 350px wide
    Tablet:  top-right, narrower
    Mobile:  top → full-width-ish, smaller fonts
+   Theme:   Orange (#f57c00) + Navy (#08101f) — matches Login
    ═══════════════════════════════════════════════════════════════ */
 
+/* ─── Theme tokens ──────────────────────────────────────────── */
+:root {
+  --toast-brand: #f57c00;
+  --toast-brand-soft: #fff3e7;
+  --toast-success: #22c55e;
+  --toast-success-soft: #ecfdf5;
+  --toast-error: #ef4444;
+  --toast-error-soft: #fef2f2;
+  --toast-ink-900: #0f172a;
+  --toast-ink-600: #64748b;
+  --toast-ink-400: #94a3b8;
+
+  --toast-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --toast-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   BASE TOAST
+   ═══════════════════════════════════════════════════════════════ */
 .toast-container {
   position: fixed;
   top: 20px;
   right: 20px;
   width: 350px;
   min-height: 80px;
-  background: white;
+  background: #ffffff;
   border-radius: 18px;
   display: flex;
   align-items: center;
-  padding: 20px;
-  gap: 20px;
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+  padding: 20px 20px 22px;
+  gap: 18px;
+  box-shadow:
+    0 12px 32px rgba(8, 16, 31, 0.14),
+    0 2px 6px rgba(8, 16, 31, 0.06);
   z-index: 9999;
-  animation: slideIn 0.3s ease;
   box-sizing: border-box;
   max-width: calc(100vw - 40px);
+  overflow: hidden;
+  isolation: isolate;
+  animation: toastSlideIn 0.45s var(--toast-ease-spring) both;
+  transition: box-shadow 0.3s ease, transform 0.3s var(--toast-ease-out);
 }
 
-.toast-container.success {
-  border-left: 8px solid #22c55e;
+.toast-container:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 18px 40px rgba(8, 16, 31, 0.16),
+    0 2px 8px rgba(8, 16, 31, 0.06);
 }
 
-.toast-container.error {
-  border-left: 8px solid #ef4444;
+/* Accent left bar with subtle gradient */
+.toast-container::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 8px;
+  border-radius: 18px 0 0 18px;
+  transition: width 0.3s ease;
 }
 
-.toast-container.loading {
-  border-left: 8px solid #f97316;
+.toast-container.success::before {
+  background: linear-gradient(180deg, #22c55e, #16a34a);
+}
+.toast-container.error::before {
+  background: linear-gradient(180deg, #ef4444, #dc2626);
+}
+.toast-container.loading::before {
+  background: linear-gradient(180deg, #f57c00, #d96a00);
 }
 
+/* Soft radial tint on the appropriate side */
+.toast-container::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  opacity: 0.5;
+  transition: opacity 0.3s ease;
+}
+
+.toast-container.success::after {
+  background: radial-gradient(circle at 0% 50%, var(--toast-success-soft), transparent 45%);
+}
+.toast-container.error::after {
+  background: radial-gradient(circle at 0% 50%, var(--toast-error-soft), transparent 45%);
+}
+.toast-container.loading::after {
+  background: radial-gradient(circle at 0% 50%, var(--toast-brand-soft), transparent 45%);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   PROGRESS BAR (auto-dismiss timer — matches 4s in Login.jsx)
+   ═══════════════════════════════════════════════════════════════ */
+.toast-container::before {
+  /* keep as the accent bar */
+}
+
+.toast-container .toast-progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  width: 100%;
+  transform-origin: left;
+  border-radius: 0 0 18px 18px;
+  animation: toastProgress 4s linear forwards;
+}
+
+.toast-container.success .toast-progress { background: #22c55e; }
+.toast-container.error   .toast-progress { background: #ef4444; }
+.toast-container.loading .toast-progress { background: var(--toast-brand); }
+
+/* Hide progress bar for loading toasts */
+.toast-container.loading .toast-progress {
+  display: none;
+}
+
+@keyframes toastProgress {
+  from { transform: scaleX(1); }
+  to   { transform: scaleX(0); }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   ICON
+   ═══════════════════════════════════════════════════════════════ */
 .toast-icon {
   width: 50px;
   height: 50px;
@@ -43,31 +141,90 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: white;
-  font-size: 28px;
-  font-weight: bold;
+  color: #ffffff;
+  font-size: 26px;
+  font-weight: 700;
   flex-shrink: 0;
+  position: relative;
+  transition: transform 0.4s var(--toast-ease-spring);
+  animation: iconPop 0.5s var(--toast-ease-spring) 0.1s both;
+}
+
+/* Soft glowing halo behind icon */
+.toast-icon::before {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  opacity: 0.35;
+  z-index: -1;
+  transition: opacity 0.3s ease;
 }
 
 .success .toast-icon {
-  background: #22c55e;
+  background: linear-gradient(135deg, #22c55e, #16a34a);
+  box-shadow: 0 6px 16px rgba(34, 197, 94, 0.35);
+}
+.success .toast-icon::before {
+  background: var(--toast-success);
+  animation: haloPulse 2s ease-out infinite;
 }
 
 .error .toast-icon {
-  background: #ef4444;
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+  box-shadow: 0 6px 16px rgba(239, 68, 68, 0.35);
+}
+.error .toast-icon::before {
+  background: var(--toast-error);
+  animation: haloPulse 2s ease-out infinite;
 }
 
 .loading .toast-icon {
-  background: #f97316;
-  animation: spin 1s linear infinite;
+  background: linear-gradient(135deg, #f57c00, #d96a00);
+  box-shadow: 0 6px 16px rgba(245, 124, 0, 0.35);
+  animation: none;
+}
+.loading .toast-icon::before {
+  background: var(--toast-brand);
+  animation: haloPulse 1.6s ease-out infinite;
 }
 
+/* Loading icon spins smoothly */
+.loading .toast-icon {
+  animation: toastSpin 1s linear infinite;
+}
+
+.toast-container:hover .toast-icon {
+  transform: scale(1.06);
+}
+
+@keyframes iconPop {
+  0%   { transform: scale(0); opacity: 0; }
+  60%  { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(1); }
+}
+
+@keyframes haloPulse {
+  0%   { opacity: 0.35; transform: scale(1); }
+  70%  { opacity: 0;    transform: scale(1.35); }
+  100% { opacity: 0;    transform: scale(1.35); }
+}
+
+@keyframes toastSpin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   CONTENT
+   ═══════════════════════════════════════════════════════════════ */
 .toast-content {
   flex: 1;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  min-width: 0; /* so text can truncate if needed */
+  min-width: 0;
+  animation: contentFadeUp 0.5s var(--toast-ease-out) 0.15s both;
 }
 
 .toast-content h3,
@@ -77,51 +234,72 @@
 }
 
 .toast-content h3 {
-  font-size: 20px;
+  font-size: 16px;
   font-weight: 700;
-  color: #0f172a;
-  line-height: 1.25;
+  color: var(--toast-ink-900);
+  line-height: 1.3;
+  letter-spacing: -0.01em;
 }
 
 .toast-content p {
-  font-size: 18px;
-  color: #64748b;
-  line-height: 1.35;
+  font-size: 14px;
+  color: var(--toast-ink-600);
+  line-height: 1.45;
 }
 
+@keyframes contentFadeUp {
+  from { opacity: 0; transform: translateX(8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   CLOSE BUTTON
+   ═══════════════════════════════════════════════════════════════ */
 .toast-close {
   border: none;
   background: transparent;
   cursor: pointer;
-  font-size: 28px;
-  color: #94a3b8;
+  font-size: 18px;
+  color: var(--toast-ink-400);
   flex-shrink: 0;
   padding: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   line-height: 1;
-  transition: color 0.15s;
+  align-self: flex-start;
+  margin-top: -4px;
+  transition:
+    color 0.22s ease,
+    background 0.22s ease,
+    transform 0.4s var(--toast-ease-spring);
 }
 
 .toast-close:hover {
-  color: #475569;
+  color: #ffffff;
+  background: var(--toast-ink-900);
+  transform: rotate(90deg);
 }
 
-@keyframes slideIn {
+.toast-close:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(245, 124, 0, 0.25);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   KEYFRAMES
+   ═══════════════════════════════════════════════════════════════ */
+@keyframes toastSlideIn {
   from {
     opacity: 0;
-    transform: translateX(100%);
+    transform: translateX(40px) scale(0.94);
   }
   to {
     opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
+    transform: translateX(0) scale(1);
   }
 }
 
@@ -134,37 +312,33 @@
     right: 16px;
     width: 320px;
     min-height: 70px;
-    padding: 16px;
+    padding: 16px 16px 20px;
     gap: 14px;
     border-radius: 16px;
     max-width: calc(100vw - 32px);
   }
 
-  .toast-container.success { border-left-width: 7px; }
-  .toast-container.error   { border-left-width: 7px; }
-  .toast-container.loading { border-left-width: 7px; }
+  .toast-container::before { width: 7px; border-radius: 16px 0 0 16px; }
+  .toast-container .toast-progress { border-radius: 0 0 16px 16px; }
 
   .toast-icon {
     width: 42px;
     height: 42px;
-    font-size: 22px;
+    font-size: 20px;
   }
 
-  .toast-content h3 {
-    font-size: 17px;
-  }
-
-  .toast-content p {
-    font-size: 15px;
-  }
+  .toast-content h3 { font-size: 15px; }
+  .toast-content p  { font-size: 13px; }
 
   .toast-close {
-    font-size: 22px;
+    font-size: 16px;
+    width: 28px;
+    height: 28px;
   }
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   MOBILE (≤600px) — full-width-ish, stacked-ish, tighter
+   MOBILE (≤600px) — full-width bar, slides down from top
    ═══════════════════════════════════════════════════════════════ */
 @media (max-width: 600px) {
   .toast-container {
@@ -174,87 +348,93 @@
     width: auto;
     max-width: none;
     min-height: 60px;
-    padding: 14px;
+    padding: 14px 14px 18px;
     gap: 12px;
     border-radius: 14px;
-    animation: slideDown 0.3s ease;
+    animation: toastSlideDown 0.45s var(--toast-ease-spring) both;
   }
 
-  .toast-container.success { border-left-width: 6px; }
-  .toast-container.error   { border-left-width: 6px; }
-  .toast-container.loading { border-left-width: 6px; }
+  .toast-container::before { width: 6px; border-radius: 14px 0 0 14px; }
+  .toast-container .toast-progress { border-radius: 0 0 14px 14px; }
 
   .toast-icon {
     width: 38px;
     height: 38px;
-    font-size: 20px;
+    font-size: 18px;
   }
 
-  .toast-content {
-    gap: 3px;
-  }
-
-  .toast-content h3 {
-    font-size: 15.5px;
-  }
-
-  .toast-content p {
-    font-size: 13.5px;
-  }
+  .toast-content { gap: 3px; }
+  .toast-content h3 { font-size: 14.5px; }
+  .toast-content p  { font-size: 12.5px; }
 
   .toast-close {
-    font-size: 20px;
+    font-size: 15px;
+    width: 26px;
+    height: 26px;
+  }
+}
+
+@keyframes toastSlideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-40px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
   }
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   VERY SMALL MOBILE (≤380px) — most compact
+   VERY SMALL MOBILE (≤380px)
    ═══════════════════════════════════════════════════════════════ */
 @media (max-width: 380px) {
   .toast-container {
     top: 10px;
     left: 10px;
     right: 10px;
-    padding: 12px;
+    padding: 12px 12px 16px;
     gap: 10px;
     border-radius: 12px;
   }
 
+  .toast-container::before { border-radius: 12px 0 0 12px; }
+  .toast-container .toast-progress { border-radius: 0 0 12px 12px; }
+
   .toast-icon {
     width: 34px;
     height: 34px;
-    font-size: 17px;
+    font-size: 15px;
   }
 
-  .toast-content h3 {
-    font-size: 14px;
-  }
-
-  .toast-content p {
-    font-size: 12.5px;
-  }
+  .toast-content h3 { font-size: 13.5px; }
+  .toast-content p  { font-size: 12px; }
 
   .toast-close {
-    font-size: 18px;
+    font-size: 14px;
+    width: 24px;
+    height: 24px;
   }
 }
 
-/* ─── On mobile, slide in from the top (full-width bar) ────── */
-@keyframes slideDown {
-  from {
-    opacity: 0;
-    transform: translateY(-100%);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* ─── Reduced motion preference ────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════
+   REDUCED MOTION
+   ═══════════════════════════════════════════════════════════════ */
 @media (prefers-reduced-motion: reduce) {
   .toast-container,
-  .loading .toast-icon {
-    animation: none;
+  .toast-icon,
+  .toast-icon::before,
+  .toast-content,
+  .loading .toast-icon,
+  .toast-container .toast-progress {
+    animation: none !important;
+  }
+
+  .toast-container .toast-progress {
+    display: none;
+  }
+
+  .toast-close:hover {
+    transform: none;
   }
 }

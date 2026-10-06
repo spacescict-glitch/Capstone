@@ -17,9 +17,8 @@ const Toast = ({
 
   return (
     <div className={`toast-container ${type}`}>
-      <div className="toast-icon">
-        {icons[type]}
-      </div>
+      {/* Accent + progress bar handled via ::before and .toast-progress */}
+      <div className="toast-icon">{icons[type]}</div>
 
       <div className="toast-content">
         <h3>{title}</h3>
@@ -29,9 +28,12 @@ const Toast = ({
       <button
         className="toast-close"
         onClick={onClose}
+        aria-label="Close notification"
       >
         ✕
       </button>
+
+      {type !== "loading" && <div className="toast-progress" />}
     </div>
   );
 };

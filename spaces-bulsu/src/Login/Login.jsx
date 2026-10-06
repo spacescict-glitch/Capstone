@@ -781,8 +781,19 @@ export default function Login() {
               onClick={handleSignIn}
               disabled={loading}
             >
-              {loading ? "Signing in..." : "Sign In"}
-              <i className="fa-solid fa-arrow-right" />
+              {loading ? (
+                <>
+                  Signing in
+                  <span className="btn-dots">
+                    <span></span><span></span><span></span>
+                  </span>
+                </>
+              ) : (
+                <>
+                  Sign In
+                  <i className="fa-solid fa-arrow-right" />
+                </>
+              )}
             </button>
 
             <div className="support-text">
