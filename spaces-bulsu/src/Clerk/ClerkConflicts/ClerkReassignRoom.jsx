@@ -3,7 +3,6 @@ import { useNavigate, useLocation } from "react-router-dom";
 import "./clerk-reassign-room.css";
 import {
   collection, getDocs, addDoc, serverTimestamp, doc, getDoc,
-  query, where,
 } from "firebase/firestore";
 import { logActivity } from "../../utils/logActivity";
 import { auth, db } from "../../firebase";
@@ -42,6 +41,39 @@ const minToTime = (mins) => {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 };
 
+// ─── Floor normalization ────────────────────────────────────────
+// Handles: "1st Floor", "1st", "1", 1, "Ground Floor", "GF", etc.
+const normalizeFloor = (value) => {
+  if (value == null) return "";
+  const s = String(value).trim().toLowerCase();
+  if (!s) return "";
+
+  // Ground floor
+  if (s.includes("ground") || s === "gf" || s === "g") return "0";
+
+  // Basement
+  if (s.includes("basement") || s.startsWith("b")) {
+    const m = s.match(/\d+/);
+    return m ? String(-parseInt(m[0], 10)) : "-1";
+  }
+
+  // Extract any digit (handles "1st Floor", "1st", "1", "Floor 1", etc.)
+  const m = s.match(/\d+/);
+  if (m) return String(parseInt(m[0], 10));
+
+  return s;
+};
+
+// Friendly label for floor options
+const formatFloorLabel = (normalized) => {
+  if (normalized === "0") return "Ground Floor";
+  if (normalized.startsWith("-")) return `Basement ${normalized.slice(1)}`;
+  const n = parseInt(normalized, 10);
+  if (Number.isNaN(n)) return normalized;
+  const suffix = n === 1 ? "st" : n === 2 ? "nd" : n === 3 ? "rd" : "th";
+  return `${n}${suffix} Floor`;
+};
+
 const isRoomMaintenance = (room) => {
   const status = String(room.roomStatus || "").toLowerCase().trim();
   const legacyStatus = String(room.status || "").toLowerCase().trim();
@@ -77,8 +109,12 @@ const NO_ROOM_LABELS = {
 function ClerkReassignRoom() {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+
+  // ─── Floor filter state (normalized string, e.g. "1", "2", "0") ──
   const [floor, setFloor] = useState("");
+
   const [availableRooms, setAvailableRooms] = useState([]);
+  const [allRooms, setAllRooms] = useState([]);              // ← for building floor options
   const [roomsLoading, setRoomsLoading] = useState(true);
   const [selectedRoom, setSelectedRoom] = useState(null);
   const [skippedRooms, setSkippedRooms] = useState({ maintenance: 0, inactive: 0 });
@@ -88,7 +124,7 @@ function ClerkReassignRoom() {
   const [checkingPending, setCheckingPending] = useState(true);
 
   const [showPreview, setShowPreview] = useState(false);
-  const [noRoomMode, setNoRoomMode] = useState(null); // null | "none_available" | "none_suited"
+  const [noRoomMode, setNoRoomMode] = useState(null);
   const [noRoomReason, setNoRoomReason] = useState("");
 
   const conflict = location.state?.conflict;
@@ -126,21 +162,100 @@ function ClerkReassignRoom() {
     return { start: cs, end: ce };
   }, [conflict]);
 
-  useEffect(() => { checkPendingReassignment(); }, []);
-  useEffect(() => { loadAvailableRooms(); }, [floor]);
+  // ═══════════════════════════════════════════════════════════════
+  // FLOOR OPTIONS — built dynamically from actual room data
+  // + each option shows how many rooms are on that floor
+  // ═══════════════════════════════════════════════════════════════
+  const floorOptions = useMemo(() => {
+    const counts = new Map();
+    allRooms.forEach((r) => {
+      const normalized = normalizeFloor(r.floor);
+      if (!normalized) return;
+      counts.set(normalized, (counts.get(normalized) || 0) + 1);
+    });
 
-  const checkPendingReassignment = async () => {
-    if (!conflict?.schedule?.id) { setCheckingPending(false); return; }
-    const q = query(
-      collection(db, "roomReassignments"),
-      where("scheduleId", "==", conflict.schedule.id),
-      where("date", "==", conflict.date),
-      where("status", "in", ["pending_admin", "pending_faculty", "pending"])
-    );
-    const snap = await getDocs(q);
-    setAlreadyPending(!snap.empty);
-    setCheckingPending(false);
-  };
+    return Array.from(counts.entries())
+      .map(([value, count]) => ({
+        value,
+        label: formatFloorLabel(value),
+        count,
+      }))
+      .sort((a, b) => {
+        const na = parseInt(a.value, 10);
+        const nb = parseInt(b.value, 10);
+        if (Number.isNaN(na) && Number.isNaN(nb)) return a.value.localeCompare(b.value);
+        if (Number.isNaN(na)) return 1;
+        if (Number.isNaN(nb)) return -1;
+        return na - nb;
+      });
+  }, [allRooms]);
+
+  // ═══════════════════════════════════════════════════════════════
+  // PENDING CHECK — fail-safe (always resets)
+  // ═══════════════════════════════════════════════════════════════
+    useEffect(() => {
+      let cancelled = false;
+
+      const run = async () => {
+        const sid = conflict?.schedule?.id;
+        const cdate = conflict?.date;
+
+        if (!sid || !cdate) {
+          setCheckingPending(false);
+          return;
+        }
+
+        try {
+          const snap = await getDocs(collection(db, "roomReassignments"));
+
+          // Gather every reassignment for this exact schedule + date.
+          const matching = [];
+          snap.docs.forEach((d) => {
+            const data = d.data() || {};
+            if (
+              String(data.scheduleId || "") === String(sid) &&
+              String(data.date || "") === String(cdate)
+            ) {
+              matching.push({ id: d.id, ...data });
+            }
+          });
+
+          // Sort newest-first using createdAt.
+          const ms = (v) => {
+            if (!v) return 0;
+            if (typeof v === "number") return v;
+            if (v?.seconds != null) return v.seconds * 1000;
+            if (typeof v?.toDate === "function") return v.toDate().getTime();
+            return 0;
+          };
+          matching.sort((a, b) => ms(b.createdAt) - ms(a.createdAt));
+
+          // Only the newest decision matters.
+          const latest = matching[0];
+          const latestStatus = String(latest?.status || "").toLowerCase();
+
+          // Block ONLY for genuinely pending statuses.
+          // "needs_reassign" (returned by admin), "accepted", "declined",
+          // "cancelled" → allow resubmission.
+          const isPending =
+            latestStatus === "pending_admin" || latestStatus === "pending_faculty";
+
+          if (!cancelled) setAlreadyPending(isPending);
+        } catch (err) {
+          console.error("checkPendingReassignment failed:", err);
+          if (!cancelled) setAlreadyPending(false);
+        } finally {
+          if (!cancelled) setCheckingPending(false);
+        }
+      };
+
+      run();
+      return () => { cancelled = true; };
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [conflict?.schedule?.id, conflict?.date]);
+
+  // Re-run load when floor changes
+  useEffect(() => { loadAvailableRooms(); }, [floor]);
 
   const overlap = (aS, aE, bS, bE) =>
     cvtMin(aS) < cvtMin(bE) && cvtMin(aE) > cvtMin(bS);
@@ -151,8 +266,13 @@ function ClerkReassignRoom() {
     setRoomsLoading(true);
     const roomSnap = await getDocs(collection(db, "rooms"));
     const eventSnap = await getDocs(collection(db, "events"));
-    const available = [];
 
+    // Keep a copy of ALL rooms so floor options don't disappear
+    // when a floor is currently selected
+    const fetchedAllRooms = roomSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    setAllRooms(fetchedAllRooms);
+
+    const available = [];
     const classStart = cvtMin(effectiveStart);
     const classEnd = cvtMin(effectiveEnd);
 
@@ -161,7 +281,13 @@ function ClerkReassignRoom() {
 
     for (const roomDoc of roomSnap.docs) {
       const room = roomDoc.data();
-      if (floor && room.floor !== floor) continue;
+
+      // ── FLOOR FILTER (normalized comparison) ──
+      if (floor) {
+        const roomFloorNorm = normalizeFloor(room.floor);
+        if (roomFloorNorm !== floor) continue;
+      }
+
       if (roomDoc.id === conflict.roomId) continue;
       if (isRoomMaintenance(room)) { maintenanceSkipped++; continue; }
       if (isRoomInactive(room)) { inactiveSkipped++; continue; }
@@ -224,6 +350,13 @@ function ClerkReassignRoom() {
       });
     }
 
+    // Sort alphabetically by room name
+    available.sort((a, b) =>
+      String(a.roomName || "").localeCompare(String(b.roomName || ""), undefined, {
+        sensitivity: "base", numeric: true,
+      })
+    );
+
     setAvailableRooms(available);
     setSkippedRooms({ maintenance: maintenanceSkipped, inactive: inactiveSkipped });
     setRoomsLoading(false);
@@ -276,6 +409,13 @@ function ClerkReassignRoom() {
     setNoRoomReason("");
   };
 
+  // Clear the selected room when floor changes (para hindi mag-conflict
+  // yung dating selection sa bagong filter)
+  const handleFloorChange = (value) => {
+    setFloor(value);
+    setSelectedRoom(null);
+  };
+
   const openNoRoomMode = (mode) => {
     setNoRoomMode(mode);
     setNoRoomReason("");
@@ -292,10 +432,6 @@ function ClerkReassignRoom() {
     if (alreadyPending) {
       showToast("error", "Already Pending",
         "There is already a pending reassignment for this class. Please wait.");
-      return;
-    }
-    if (checkingPending) {
-      showToast("loading", "Please wait", "Checking existing reassignments...");
       return;
     }
     setShowPreview(true);
@@ -315,7 +451,7 @@ function ClerkReassignRoom() {
     }
 
     // ══════════════════════════════════════════════════════════════
-    // NO-ROOM MODE — submit report to Admin
+    // NO-ROOM MODE
     // ══════════════════════════════════════════════════════════════
     if (noRoomMode) {
       if (!noRoomReason.trim()) {
@@ -412,11 +548,8 @@ function ClerkReassignRoom() {
         setShowPreview(false);
         setNoRoomMode(null);
         setNoRoomReason("");
-        showToast(
-          "success",
-          "Submitted to Admin",
-          "The Admin will review this and decide on the next action."
-        );
+        showToast("success", "Submitted to Admin",
+          "The Admin will review this and decide on the next action.");
         setTimeout(() => navigate(from), 1500);
       } catch (err) {
         console.error(err);
@@ -537,13 +670,10 @@ function ClerkReassignRoom() {
       });
 
       setShowPreview(false);
-      showToast(
-        "success",
-        "Submitted for Approval",
+      showToast("success", "Submitted for Approval",
         isPartial
           ? `Partial reassignment (${format12Hour(reassignStart)} – ${format12Hour(reassignEnd)}) sent to Admin.`
-          : "Your reassignment request has been sent to the Admin for review."
-      );
+          : "Your reassignment request has been sent to the Admin for review.");
       setTimeout(() => navigate(from), 1500);
     } catch (err) {
       console.error(err);
@@ -558,6 +688,19 @@ function ClerkReassignRoom() {
   const activityTitle = conflict?.activityTitle || conflict?.event?.title || "—";
 
   const showNoRoomButtons = !roomsLoading;
+
+  // Submit disabled — fail-safe
+  const submitDisabled =
+    loading ||
+    alreadyPending ||
+    (!selectedRoom && !noRoomMode);
+
+  // Active floor label for the room list
+  const activeFloorLabel = useMemo(() => {
+    if (!floor) return null;
+    const found = floorOptions.find((o) => o.value === floor);
+    return found ? found.label : formatFloorLabel(floor);
+  }, [floor, floorOptions]);
 
   return (
     <>
@@ -642,33 +785,38 @@ function ClerkReassignRoom() {
 
           <div className="dept-reassign-room-section">
             <div className="dept-reassign-room-section-header">
-              <div>
+              <div className="dept-reassign-room-section-title">
                 <span className="dept-venue-title">Select a New Room</span>
                 <p className="dept-venue-hint">
-                  Rooms tagged <b>Full</b> are free for the entire class.
-                  Rooms tagged <b>Partial</b> are only free for part of the
-                  class — you can reassign to those for the free window only.
+                  Rooms tagged <b>Full</b> are free for the entire class. Rooms tagged{" "}
+                  <b>Partial</b> are only free for part of the class — you can reassign
+                  to those for the free window only.
                 </p>
               </div>
-              <div className="dept-dropdown-wrapper-venue">
-                <select
-                  value={floor}
-                  onChange={(e) => setFloor(e.target.value)}
-                  className="dept-dropdown-venue"
-                  aria-label="Filter by floor"
-                >
-                  <option value="">All Floors</option>
-                  <option value="1st Floor">1st Floor</option>
-                  <option value="2nd Floor">2nd Floor</option>
-                  <option value="3rd Floor">3rd Floor</option>
-                  <option value="4th Floor">4th Floor</option>
-                </select>
-                <i className="fa-solid fa-angle-down dept-dropdown-icon-venue"></i>
+
+              <div className="dept-floor-filter">
+                <div className="dept-dropdown-wrapper-venue">
+                  <i className="fa-solid fa-layer-group dept-floor-icon"></i>
+                  <select
+                    value={floor}
+                    onChange={(e) => handleFloorChange(e.target.value)}
+                    className="dept-dropdown-venue is-floor"
+                    aria-label="Filter by floor"
+                  >
+                    <option value="">All Floors</option>
+                    {floorOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                  <i className="fa-solid fa-angle-down dept-dropdown-icon-venue"></i>
+                </div>
               </div>
             </div>
 
             {(skippedRooms.maintenance > 0 || skippedRooms.inactive > 0) &&
-              availableRooms.length === 0 && !roomsLoading && (
+              availableRooms.length === 0 && !roomsLoading && !floor && (
                 <div className="dept-reassign-hidden-note">
                   <i className="fa-solid fa-circle-info"></i>
                   <span>
@@ -698,7 +846,20 @@ function ClerkReassignRoom() {
               ) : availableRooms.length === 0 ? (
                 <div className="room-select-empty">
                   <i className="fa-regular fa-calendar-xmark"></i>
-                  <p>No available rooms found for this time slot.</p>
+                  <p>
+                    {floor
+                      ? `No available rooms on ${activeFloorLabel} for this time slot.`
+                      : "No available rooms found for this time slot."}
+                  </p>
+                  {floor && (
+                    <button
+                      type="button"
+                      className="room-select-clear-floor"
+                      onClick={() => handleFloorChange("")}
+                    >
+                      <i className="fa-solid fa-rotate-left"></i> Show all floors
+                    </button>
+                  )}
                 </div>
               ) : (
                 availableRooms.map((room) => {
@@ -752,10 +913,6 @@ function ClerkReassignRoom() {
               )}
             </div>
 
-            {/* ══════════════════════════════════════════════════════
-                NO ROOM OPTION — submit a report to the Admin if
-                no room is available or none fit the requirements
-               ══════════════════════════════════════════════════════ */}
             {showNoRoomButtons && (
               <div className="no-room-options">
                 <div className="no-room-options-header">
@@ -774,7 +931,7 @@ function ClerkReassignRoom() {
                     type="button"
                     className="no-room-btn is-unavailable"
                     onClick={() => openNoRoomMode("none_available")}
-                    disabled={alreadyPending || checkingPending}
+                    disabled={alreadyPending}
                   >
                     <i className="fa-solid fa-door-closed"></i>
                     <div>
@@ -786,7 +943,7 @@ function ClerkReassignRoom() {
                     type="button"
                     className="no-room-btn is-unsuited"
                     onClick={() => openNoRoomMode("none_suited")}
-                    disabled={alreadyPending || checkingPending}
+                    disabled={alreadyPending}
                   >
                     <i className="fa-solid fa-circle-question"></i>
                     <div>
@@ -811,14 +968,22 @@ function ClerkReassignRoom() {
           <button
             className="dept-reassign-confirm-btn"
             onClick={handleSubmitClick}
-            disabled={
-              loading || (!selectedRoom && !noRoomMode) ||
-              alreadyPending || checkingPending
+            disabled={submitDisabled}
+            title={
+              alreadyPending
+                ? "A reassignment for this class is already awaiting review."
+                : !selectedRoom && !noRoomMode
+                ? "Select a room or report 'No Room Available' first."
+                : ""
             }
           >
-            {checkingPending ? (
+            {loading ? (
               <>
-                <i className="fa-solid fa-circle-notch fa-spin"></i> Checking...
+                <i className="fa-solid fa-circle-notch fa-spin"></i> Submitting...
+              </>
+            ) : alreadyPending ? (
+              <>
+                <i className="fa-solid fa-lock"></i> Already Pending
               </>
             ) : (
               <>
@@ -829,14 +994,11 @@ function ClerkReassignRoom() {
         </div>
       </div>
 
-      {/* ══════════════════════════════════════════════════════════
-          PREVIEW MODAL
-         ══════════════════════════════════════════════════════════ */}
+      {/* ═══════════════ PREVIEW MODAL ═══════════════ */}
       {showPreview && (
         <div className="crr-preview-overlay" onClick={closePreview}>
           <div className="crr-preview-modal" onClick={(e) => e.stopPropagation()}>
             {noRoomMode ? (
-              // ── No-Room Preview ──────────────────────────────
               <>
                 <div className="crr-preview-header">
                   <div className="crr-preview-icon is-no-room">
@@ -917,11 +1079,7 @@ function ClerkReassignRoom() {
                 </div>
 
                 <div className="crr-preview-actions">
-                  <button
-                    className="crr-preview-back-btn"
-                    onClick={closePreview}
-                    disabled={loading}
-                  >
+                  <button className="crr-preview-back-btn" onClick={closePreview} disabled={loading}>
                     <i className="fa-solid fa-pen-to-square"></i> Cancel
                   </button>
                   <button
@@ -930,19 +1088,14 @@ function ClerkReassignRoom() {
                     disabled={loading || !noRoomReason.trim()}
                   >
                     {loading ? (
-                      <>
-                        <i className="fa-solid fa-circle-notch fa-spin"></i> Submitting...
-                      </>
+                      <><i className="fa-solid fa-circle-notch fa-spin"></i> Submitting...</>
                     ) : (
-                      <>
-                        <i className="fa-solid fa-paper-plane"></i> Submit to Admin
-                      </>
+                      <><i className="fa-solid fa-paper-plane"></i> Submit to Admin</>
                     )}
                   </button>
                 </div>
               </>
             ) : (
-              // ── Normal Room Preview ──────────────────────────
               <>
                 <div className="crr-preview-header">
                   <div className={`crr-preview-icon ${previewData.isPartial ? "is-partial" : ""}`}>
@@ -1050,11 +1203,7 @@ function ClerkReassignRoom() {
                 </div>
 
                 <div className="crr-preview-actions">
-                  <button
-                    className="crr-preview-back-btn"
-                    onClick={closePreview}
-                    disabled={loading}
-                  >
+                  <button className="crr-preview-back-btn" onClick={closePreview} disabled={loading}>
                     <i className="fa-solid fa-pen-to-square"></i> Edit
                   </button>
                   <button
@@ -1063,13 +1212,9 @@ function ClerkReassignRoom() {
                     disabled={loading}
                   >
                     {loading ? (
-                      <>
-                        <i className="fa-solid fa-circle-notch fa-spin"></i> Submitting...
-                      </>
+                      <><i className="fa-solid fa-circle-notch fa-spin"></i> Submitting...</>
                     ) : (
-                      <>
-                        <i className="fa-solid fa-circle-check"></i> Confirm & Submit
-                      </>
+                      <><i className="fa-solid fa-circle-check"></i> Confirm & Submit</>
                     )}
                   </button>
                 </div>

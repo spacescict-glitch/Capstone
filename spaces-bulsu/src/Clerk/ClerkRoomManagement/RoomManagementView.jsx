@@ -20,19 +20,7 @@ import { useDeactivationModals } from "./hooks/useDeactivationModals";
 import "./room-management-view.css";
 import Toast from "../../Popup/Toast/Toast";
 import DeleteRoomPopup from "../../Popup/DeleteRoomPopup/DeleteRoomPopup";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
-import universityLogo from "../../assets/BSU-Logo.png";
-import collegeLogo from "../../assets/CICT-Logo.png";
 import { isActiveOnDate } from "../../utils/scheduleActivePeriod";
-
-const SCHOOL_HEADER = {
-  universityLogoUrl: universityLogo,
-  collegeLogoUrl: collegeLogo,
-  universityName: "Bulacan State University",
-  collegeName: "College of Information and Communications Technology",
-  systemName: "SpaceS CICT",
-};
 
 function getActiveRoomStyle(room) {
   const iconVariant = room.type === "lecture" ? "peach" : "orange";
@@ -149,115 +137,6 @@ function RoomManagementView({
       setTimeout(() => {
         setToast({ show: false, type: "", title: "", message: "" });
       }, 3000);
-    }
-  };
-
-  // ─── PDF Export ─────────────────────────────────────────────────
-  const handleExportPDF = async () => {
-    if (rooms.length === 0) {
-      showToast("error", "No Rooms", "No rooms to export.");
-      return;
-    }
-
-    showToast("loading", "Generating PDF...", "");
-
-    try {
-      const pdf = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const marginX = 40;
-      const logoSize = 50;
-      const centerX = pageWidth / 2;
-
-      if (SCHOOL_HEADER.universityLogoUrl) {
-        pdf.addImage(SCHOOL_HEADER.universityLogoUrl, "PNG", marginX, 22, logoSize, logoSize);
-      }
-      if (SCHOOL_HEADER.collegeLogoUrl) {
-        pdf.addImage(
-          SCHOOL_HEADER.collegeLogoUrl,
-          "PNG",
-          pageWidth - marginX - logoSize,
-          22,
-          logoSize,
-          logoSize
-        );
-      }
-
-      pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(14);
-      pdf.setTextColor(20, 27, 45);
-      pdf.text(SCHOOL_HEADER.universityName, centerX, 36, { align: "center" });
-
-      pdf.setFont("helvetica", "normal");
-      pdf.setFontSize(10);
-      pdf.setTextColor(107, 114, 128);
-      pdf.text(SCHOOL_HEADER.collegeName, centerX, 50, { align: "center" });
-      pdf.text(SCHOOL_HEADER.systemName, centerX, 62, { align: "center" });
-
-      pdf.setDrawColor(245, 124, 0);
-      pdf.setLineWidth(1.5);
-      pdf.line(marginX, 82, pageWidth - marginX, 82);
-
-      pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(16);
-      pdf.setTextColor(245, 124, 0);
-      pdf.text("Room Management Report", marginX, 104);
-
-      pdf.setFont("helvetica", "normal");
-      pdf.setFontSize(10);
-      pdf.setTextColor(107, 114, 128);
-      pdf.text(`Generated: ${new Date().toLocaleString()}`, pageWidth - marginX, 120, {
-        align: "right",
-      });
-
-      const rows = rooms.map((room) => [
-        room.id,
-        room.capacity,
-        room.typeLabel,
-        room.equipment.join(", "),
-        room.roomStatus.toUpperCase(),
-      ]);
-
-      autoTable(pdf, {
-        startY: 134,
-        head: [["Room Name", "Capacity", "Type", "Equipment", "Status"]],
-        body: rows,
-        theme: "grid",
-        styles: { font: "helvetica", fontSize: 9, cellPadding: 6, valign: "middle" },
-        headStyles: {
-          fillColor: [245, 124, 0],
-          textColor: [255, 255, 255],
-          fontStyle: "bold",
-          fontSize: 9,
-        },
-        bodyStyles: { textColor: [26, 26, 26] },
-        alternateRowStyles: { fillColor: [253, 246, 240] },
-        margin: { left: marginX, right: marginX },
-      });
-
-      const pageCount = pdf.internal.getNumberOfPages();
-      for (let i = 1; i <= pageCount; i++) {
-        pdf.setPage(i);
-        pdf.setFont("helvetica", "normal");
-        pdf.setFontSize(8);
-        pdf.setTextColor(150, 150, 150);
-        pdf.text(
-          `Page ${i} of ${pageCount}`,
-          pageWidth - marginX,
-          pdf.internal.pageSize.getHeight() - 20,
-          { align: "right" }
-        );
-        pdf.text(
-          `${SCHOOL_HEADER.systemName} — Confidential`,
-          marginX,
-          pdf.internal.pageSize.getHeight() - 20
-        );
-      }
-
-      pdf.save(`rooms_export_${Date.now()}.pdf`);
-      showToast("success", "PDF Exported", "PDF exported successfully!");
-    } catch (error) {
-      console.error("PDF export failed:", error);
-      showToast("error", "Export Failed", "Export failed. Try again.");
     }
   };
 
@@ -785,14 +664,6 @@ function RoomManagementView({
           </div>
 
           <div className="dashboard-actions">
-            <button
-              type="button"
-              className="action-pill outline export-btn"
-              onClick={handleExportPDF}
-            >
-              <i className="fa-solid fa-download" aria-hidden="true" />
-              Export PDF
-            </button>
             <button
               type="button"
               className="action-pill primary"

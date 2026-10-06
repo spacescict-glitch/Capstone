@@ -10,6 +10,21 @@ import { logActivity } from "../../utils/logActivity";
 import { isRoomUnderMaintenance } from "../../utils/Roommaintenance";
 import { findFacultyUser, findFacultyUserByName } from "../../utils/findFacultyUser";
 
+// ═══════════════════════════════════════════════════════════════════
+// Reassignment status helpers
+//
+// A reassignment is "in effect" only after the faculty ACCEPTS it.
+// The Admin flow sets: pending_admin → pending_faculty → accepted
+// (NOT "approved"). Legacy "approved" kept for backward-compat.
+// ═══════════════════════════════════════════════════════════════════
+const ACCEPTED_REASSIGN_STATUSES = new Set(["accepted", "approved"]);
+const isAcceptedReassign = (r) =>
+  ACCEPTED_REASSIGN_STATUSES.has(String(r.status || "").toLowerCase());
+
+// Conflict kinds that HARD-BLOCK submission. Schedules & reassignments
+// stay as warnings (the Admin decides whether to move or cancel them).
+const BLOCKING_CONFLICT_KINDS = new Set(["event", "reservation"]);
+
 // ─── Time helpers ────────────────────────────────────────────────
 function parseTime(t) {
   if (!t) return null;
@@ -147,6 +162,10 @@ export default function RoomActivity() {
   const [showListModal, setShowListModal] = useState(false);
   const [showCustomTime, setShowCustomTime] = useState(false);
 
+  // NEW: true when the selected room/time has a hard-blocking booking
+  // (existing event or approved reservation).
+  const [hasBlockingConflict, setHasBlockingConflict] = useState(false);
+
   const [showRoomPicker, setShowRoomPicker] = useState(false);
   const [roomSearch, setRoomSearch] = useState("");
 
@@ -185,6 +204,14 @@ export default function RoomActivity() {
     (r) => (r.roomName || r.name) === form.room
   );
 
+  // Aggregate counts so the conflict card can render correctly.
+  const blockingConflicts = conflicts.filter((c) =>
+    BLOCKING_CONFLICT_KINDS.has(c.kind)
+  );
+  const warningConflicts = conflicts.filter(
+    (c) => !BLOCKING_CONFLICT_KINDS.has(c.kind)
+  );
+
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "rooms"), (snap) => {
       setRooms(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
@@ -194,24 +221,20 @@ export default function RoomActivity() {
   }, []);
 
   // ═════════════════════════════════════════════════════════════
-  // CONFLICT DETECTION — STRICTLY scoped to the SELECTED ROOM only.
-  //
+  // CONFLICT DETECTION — strictly scoped to the SELECTED ROOM only.
   // Sources:
   //   1) Class schedules (this room, this weekday)
-  //      — exclude if cancelled/initialized
-  //      — exclude if reassigned AWAY on this date
-  //      — exclude if fully overridden by an EVENT on this date
-  //      — ✨ adjust end time using roomReleases (early release)
-  //      — exclude if effectively released before its start time
-  //   2) Events (this room, this date, overlapping)
-  //   3) Approved reservations (this room, this date, overlapping)
-  //   4) Approved reassignments INTO this room (this date, overlapping)
+  //   2) Events (this room, this date)
+  //   3) Approved reservations (walk-in + online)
+  //   4) ACCEPTED reassignments into this room
+  //   5) ACCEPTED reassignments away from this room (exclude)
   // ═════════════════════════════════════════════════════════════
   useEffect(() => {
     const checkConflict = async () => {
       setError("");
       if (!form.room || !form.date || !form.startTime || !form.endTime) {
         setConflicts([]);
+        setHasBlockingConflict(false);
         return;
       }
       const room = rooms.find((r) => (r.roomName || r.name) === form.room);
@@ -243,11 +266,12 @@ export default function RoomActivity() {
         const allReleases = relSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
         // ── Schedule IDs reassigned AWAY from this room on this date ──
+        // ✅ FIX: include "accepted" (not just "approved").
         const reassignedAwayIds = new Set(
           allReassignments
             .filter(
               (r) =>
-                String(r.status || "").toLowerCase() === "approved" &&
+                isAcceptedReassign(r) &&
                 r.date === form.date &&
                 (r.oldRoomId === room.id || r.oldRoomName === roomLabel)
             )
@@ -256,7 +280,6 @@ export default function RoomActivity() {
         );
 
         // ── Map of scheduleId → release info (for THIS date) ──
-        // Only releases for the selected room + date matter.
         const releaseMap = new Map();
         allReleases
           .filter(
@@ -282,24 +305,19 @@ export default function RoomActivity() {
             if (s.day !== day) return false;
             if (reassignedAwayIds.has(s.id)) return false;
 
-            // ✨ Compute effective time range using release info
             const sStart = parseTime(s.startTime);
             let sEnd = parseTime(s.endTime);
 
             const release = releaseMap.get(s.id);
             if (release) {
-              // Fully released → skip entirely
               if (!release.effectiveEndTime) return false;
               const effectiveEnd = parseTime(release.effectiveEndTime);
-              // Released before its start → skip entirely
               if (effectiveEnd <= sStart) return false;
               sEnd = effectiveEnd;
             }
 
-            // Effective range must overlap the requested range
             if (!overlap(reqStart, reqEnd, sStart, sEnd)) return false;
 
-            // Skip if overridden by an event on this date
             const isOverriddenByEvent = roomEventsForDate.some((e) =>
               overlap(sStart, sEnd, parseTime(e.startTime), parseTime(e.endTime))
             );
@@ -354,6 +372,8 @@ export default function RoomActivity() {
           });
 
         // ── 3) Approved reservations for this room on this date ──
+        // Includes BOTH walk-in (auto-approved) and online reservations
+        // that the Clerk approved. Status can be "approved" or "Approved".
         allReservations
           .filter(
             (r) =>
@@ -363,13 +383,14 @@ export default function RoomActivity() {
               overlap(reqStart, reqEnd, parseTime(r.startTime), parseTime(r.endTime))
           )
           .forEach((r) => {
+            const isWalkIn =
+              String(r.reservationType || "").toLowerCase() === "walk-in";
             results.push({
               id: r.id,
               kind: "reservation",
-              sourceLabel:
-                r.reservationType === "walk-in"
-                  ? "Walk-in Reservation"
-                  : "Faculty Reservation",
+              sourceLabel: isWalkIn
+                ? "Walk-in Reservation"
+                : "Faculty Reservation",
               subject:
                 r.customPurpose || r.courseTitle || r.purpose || "Reservation",
               section: r.yearSectionGroup || r.attendees?.yearSectionGroup || "",
@@ -380,11 +401,13 @@ export default function RoomActivity() {
             });
           });
 
-        // ── 4) Approved reassignments INTO this room on this date ──
+        // ── 4) ACCEPTED reassignments INTO this room on this date ──
+        // ✅ FIX: "accepted" is now included so accepted reassignments
+        //    surface as conflicts in the new room.
         allReassignments
           .filter(
             (r) =>
-              String(r.status || "").toLowerCase() === "approved" &&
+              isAcceptedReassign(r) &&
               r.date === form.date &&
               (r.newRoomId === room.id || r.newRoomName === roomLabel) &&
               overlap(reqStart, reqEnd, parseTime(r.startTime), parseTime(r.endTime))
@@ -408,7 +431,13 @@ export default function RoomActivity() {
         console.error("Conflict detection failed:", err);
       }
 
+      // Sort for a stable UI
+      results.sort((a, b) => parseTime(a.startTime) - parseTime(b.startTime));
+
       setConflicts(results);
+      setHasBlockingConflict(
+        results.some((c) => BLOCKING_CONFLICT_KINDS.has(c.kind))
+      );
       setCheckingConflicts(false);
     };
     checkConflict();
@@ -436,10 +465,16 @@ export default function RoomActivity() {
     if (!form.startTime || !form.endTime) return "Time is required";
     if (parseTime(form.startTime) >= parseTime(form.endTime)) return "Invalid time range";
     if (maintenanceBlocked) return "This room is under maintenance during the selected date/time.";
+
+    // HARD BLOCK: existing event or approved reservation overlaps.
+    if (hasBlockingConflict) {
+      return "This room is already booked for the selected time (event or reservation). Please pick a different room or time.";
+    }
     return null;
   };
 
   const canSubmit = form.title && form.room && form.date && form.startTime && form.endTime;
+  const submitDisabled = maintenanceBlocked || !canSubmit || hasBlockingConflict;
 
   const handleConfirm = async () => {
     try {
@@ -449,6 +484,14 @@ export default function RoomActivity() {
       if (!roomDoc) { showToast("error", "Error", "Room not found"); return; }
       if (isRoomUnderMaintenance(roomDoc, form.date, form.startTime, form.endTime)) {
         showToast("error", "Room Unavailable", "This room is under maintenance.");
+        return;
+      }
+      if (hasBlockingConflict) {
+        showToast(
+          "error",
+          "Room Already Booked",
+          "An existing event or reservation occupies this room at the selected time."
+        );
         return;
       }
       const firebaseUser = auth.currentUser;
@@ -544,6 +587,7 @@ export default function RoomActivity() {
       setShowModal(false);
       setForm({ title: "", room: "", date: "", startTime: "", endTime: "", reason: "" });
       setConflicts([]);
+      setHasBlockingConflict(false);
       setShowCustomTime(false);
       setTimeout(() => setShowListModal(true), 900);
     } catch (error) {
@@ -585,6 +629,16 @@ export default function RoomActivity() {
         <div className="ra-banner ra-banner-warning">
           <i className="fa-solid fa-triangle-exclamation"></i>
           <span>This room is under maintenance during the selected date/time.</span>
+        </div>
+      )}
+      {hasBlockingConflict && !error && !maintenanceBlocked && (
+        <div className="ra-banner ra-banner-error">
+          <i className="fa-solid fa-circle-xmark"></i>
+          <span>
+            <strong>This room is already booked</strong> — an existing event
+            or reservation overlaps the selected time. Please pick a
+            different room or time.
+          </span>
         </div>
       )}
 
@@ -976,7 +1030,12 @@ export default function RoomActivity() {
 
           <div className="ra-footer">
             <button className="ra-confirm-btn" onClick={() => setShowModal(true)}
-              disabled={maintenanceBlocked || !canSubmit}>
+              disabled={submitDisabled}
+              title={
+                hasBlockingConflict
+                  ? "This room is already booked during the selected time."
+                  : ""
+              }>
               <i className="fa-solid fa-paper-plane"></i> Submit for Approval
             </button>
           </div>
@@ -1005,39 +1064,105 @@ export default function RoomActivity() {
               <span className="ra-spinner" /> Checking schedules, events, reservations, reassignments & releases…
             </div>
           )}
+
           {!checkingConflicts && conflicts.length > 0 && (
-            <div className="ra-conflict-card">
-              <div className="ra-conflict-title">
-                <i className="fa-solid fa-triangle-exclamation"></i>
-                {conflicts.length} Conflict{conflicts.length > 1 ? "s" : ""} Detected
+            <div
+              className="ra-conflict-card"
+              style={
+                hasBlockingConflict
+                  ? {
+                      background: "#fef2f2",
+                      borderColor: "#fecaca",
+                    }
+                  : undefined
+              }
+            >
+              <div
+                className="ra-conflict-title"
+                style={hasBlockingConflict ? { color: "#b91c1c" } : undefined}
+              >
+                <i
+                  className={`fa-solid ${
+                    hasBlockingConflict
+                      ? "fa-circle-xmark"
+                      : "fa-triangle-exclamation"
+                  }`}
+                ></i>
+                {hasBlockingConflict
+                  ? `Cannot submit — ${blockingConflicts.length} existing booking${
+                      blockingConflicts.length > 1 ? "s" : ""
+                    }`
+                  : `${conflicts.length} Conflict${conflicts.length > 1 ? "s" : ""} Detected`}
               </div>
               <p className="ra-conflict-desc">
-                These existing items overlap with your requested slot in{" "}
-                <strong>{form.room}</strong>. Once approved, affected faculty
-                will be notified.
+                {hasBlockingConflict ? (
+                  <>
+                    This room is already booked during your requested slot in{" "}
+                    <strong>{form.room}</strong>. You cannot submit an
+                    overlapping activity here — please choose a different room
+                    or time.
+                  </>
+                ) : (
+                  <>
+                    These existing items overlap with your requested slot in{" "}
+                    <strong>{form.room}</strong>. Once approved, affected
+                    faculty will be notified.
+                  </>
+                )}
               </p>
               <div className="ra-conflict-list">
-                {conflicts.map((c) => (
-                  <div key={`${c.kind}-${c.id}`} className="ra-conflict-item">
-                    <div className="ra-conflict-item-main">
-                      <span className={`ra-conflict-kind ra-conflict-kind--${c.kind}`}>
-                        <i className={CONFLICT_KIND_ICON[c.kind] || "fa-solid fa-circle-info"}></i>
-                        {c.sourceLabel}
-                      </span>
-                      <div className="ra-conflict-code">
-                        {c.subject || c.title || "Untitled"}
-                        {c.section ? ` (${c.section})` : ""}
-                      </div>
-                      <div className="ra-conflict-time">
-                        {formatTime12(c.startTime)} – {formatTime12(c.endTime)}
-                        {c.faculty ? ` · ${c.faculty}` : ""}
+                {conflicts.map((c) => {
+                  const isBlocking = BLOCKING_CONFLICT_KINDS.has(c.kind);
+                  return (
+                    <div
+                      key={`${c.kind}-${c.id}`}
+                      className="ra-conflict-item"
+                      style={
+                        isBlocking
+                          ? {
+                              background: "#fff",
+                              borderColor: "#fecaca",
+                            }
+                          : undefined
+                      }
+                    >
+                      <div className="ra-conflict-item-main">
+                        <span className={`ra-conflict-kind ra-conflict-kind--${c.kind}`}>
+                          <i className={CONFLICT_KIND_ICON[c.kind] || "fa-solid fa-circle-info"}></i>
+                          {c.sourceLabel}
+                          {isBlocking && (
+                            <span
+                              style={{
+                                marginLeft: 6,
+                                fontSize: 9.5,
+                                fontWeight: 800,
+                                padding: "1px 6px",
+                                borderRadius: 999,
+                                background: "#fee2e2",
+                                color: "#b91c1c",
+                                letterSpacing: ".05em",
+                              }}
+                            >
+                              BLOCKING
+                            </span>
+                          )}
+                        </span>
+                        <div className="ra-conflict-code">
+                          {c.subject || c.title || "Untitled"}
+                          {c.section ? ` (${c.section})` : ""}
+                        </div>
+                        <div className="ra-conflict-time">
+                          {formatTime12(c.startTime)} – {formatTime12(c.endTime)}
+                          {c.faculty ? ` · ${c.faculty}` : ""}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
+
           {!checkingConflicts && conflicts.length === 0 && form.room && form.date && form.startTime && form.endTime && !maintenanceBlocked && (
             <div className="ra-clear-card">
               <i className="fa-solid fa-circle-check"></i> No conflicts in {form.room} — clean schedule.
@@ -1053,8 +1178,8 @@ export default function RoomActivity() {
             <h3 className="ra-modal-title">Submit for Approval?</h3>
             <p className="ra-modal-text">
               Your request will be sent to the Admin for review
-              {conflicts.length > 0
-                ? ` — ${conflicts.length} conflict${conflicts.length > 1 ? "s" : ""} will be reported.`
+              {warningConflicts.length > 0
+                ? ` — ${warningConflicts.length} schedule conflict${warningConflicts.length > 1 ? "s" : ""} will be reported.`
                 : "."}
             </p>
             <div className="ra-modal-summary">

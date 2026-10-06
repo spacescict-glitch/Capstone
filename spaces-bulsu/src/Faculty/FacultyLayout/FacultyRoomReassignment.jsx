@@ -71,7 +71,7 @@ export default function FacultyRoomReassignment() {
     loadAssignment();
   }, [assignmentId]);
 
-  // ─── Send notifications ───────────────────────────────────────
+    // ─── Send notifications ───────────────────────────────────────
   const sendDecisionNotifications = async (decision) => {
     const currentUser = auth.currentUser;
     if (!currentUser) return;
@@ -100,15 +100,15 @@ export default function FacultyRoomReassignment() {
       createdAt: serverTimestamp(),
     });
 
-    // Notify Admins
-    const adminQuery = query(
-      collection(db, "users"),
-      where("role", "==", "Admin")
-    );
-    const adminSnap = await getDocs(adminQuery);
-    for (const admin of adminSnap.docs) {
+    // Notify Admins — role comparison is case-insensitive because roles
+    // can be stored as "Admin", "admin", or "ADMIN".
+    const usersSnap = await getDocs(collection(db, "users"));
+    for (const userDoc of usersSnap.docs) {
+      const role = String(userDoc.data().role || "").toLowerCase();
+      if (role !== "admin") continue;
+
       await addDoc(collection(db, "notifications"), {
-        userId: admin.id,
+        userId: userDoc.id,
         ownerType: "admin",
         assignmentId: assignment.id,
         reassignmentId: assignment.id,

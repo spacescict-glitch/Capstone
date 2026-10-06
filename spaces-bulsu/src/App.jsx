@@ -79,6 +79,7 @@ import FacultySettings from "./Faculty/FacultySettings/FacultySettings";
 import FacultyRoomIssues from "./Faculty/FacultyRoomIssues/FacultyRoomIssues";
 
 // Login
+import Home from "./Home/Home";
 import Login from "./Login/Login";
 import BroadcastChannel from "./Components/BroadcastChannel/BroadcastChannel";
 import ResetPassword from "./ResetPassword/ResetPassword";
@@ -86,6 +87,7 @@ import PublicRoomSchedule from "./Pages/PublicRoomSchedule/PublicRoomSchedule";
 
 // ✅ NEW — route guard
 import ProtectedRoute from "./Components/ProtectedRoute/ProtectedRoute";
+import { LogInIcon } from "lucide-react";
 
 function App() {
   return (

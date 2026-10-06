@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import "./faculty-profile.css";
 import { auth, db } from "../../firebase";
-import { doc, getDoc, updateDoc, collection, query, where, orderBy, limit, onSnapshot } from "firebase/firestore";
+import { doc, getDoc, updateDoc, collection, query, where, onSnapshot } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { logActivity } from "../../utils/logActivity";
 import Toast from "../../Popup/Toast/Toast";
@@ -50,6 +50,16 @@ function formatLogTime(log) {
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
   if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
   return date.toLocaleDateString();
+}
+
+// ✅ Helper: get millis from either timestamp or createdAt
+function getLogMillis(log) {
+  const ts = log?.timestamp || log?.createdAt;
+  if (!ts) return 0;
+  if (ts.toMillis) return ts.toMillis();
+  if (ts.toDate)   return ts.toDate().getTime();
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime()) ? 0 : d.getTime();
 }
 
 export default function FacultyProfile() {
@@ -123,7 +133,6 @@ export default function FacultyProfile() {
   useEffect(() => {
     if (!form.firstName && !form.lastName) return;
 
-    // ✅ Normalize name (collapse multiple spaces) so it matches logActivity output
     const fullName = `${form.firstName} ${form.lastName}`
       .replace(/\s+/g, " ")
       .trim();
@@ -131,18 +140,25 @@ export default function FacultyProfile() {
 
     setActivityLoading(true);
 
-    // ✅ orderBy restored — requires composite index on (user ASC, timestamp DESC)
+    // ✅ FIX:
+    // - Removed orderBy("timestamp") para hindi mag-drop ng docs
+    //   na walang `timestamp` field (mga gumagamit ng `createdAt`).
+    // - Removed orderBy din para hindi na kailangan ng composite index.
+    // - Client-side sorting na lang below.
     const q = query(
       collection(db, "activityLogs"),
-      where("user", "==", fullName),
-      orderBy("timestamp", "desc"),
-      limit(50)
+      where("user", "==", fullName)
     );
 
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
-        setActivityLogs(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+        const logs = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+        // Sort client-side (newest first) — supports timestamp OR createdAt
+        logs.sort((a, b) => getLogMillis(b) - getLogMillis(a));
+
+        setActivityLogs(logs.slice(0, 50));
         setActivityLoading(false);
       },
       (err) => {
@@ -245,7 +261,6 @@ export default function FacultyProfile() {
   const handleChange = (field) => (e) =>
     setForm(prev => ({ ...prev, [field]: e.target.value }));
 
-  // ── Avatar: preview → saved photo → initials fallback ──────────────────────
   const displayPhoto = previewUrl || form.photoUrl;
   const initials = `${form.firstName.charAt(0)}${form.lastName.charAt(0)}`.toUpperCase();
 
@@ -448,7 +463,6 @@ export default function FacultyProfile() {
                         )}
                       </div>
                       {log.target && <p className="up-activity-target">{log.target}</p>}
-                      {/* ✅ Pass whole log object (supports timestamp OR createdAt fallback) */}
                       <span className="up-activity-time">{formatLogTime(log)}</span>
                     </div>
                   </div>

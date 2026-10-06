@@ -4,6 +4,7 @@ import {
   addDoc,
   serverTimestamp,
   getDocs,
+  getDoc,
   doc,
   updateDoc,
   setDoc,
@@ -118,7 +119,6 @@ function Stepper({ current }) {
   );
 }
 
-// ── Generic filter dropdown (Sort / Role / Status) ──
 function FilterMenu({ label, value, setValue, options, icon, minWidth }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
@@ -170,7 +170,6 @@ function FilterMenu({ label, value, setValue, options, icon, minWidth }) {
   );
 }
 
-// ── Pagination control component ──
 function Pagination({ currentPage, totalPages, onPageChange, totalItems, startIndex, endIndex }) {
   if (totalPages <= 1) return null;
 
@@ -257,7 +256,10 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
   const [roleFilter, setRoleFilter] = useState("All");
   const [statusFilter, setStatusFilter] = useState("All");
 
-  // ── Pagination state ──
+  // ✅ Block/unblock confirmation modal state
+  const [toggleTarget, setToggleTarget] = useState(null);
+  const [togglingStatus, setTogglingStatus] = useState(false);
+
   const [currentPage, setCurrentPage] = useState(1);
 
   const fetchUsers = async () => {
@@ -280,7 +282,6 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
   const activeCount = users.filter((u) => u.status === "Active").length;
   const blockedCount = users.filter((u) => u.status === "Blocked").length;
 
-  // ── Filtered + sorted list ──
   const filtered = useMemo(() => {
     return users
       .filter(
@@ -304,7 +305,6 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
       });
   }, [users, search, roleFilter, statusFilter, sortBy]);
 
-  // ── Pagination computation ──
   const totalPages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
   const startIndex = (currentPage - 1) * PER_PAGE;
   const endIndex = Math.min(startIndex + PER_PAGE, filtered.length);
@@ -318,9 +318,42 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
     if (currentPage > totalPages) setCurrentPage(totalPages);
   }, [currentPage, totalPages]);
 
-  const handleToggleStatus = async (user) => {
+  // ── Helper: fetch the current admin's info for proper activity logging ──
+  const getAdminInfo = async () => {
+    const adminUser = auth.currentUser;
+    if (!adminUser) return { adminId: "", adminName: "Admin", adminRole: "Admin" };
+    try {
+      const snap = await getDoc(doc(db, "users", adminUser.uid));
+      if (snap.exists()) {
+        const d = snap.data();
+        const name = `${d.firstName || ""} ${d.lastName || ""}`.trim();
+        return {
+          adminId: adminUser.uid,
+          adminName: name || adminUser.email || "Admin",
+          adminRole: d.role || "Admin",
+        };
+      }
+    } catch (err) {
+      console.warn("Could not fetch admin info:", err);
+    }
+    return {
+      adminId: adminUser.uid,
+      adminName: adminUser.email || "Admin",
+      adminRole: "Admin",
+    };
+  };
+
+  // ✅ Step 1: Request block/unblock (opens confirmation modal)
+  const requestToggleStatus = (user) => setToggleTarget(user);
+
+  // ✅ Step 2: Confirm block/unblock (does the actual work + logs the ADMIN's action)
+  const confirmToggleStatus = async () => {
+    if (!toggleTarget || togglingStatus) return;
+    const user = toggleTarget;
     const isUnblocking = user.status === "Blocked";
     const newStatus = isUnblocking ? "Active" : "Blocked";
+
+    setTogglingStatus(true);
 
     const updates = isUnblocking
       ? {
@@ -346,15 +379,19 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
 
     try {
       await updateDoc(doc(db, "users", user.id), updates);
+
+      // ✅ Log the ADMIN's action (not the target user's)
+      const { adminId, adminName, adminRole } = await getAdminInfo();
       await logActivity({
-        userId: user.id,
-        user: getFullName(user),
-        role: user.role,
-        action: isUnblocking ? "Unblocked User" : "Blocked User",
-        actionType: "edit",
+        userId: adminId,
+        user: adminName,
+        role: adminRole,
+        action: isUnblocking ? "Unblocked User Account" : "Blocked User Account",
+        actionType: isUnblocking ? "success" : "denied",
         target: user.email,
         status: "SUCCESS",
       });
+
       setUsers((prev) =>
         prev.map((u) => (u.id === user.id ? { ...u, ...updates } : u))
       );
@@ -363,34 +400,46 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
         isUnblocking ? "User Unblocked" : "User Blocked",
         `${getFullName(user)} is now ${newStatus.toLowerCase()}.`
       );
+      setToggleTarget(null);
     } catch (e) {
+      console.error(e);
       showToast("error", "Update Failed", e.message);
+    } finally {
+      setTogglingStatus(false);
     }
   };
 
+  // ✅ Step 1: Request password reset (opens confirmation modal)
   const requestResetPassword = (user) => setResetTarget(user);
 
+  // ✅ Step 2: Confirm password reset (with loading state)
   const confirmResetPassword = async () => {
-    if (!resetTarget) return;
+    if (!resetTarget || sending) return;
     const user = resetTarget;
-    setResetTarget(null);
+
     setSending(user.id);
     try {
       await sendPasswordResetEmail(auth, user.email, {
         url: `${window.location.origin}/reset-password`,
         handleCodeInApp: false,
       });
+
+      // ✅ Log the ADMIN's action (not the target user's)
+      const { adminId, adminName, adminRole } = await getAdminInfo();
       await logActivity({
-        userId: user.id,
-        user: getFullName(user),
-        role: user.role,
+        userId: adminId,
+        user: adminName,
+        role: adminRole,
         action: "Sent Password Reset Email",
         actionType: "success",
         target: user.email,
         status: "SUCCESS",
       });
+
       showToast("success", "Email Sent", `Password reset email sent to ${user.email}.`);
+      setResetTarget(null);
     } catch (e) {
+      console.error(e);
       showToast("error", "Send Failed", e.message);
     } finally {
       setSending(null);
@@ -415,7 +464,6 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
         </button>
       </div>
 
-      {/* ── STATS — 3 cards ── */}
       <div className="um-stats-row">
         <div className="um-stat-card">
           <div className="um-stat-icon"><i className="fa-solid fa-users" /></div>
@@ -442,7 +490,6 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
         </div>
       </div>
 
-      {/* ── SINGLE-LINE TOOLBAR: Search (longest) + Sort + Role + Status ── */}
       <div className="um-toolbar">
         <div className="um-search-bar">
           <i className="fa-solid fa-magnifying-glass" />
@@ -452,43 +499,15 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
             onChange={(e) => setSearch(e.target.value)}
           />
           {search && (
-            <button
-              type="button"
-              className="um-search-clear"
-              onClick={() => setSearch("")}
-              aria-label="Clear search"
-            >
+            <button type="button" className="um-search-clear" onClick={() => setSearch("")} aria-label="Clear search">
               <i className="fa-solid fa-xmark" />
             </button>
           )}
         </div>
 
-        <FilterMenu
-          label="Sort"
-          value={sortBy}
-          setValue={setSortBy}
-          options={SORT_OPTIONS}
-          icon="fa-arrow-down-short-wide"
-          minWidth={180}
-        />
-
-        <FilterMenu
-          label="Role"
-          value={roleFilter}
-          setValue={setRoleFilter}
-          options={ROLE_FILTER_OPTIONS}
-          icon="fa-user-tag"
-          minWidth={180}
-        />
-
-        <FilterMenu
-          label="Status"
-          value={statusFilter}
-          setValue={setStatusFilter}
-          options={STATUS_FILTER_OPTIONS}
-          icon="fa-circle-dot"
-          minWidth={170}
-        />
+        <FilterMenu label="Sort" value={sortBy} setValue={setSortBy} options={SORT_OPTIONS} icon="fa-arrow-down-short-wide" minWidth={180} />
+        <FilterMenu label="Role" value={roleFilter} setValue={setRoleFilter} options={ROLE_FILTER_OPTIONS} icon="fa-user-tag" minWidth={180} />
+        <FilterMenu label="Status" value={statusFilter} setValue={setStatusFilter} options={STATUS_FILTER_OPTIONS} icon="fa-circle-dot" minWidth={170} />
       </div>
 
       <div className="um-table-card">
@@ -572,7 +591,7 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
                             <button
                               className="um-action-icon danger"
                               title="Block this account"
-                              onClick={() => handleToggleStatus(u)}
+                              onClick={() => requestToggleStatus(u)}
                             >
                               <i className="fa-solid fa-ban" />
                             </button>
@@ -580,7 +599,7 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
                             <button
                               className="um-action-icon success"
                               title="Unblock this account"
-                              onClick={() => handleToggleStatus(u)}
+                              onClick={() => requestToggleStatus(u)}
                             >
                               <i className="fa-solid fa-circle-check" />
                             </button>
@@ -607,18 +626,84 @@ function UserList({ onCreateAccount, logActivity, getFullName, showToast }) {
         )}
       </div>
 
-      {/* ── Reset password modal ── */}
+      {/* ═══════════ BLOCK / UNBLOCK CONFIRMATION MODAL ═══════════ */}
+      {toggleTarget && (() => {
+        const isUnblockAction = toggleTarget.status === "Blocked";
+        return (
+          <div className="um-modal-overlay" onClick={() => !togglingStatus && setToggleTarget(null)}>
+            <div className="um-modal" onClick={(e) => e.stopPropagation()}>
+              <div className={`um-modal-icon ${isUnblockAction ? "is-success" : "is-danger"}`}>
+                <i className={`fa-solid ${isUnblockAction ? "fa-circle-check" : "fa-ban"}`} />
+              </div>
+              <h3 className="um-modal-title">
+                {isUnblockAction ? "Unblock User Account?" : "Block User Account?"}
+              </h3>
+              <p className="um-modal-text">
+                {isUnblockAction ? (
+                  <>Restore system access for <strong>{getFullName(toggleTarget)}</strong>?</>
+                ) : (
+                  <>Block <strong>{getFullName(toggleTarget)}</strong> from signing in? They won't be able to log in until unblocked.</>
+                )}
+              </p>
+              <div className="um-modal-actions">
+                <button
+                  className="um-modal-cancel"
+                  onClick={() => setToggleTarget(null)}
+                  disabled={togglingStatus}
+                >
+                  Cancel
+                </button>
+                <button
+                  className={`um-modal-confirm ${isUnblockAction ? "" : "is-danger"}`}
+                  onClick={confirmToggleStatus}
+                  disabled={togglingStatus}
+                >
+                  {togglingStatus ? (
+                    <>
+                      <i className="fa-solid fa-circle-notch fa-spin" />
+                      {isUnblockAction ? "Unblocking…" : "Blocking…"}
+                    </>
+                  ) : (
+                    <>{isUnblockAction ? "Unblock User" : "Block User"}</>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ═══════════ RESET PASSWORD CONFIRMATION MODAL ═══════════ */}
       {resetTarget && (
-        <div className="um-modal-overlay">
-          <div className="um-modal">
+        <div className="um-modal-overlay" onClick={() => sending !== resetTarget.id && setResetTarget(null)}>
+          <div className="um-modal" onClick={(e) => e.stopPropagation()}>
             <div className="um-modal-icon"><i className="fa-solid fa-rotate-right" /></div>
             <h3 className="um-modal-title">Send Reset Email</h3>
             <p className="um-modal-text">
               Send a password reset email to<br /><strong>{resetTarget.email}</strong>?
             </p>
             <div className="um-modal-actions">
-              <button className="um-modal-cancel" onClick={() => setResetTarget(null)}>Cancel</button>
-              <button className="um-modal-confirm" onClick={confirmResetPassword}>Send Email</button>
+              <button
+                className="um-modal-cancel"
+                onClick={() => setResetTarget(null)}
+                disabled={sending === resetTarget.id}
+              >
+                Cancel
+              </button>
+              <button
+                className="um-modal-confirm"
+                onClick={confirmResetPassword}
+                disabled={sending === resetTarget.id}
+              >
+                {sending === resetTarget.id ? (
+                  <>
+                    <i className="fa-solid fa-circle-notch fa-spin" />
+                    Sending…
+                  </>
+                ) : (
+                  "Send Email"
+                )}
+              </button>
             </div>
           </div>
         </div>
@@ -822,10 +907,18 @@ export default function UserManagement() {
 
   const getFullName = (u) => `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim();
 
-  const logActivity = async ({ userId, user, role, action, actionType, target, status }) => {
+  // ✅ Local logActivity — always include a real timestamp + full schema
+  const logActivityLocal = async ({ userId, user, role, action, actionType, target, status }) => {
     try {
       await addDoc(collection(db, "activityLogs"), {
-        userId, user, role, action, actionType, target, status, timestamp: serverTimestamp(),
+        userId: userId || "",
+        user: user || "Unknown",
+        role: role || "Unknown",
+        action,
+        actionType,
+        target: target || "—",
+        status: status || "SUCCESS",
+        timestamp: serverTimestamp(),
       });
     } catch (err) {
       console.error("Activity log error:", err);
@@ -897,7 +990,7 @@ export default function UserManagement() {
           showToast("error", "Email Not Sent", "Account was created, but the welcome email failed to send.");
         }
 
-        await logActivity({
+        await logActivityLocal({
           userId: uid,
           user: `${form.firstName} ${form.lastName}`,
           role: form.role,
@@ -956,7 +1049,7 @@ export default function UserManagement() {
               console.error("EMAILJS ERROR:", emailError);
             }
 
-            await logActivity({
+            await logActivityLocal({
               userId: uid,
               user: `${row.firstName} ${row.lastName}`,
               role: row.role,
@@ -1005,7 +1098,7 @@ export default function UserManagement() {
       {view === "list" && (
         <UserList
           onCreateAccount={() => setView("step1")}
-          logActivity={logActivity}
+          logActivity={logActivityLocal}
           getFullName={getFullName}
           showToast={showToast}
         />

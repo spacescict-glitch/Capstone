@@ -1409,3 +1409,35 @@
     font-size: 12.5px;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   MODAL VARIANTS — danger / success + loading spinner
+   ═══════════════════════════════════════════════════════════════ */
+
+.um-modal-icon.is-danger {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.um-modal-icon.is-success {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.um-modal-confirm.is-danger {
+  background: #dc2626;
+  border: 1.5px solid #dc2626;
+  color: #fff;
+}
+
+.um-modal-confirm.is-danger:hover:not(:disabled) {
+  background: #fee2e2;
+  border: 1px solid #dc2626;
+  color: #dc2626;
+}
+
+/* Loading spinner inside modal buttons */
+.um-modal-confirm i.fa-circle-notch {
+  margin-right: 6px;
+  font-size: 13px;
+}

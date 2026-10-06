@@ -9,6 +9,8 @@ import {
   serverTimestamp,
   getDoc,
   getDocs,
+  query,
+  where,
 } from "firebase/firestore";
 import { db } from "../../firebase";
 import { auth } from "../../firebase";
@@ -30,6 +32,158 @@ const findUserByName = async (name) => {
   return null;
 };
 
+// ─── Time helpers ──────────────────────────────────────────────────────
+const parseTimeToMin = (t) => {
+  if (!t) return null;
+  const [h, m] = t.split(":").map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return null;
+  return h * 60 + m;
+};
+const overlaps = (aS, aE, bS, bE) => aS < bE && aE > bS;
+const format12Hour = (time) => {
+  if (!time) return "—";
+  const [h, m] = time.split(":").map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return time;
+  const suffix = h >= 12 ? "PM" : "AM";
+  const hh = h % 12 || 12;
+  return `${hh}:${String(m).padStart(2, "0")} ${suffix}`;
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// CONFLICT CHECK
+// ──────────────────────────────────────────────────────────────────────
+// Detects overlap between the reservation being approved and any:
+//   1) Events in the same room on the same date
+//   2) Accepted reassignments INTO the same room on the same date
+//   3) Other approved reservations (walk-in + online) in the same room
+//   4) Class schedules for the same weekday
+// ══════════════════════════════════════════════════════════════════════
+const checkReservationConflicts = async (reservation) => {
+  if (!reservation) return [];
+  const roomId = reservation.roomId;
+  const roomName = reservation.roomName;
+  if (!roomId && !roomName) return [];
+  if (!reservation.date || !reservation.startTime || !reservation.endTime) return [];
+
+  const reqStart = parseTimeToMin(reservation.startTime);
+  const reqEnd = parseTimeToMin(reservation.endTime);
+  if (reqStart == null || reqEnd == null) return [];
+
+  const matchesRoom = (r) =>
+    (roomId && r.roomId === roomId) ||
+    (roomName && r.roomName === roomName);
+
+  const found = [];
+
+  try {
+    const [evSnap, reSnap, resSnap, schedSnap] = await Promise.all([
+      getDocs(query(collection(db, "events"), where("date", "==", reservation.date))),
+      getDocs(collection(db, "roomReassignments")),
+      getDocs(query(collection(db, "reservationRequests"), where("date", "==", reservation.date))),
+      roomId
+        ? getDocs(collection(db, "rooms", roomId, "schedules"))
+        : Promise.resolve({ docs: [] }),
+    ]);
+
+    // 1) Events
+    evSnap.docs.forEach((d) => {
+      const e = { id: d.id, ...d.data() };
+      if (String(e.status || "").toLowerCase() === "cancelled") return;
+      if (!matchesRoom(e)) return;
+      if (e.reservationId && e.reservationId === reservation.id) return;
+      const s = parseTimeToMin(e.startTime);
+      const en = parseTimeToMin(e.endTime);
+      if (s == null || en == null) return;
+      if (!overlaps(reqStart, reqEnd, s, en)) return;
+      found.push({
+        id: e.id,
+        kind: "event",
+        label: "Room Activity",
+        title: e.title || e.purpose || "Room Activity",
+        faculty: e.faculty || e.requestedByName || "Admin",
+        startTime: e.startTime,
+        endTime: e.endTime,
+      });
+    });
+
+    // 2) Accepted reassignments INTO this room
+    reSnap.docs.forEach((d) => {
+      const r = { id: d.id, ...d.data() };
+      if (r.date !== reservation.date) return;
+      const status = String(r.status || "").toLowerCase();
+      if (status !== "accepted" && status !== "approved") return;
+      const into =
+        (roomId && r.newRoomId === roomId) ||
+        (roomName && r.newRoomName === roomName);
+      if (!into) return;
+      const s = parseTimeToMin(r.startTime);
+      const en = parseTimeToMin(r.endTime);
+      if (s == null || en == null) return;
+      if (!overlaps(reqStart, reqEnd, s, en)) return;
+      found.push({
+        id: r.id,
+        kind: "reassignment",
+        label: "Reassigned Class",
+        title: r.courseTitle || r.eventTitle || "Reassigned Class",
+        faculty: r.facultyName || "-",
+        startTime: r.startTime,
+        endTime: r.endTime,
+      });
+    });
+
+    // 3) Other approved reservations
+    resSnap.docs.forEach((d) => {
+      const r = { id: d.id, ...d.data() };
+      if (r.id === reservation.id) return;
+      if (String(r.status || "").toLowerCase() !== "approved") return;
+      if (!matchesRoom(r)) return;
+      const s = parseTimeToMin(r.startTime);
+      const en = parseTimeToMin(r.endTime);
+      if (s == null || en == null) return;
+      if (!overlaps(reqStart, reqEnd, s, en)) return;
+      const isWalkIn = String(r.reservationType || "").toLowerCase() === "walk-in";
+      found.push({
+        id: r.id,
+        kind: "reservation",
+        label: isWalkIn ? "Walk-in Reservation" : "Faculty Reservation",
+        title: r.customPurpose || r.courseTitle || r.purpose || "Reservation",
+        faculty: r.requesterName || r.facultyName || "-",
+        startTime: r.startTime,
+        endTime: r.endTime,
+      });
+    });
+
+    // 4) Class schedules on the matching weekday
+    if (schedSnap.docs?.length) {
+      const day = new Date(`${reservation.date}T00:00:00`)
+        .toLocaleDateString("en-US", { weekday: "short" })
+        .toUpperCase();
+      schedSnap.docs.forEach((d) => {
+        const s = { id: d.id, ...d.data() };
+        if (s.cancelled || s.initialized) return;
+        if (s.day !== day) return;
+        const sT = parseTimeToMin(s.startTime);
+        const eT = parseTimeToMin(s.endTime);
+        if (sT == null || eT == null) return;
+        if (!overlaps(reqStart, reqEnd, sT, eT)) return;
+        found.push({
+          id: s.id,
+          kind: "schedule",
+          label: "Class Schedule",
+          title: s.subject || s.courseTitle || s.title || "Class",
+          faculty: s.facultyName || s.faculty || "-",
+          startTime: s.startTime,
+          endTime: s.endTime,
+        });
+      });
+    }
+  } catch (err) {
+    console.error("Conflict check failed:", err);
+  }
+
+  return found;
+};
+
 function ClerkViewReservation() {
   const navigate = useNavigate();
   const { state } = useLocation();
@@ -42,6 +196,10 @@ function ClerkViewReservation() {
 
   // ─── Requester photo state ─────────────────────────────────────────
   const [requesterPhoto, setRequesterPhoto] = useState(null);
+
+  // ─── Conflict state ────────────────────────────────────────────────
+  const [conflicts, setConflicts] = useState([]);
+  const [checkingConflicts, setCheckingConflicts] = useState(true);
 
   const toastTimeoutRef = useRef(null);
 
@@ -78,7 +236,6 @@ function ClerkViewReservation() {
       if (!reservation) return;
 
       try {
-        // 1. Check muna kung nasa reservation document mismo yung photo
         const inlinePhoto =
           reservation.userPhoto ||
           reservation.requesterPhoto ||
@@ -90,7 +247,6 @@ function ClerkViewReservation() {
           return;
         }
 
-        // 2. Fallback: hanapin yung user sa `users` collection
         let userId = reservation.userId;
 
         if (!userId && (reservation.facultyName || reservation.requesterName)) {
@@ -107,7 +263,7 @@ function ClerkViewReservation() {
 
         const userData = userSnap.data();
         setRequesterPhoto(
-            userData.photoUrl ||   
+          userData.photoUrl ||
             userData.photoURL ||
             userData.profilePhoto ||
             userData.photo ||
@@ -122,6 +278,35 @@ function ClerkViewReservation() {
     };
 
     fetchRequesterPhoto();
+  }, [reservation]);
+
+  // ═════════════════════════════════════════════════════════════════
+  // Conflict check on mount + whenever reservation changes.
+  // Also skip for already-decided reservations.
+  // ═════════════════════════════════════════════════════════════════
+  useEffect(() => {
+    let cancelled = false;
+    const status = String(reservation?.status || "").toLowerCase();
+    const decided =
+      status === "approved" || status === "rejected" ||
+      status === "denied" || status === "cancelled";
+
+    if (decided || !reservation) {
+      setConflicts([]);
+      setCheckingConflicts(false);
+      return;
+    }
+
+    const run = async () => {
+      setCheckingConflicts(true);
+      const found = await checkReservationConflicts(reservation);
+      if (!cancelled) {
+        setConflicts(found);
+        setCheckingConflicts(false);
+      }
+    };
+    run();
+    return () => { cancelled = true; };
   }, [reservation]);
 
   if (!reservation) {
@@ -160,7 +345,6 @@ function ClerkViewReservation() {
       badge,
       createdAt: serverTimestamp(),
     });
-    console.log(`Notification sent to ${ownerType} (${receiverId})`);
   };
 
   // ─── Send to all admins ───────────────────────────────────────────────
@@ -188,25 +372,36 @@ function ClerkViewReservation() {
     });
     if (notifications.length > 0) {
       await Promise.all(notifications);
-      console.log(`Notified ${notifications.length} admin(s)`);
-    } else {
-      console.warn("No admins found to notify.");
     }
   };
 
-  // ─── Approve ────────────────────────────────────────────────────────────
-
+  // ═════════════════════════════════════════════════════════════════════
+  // APPROVE — re-check conflicts right before proceeding.
+  // ═════════════════════════════════════════════════════════════════════
   const approveReservation = async () => {
     setSubmitting(true);
     showToast("loading", "Processing", "Approving reservation...");
 
     try {
-      // 1. Update reservation status
+      // FINAL GUARD
+      const fresh = await checkReservationConflicts(reservation);
+      if (fresh.length > 0) {
+        setConflicts(fresh);
+        setShowConfirm(false);
+        showToast(
+          "error",
+          "Conflicts Detected",
+          "This reservation now overlaps another booking. Approval blocked."
+        );
+        return;
+      }
+
       await updateDoc(doc(db, "reservationRequests", reservation.id), {
         status: "Approved",
       });
 
-      // 2. Create event (room activity)
+      // Tag event with reservationId so this reservation isn't
+      // flagged as its own conflict later.
       await addDoc(collection(db, "events"), {
         roomId: reservation.roomId,
         roomName: reservation.roomName,
@@ -218,6 +413,7 @@ function ClerkViewReservation() {
         endTime: reservation.endTime,
         createdAt: serverTimestamp(),
         source: "Reservation",
+        reservationId: reservation.id,
       });
 
       const firebaseUser = auth.currentUser;
@@ -231,7 +427,6 @@ function ClerkViewReservation() {
         }
       }
 
-      // 3. Activity log
       await logActivity({
         userId: firebaseUser?.uid || "",
         user: clerkName,
@@ -249,14 +444,10 @@ function ClerkViewReservation() {
         },
       });
 
-      // ─── 4. Notifications ───────────────────────────────────────────
-
-      // a) Faculty (try reservation.userId, else fallback to name lookup)
       let facultyUserId = reservation.userId;
       if (!facultyUserId && reservation.facultyName) {
         const user = await findUserByName(reservation.facultyName);
         if (user) facultyUserId = user.id;
-        else console.warn("Faculty user not found by name:", reservation.facultyName);
       }
 
       if (facultyUserId) {
@@ -269,11 +460,8 @@ function ClerkViewReservation() {
           "reservation-approved",
           "SUCCESS"
         );
-      } else {
-        console.warn("No faculty userId found, skipping faculty notification.");
       }
 
-      // b) Clerk (self)
       if (firebaseUser?.uid) {
         await notifyReservationDecision(
           firebaseUser.uid,
@@ -286,7 +474,6 @@ function ClerkViewReservation() {
         );
       }
 
-      // c) All admins
       await notifyAllAdmins(
         "Reservation Approved",
         `${reservation.facultyName}'s reservation for ${reservation.roomName} was approved by Clerk.`,
@@ -328,7 +515,6 @@ function ClerkViewReservation() {
         }
       }
 
-      // Activity log
       await logActivity({
         userId: firebaseUser?.uid || "",
         user: clerkName,
@@ -344,7 +530,6 @@ function ClerkViewReservation() {
         },
       });
 
-      // Notifications (same fallback logic)
       let facultyUserId = reservation.userId;
       if (!facultyUserId && reservation.facultyName) {
         const user = await findUserByName(reservation.facultyName);
@@ -416,6 +601,12 @@ function ClerkViewReservation() {
 
   const duration = getDuration(reservation.startTime, reservation.endTime);
 
+  const status = String(reservation.status || "").toLowerCase();
+  const isDecided =
+    status === "approved" || status === "rejected" ||
+    status === "denied" || status === "cancelled";
+  const hasConflicts = conflicts.length > 0;
+
   // ─── Render ──────────────────────────────────────────────────────────────
 
   return (
@@ -455,10 +646,27 @@ function ClerkViewReservation() {
               </button>
               <button
                 className="clerk-approve-request-btn"
-                onClick={() => setShowConfirm(true)}
-                disabled={submitting}
+                onClick={() => {
+                  if (checkingConflicts || hasConflicts) return;
+                  setShowConfirm(true);
+                }}
+                disabled={submitting || checkingConflicts || hasConflicts || isDecided}
+                title={
+                  hasConflicts
+                    ? "Resolve conflicts before approving"
+                    : checkingConflicts
+                    ? "Checking conflicts…"
+                    : isDecided
+                    ? "This reservation has already been decided"
+                    : ""
+                }
+                style={
+                  hasConflicts || isDecided
+                    ? { opacity: 0.55, cursor: "not-allowed" }
+                    : undefined
+                }
               >
-                Approve Request
+                {checkingConflicts ? "Checking…" : hasConflicts ? "Conflicts Found" : "Approve Request"}
               </button>
             </div>
           </div>
@@ -534,10 +742,74 @@ function ClerkViewReservation() {
               </div>
             </div>
 
+            {/* ═══════════ REAL CONFLICT CHECK BOX ═══════════ */}
             <div className="clerk-reservation-info-box conflict-check-box">
               <h3 className="clerk-info-box-title">Conflict Check</h3>
               <div className="clerk-info-box-content">
-                <p>No conflict detected.</p>
+                {checkingConflicts ? (
+                  <p style={{ color: "#6b7280" }}>
+                    <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 6 }}></i>
+                    Checking for conflicts…
+                  </p>
+                ) : !hasConflicts ? (
+                  <p style={{ color: "#16a34a", fontWeight: 600 }}>
+                    <i className="fa-solid fa-circle-check" style={{ marginRight: 6 }}></i>
+                    No conflicts detected.
+                  </p>
+                ) : (
+                  <>
+                    <p style={{ color: "#b91c1c", fontWeight: 700, marginBottom: 8 }}>
+                      <i className="fa-solid fa-triangle-exclamation" style={{ marginRight: 6 }}></i>
+                      {conflicts.length} conflict{conflicts.length > 1 ? "s" : ""} detected — approval blocked
+                    </p>
+                    <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+                      {conflicts.map((c) => (
+                        <li
+                          key={`${c.kind}-${c.id}`}
+                          style={{
+                            padding: "8px 10px",
+                            background: "#fef2f2",
+                            border: "1px solid #fecaca",
+                            borderRadius: 8,
+                          }}
+                        >
+                          <span
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 5,
+                              fontSize: 10.5,
+                              fontWeight: 800,
+                              letterSpacing: ".03em",
+                              textTransform: "uppercase",
+                              color: "#b91c1c",
+                            }}
+                          >
+                            <i
+                              className={
+                                c.kind === "event"
+                                  ? "fa-solid fa-calendar-star"
+                                  : c.kind === "reassignment"
+                                  ? "fa-solid fa-right-left"
+                                  : c.kind === "reservation"
+                                  ? "fa-solid fa-book-bookmark"
+                                  : "fa-solid fa-chalkboard-user"
+                              }
+                            ></i>
+                            {c.label}
+                          </span>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: "#16181d", marginTop: 3 }}>
+                            {c.title}
+                          </div>
+                          <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>
+                            {format12Hour(c.startTime)} – {format12Hour(c.endTime)}
+                            {c.faculty ? ` · ${c.faculty}` : ""}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
               </div>
             </div>
           </div>

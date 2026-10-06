@@ -1,11 +1,12 @@
 import "./admin-reassignments.css";
 import { useEffect, useState, useMemo } from "react";
 import {
-  collection, onSnapshot, doc, updateDoc, addDoc, getDoc, serverTimestamp,
+  collection, onSnapshot, doc, updateDoc, addDoc, getDoc, getDocs, serverTimestamp,
 } from "firebase/firestore";
 import { auth, db } from "../../firebase";
 import Toast from "../../Popup/Toast/Toast";
 import { logActivity } from "../../utils/logActivity";
+import { findFacultyUserByName } from "../../utils/findFacultyUser";
 
 const ITEMS_PER_PAGE = 6;
 
@@ -196,6 +197,21 @@ function AdminReassignments() {
           return;
         }
 
+        // ── Resolve faculty id (fallback by name) ──
+        // If facultyId is missing (name lookup failed during submission,
+        // or the reassignment came back from a "needs_reassign" cycle),
+        // try to re-resolve it now so the notification can be delivered.
+        let resolvedFacultyId = item.facultyId || null;
+        if (!resolvedFacultyId && item.facultyName) {
+          try {
+            const usersSnap = await getDocs(collection(db, "users"));
+            const found = findFacultyUserByName(usersSnap, item.facultyName);
+            if (found) resolvedFacultyId = found.id;
+          } catch (err) {
+            console.warn("[AdminReassignments] faculty lookup fallback failed:", err);
+          }
+        }
+
         await updateDoc(doc(db, "roomReassignments", item.id), {
           status: "pending_faculty",
           adminNote: noteText || "",
@@ -203,11 +219,13 @@ function AdminReassignments() {
           approvedByName: myName,
           approvedAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
+          // Persist resolved facultyId back so future steps find it too.
+          ...(resolvedFacultyId && !item.facultyId ? { facultyId: resolvedFacultyId } : {}),
         });
 
-        if (item.facultyId) {
+        if (resolvedFacultyId) {
           await addDoc(collection(db, "notifications"), {
-            userId: item.facultyId,
+            userId: resolvedFacultyId,
             ownerType: "faculty",
             assignmentId: item.id,
             reassignmentId: item.id,
@@ -217,6 +235,10 @@ function AdminReassignments() {
             unread: true, archived: false, badge: "NEW",
             createdAt: serverTimestamp(),
           });
+        } else {
+          console.warn(
+            `[AdminReassignments] No faculty user matched for reassignment ${item.id} (name: "${item.facultyName || ""}"). Notification skipped.`
+          );
         }
 
         if (item.requestedById) {
@@ -246,7 +268,6 @@ function AdminReassignments() {
 
       // ══════════════════════════════════════════════════════════
       // 2. CANCEL CLASS / ACTIVITY → resolve conflict
-      //    (works for pending, declined, and no-room items)
       // ══════════════════════════════════════════════════════════
       else if (type === "cancel_class") {
         if (item.eventId) {
@@ -289,7 +310,6 @@ function AdminReassignments() {
           updatedAt: serverTimestamp(),
         });
 
-        // Notify Clerk
         if (item.requestedById) {
           await addDoc(collection(db, "notifications"), {
             userId: item.requestedById,
@@ -304,7 +324,6 @@ function AdminReassignments() {
           });
         }
 
-        // Notify Faculty (with reason)
         if (item.facultyId) {
           await addDoc(collection(db, "notifications"), {
             userId: item.facultyId,
@@ -340,7 +359,6 @@ function AdminReassignments() {
 
       // ══════════════════════════════════════════════════════════
       // 3. REASSIGN AGAIN → send back to clerk
-      //    (works for pending, declined, and no-room items)
       // ══════════════════════════════════════════════════════════
       else if (type === "reassign_again") {
         await updateDoc(doc(db, "roomReassignments", item.id), {
@@ -605,9 +623,6 @@ function AdminReassignments() {
         )}
       </div>
 
-      {/* ══════════════════════════════════════════════════════════
-          ACTION MODAL
-         ══════════════════════════════════════════════════════════ */}
       {actionModal && (
         <div className="dhr-modal-overlay" onClick={() => !processing && setActionModal(null)}>
           <div className="dhr-modal" onClick={(e) => e.stopPropagation()}>
@@ -686,7 +701,6 @@ function AdminReassignments() {
                 </span>
               </div>
 
-              {/* Clerk reason (no-room submissions) */}
               {actionModal.item.noRoomOption && actionModal.item.clerkReason && (
                 <div className="dhr-modal-summary-row" style={{ color: "#92400e" }}>
                   <i className="fa-solid fa-comment-dots" style={{ color: "#d97706" }}></i>
@@ -694,7 +708,6 @@ function AdminReassignments() {
                 </div>
               )}
 
-              {/* Faculty decline reason */}
               {actionModal.item.status === "declined" && actionModal.item.denialReason && (
                 <div className="dhr-modal-summary-row" style={{ color: "#b91c1c" }}>
                   <i className="fa-solid fa-circle-xmark" style={{ color: "#dc2626" }}></i>
@@ -834,7 +847,6 @@ function ReassignmentCard({ item, onAction }) {
         </div>
       </div>
 
-      {/* Clerk "no room" reason banner */}
       {isNoRoom && item.clerkReason && (
         <div
           className="dhr-note"
@@ -896,7 +908,6 @@ function ReassignmentCard({ item, onAction }) {
         </div>
       )}
 
-      {/* ── Pending: Approve (only if may new room) / Cancel / Reassign Again ── */}
       {isPending && (
         <div className="dhr-actions">
           {!isNoRoom && (
@@ -923,7 +934,6 @@ function ReassignmentCard({ item, onAction }) {
         </div>
       )}
 
-      {/* ── Declined: 2 buttons → Cancel Class | Reassign Again ── */}
       {isDeclined && (
         <div className="dhr-actions">
           <button

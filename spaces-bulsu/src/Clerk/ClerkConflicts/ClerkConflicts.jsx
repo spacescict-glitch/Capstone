@@ -1,6 +1,3 @@
-// ═══════════════════════════════════════════════════════════════════
-// FILE: src/Clerk/ClerkConflicts/ClerkConflicts.jsx
-// ═══════════════════════════════════════════════════════════════════
 import "./clerk-conflicts.css";
 import ConflictCard from "../../Components/ConflictCard/ConflictCard";
 import { useEffect, useState, useMemo } from "react";
@@ -8,6 +5,7 @@ import { useNavigate } from "react-router-dom";
 import { collection, getDocs, onSnapshot } from "firebase/firestore";
 import { db } from "../../firebase";
 import Toast from "../../Popup/Toast/Toast";
+import ExportModal from "../../Components/ExportModal/ExportModal";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import universityLogo from "../../assets/BSU-Logo.png";
@@ -21,11 +19,10 @@ const SCHOOL_HEADER = {
   systemName: "SpaceS CICT",
 };
 
-// ─── Sort options ──────────────────────────────────────────────────
 const SORT_OPTIONS = [
-  { key: "newest",    label: "Newest First" },
-  { key: "oldest",    label: "Oldest First" },
-  { key: "date_asc",  label: "Schedule Date ↑" },
+  { key: "newest", label: "Newest First" },
+  { key: "oldest", label: "Oldest First" },
+  { key: "date_asc", label: "Schedule Date ↑" },
   { key: "date_desc", label: "Schedule Date ↓" },
 ];
 
@@ -54,11 +51,23 @@ const formatDate = (dateStr) => {
   const d = new Date(dateStr);
   if (Number.isNaN(d.getTime())) return dateStr;
   return d.toLocaleDateString("en-US", {
-    month: "long", day: "numeric", year: "numeric",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
   });
 };
 
-const PENDING_STATUSES = ["pending_admin", "pending_faculty", "needs_reassign", "pending"];
+const getTodayISO = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
+const PENDING_STATUSES = [
+  "pending_admin",
+  "pending_faculty",
+  "needs_reassign",
+  "pending",
+];
 
 function ClerkConflicts() {
   const navigate = useNavigate();
@@ -68,27 +77,39 @@ function ClerkConflicts() {
   const [pendingList, setPendingList] = useState([]);
   const [activeTab, setActiveTab] = useState("all");
   const [loading, setLoading] = useState(true);
-  const [exportMenuOpen, setExportMenuOpen] = useState(false);
 
-  // ── Search + Sort + Pagination state ────────────────────────
   const [searchTerm, setSearchTerm] = useState("");
   const [sortOrder, setSortOrder] = useState("newest");
   const [currentPage, setCurrentPage] = useState(1);
 
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
   const [chooser, setChooser] = useState(null);
 
-  const [toast, setToast] = useState({ show: false, type: "success", title: "", message: "" });
+  const [toast, setToast] = useState({
+    show: false,
+    type: "success",
+    title: "",
+    message: "",
+  });
   const showToast = (type, title, message) => {
     setToast({ show: true, type, title, message });
-    if (type !== "loading") setTimeout(() => setToast((p) => ({ ...p, show: false })), 4000);
+    if (type !== "loading")
+      setTimeout(() => setToast((p) => ({ ...p, show: false })), 4000);
   };
 
-  const cvtMin = (t) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
-  const overlap = (aS, aE, bS, bE) => cvtMin(aS) < cvtMin(bE) && cvtMin(aE) > cvtMin(bS);
+  const cvtMin = (t) => {
+    const [h, m] = t.split(":").map(Number);
+    return h * 60 + m;
+  };
+  const overlap = (aS, aE, bS, bE) =>
+    cvtMin(aS) < cvtMin(bE) && cvtMin(aE) > cvtMin(bS);
   const getOverlapTime = (sS, sE, eS, eE) => {
     const st = Math.max(cvtMin(sS), cvtMin(eS));
     const en = Math.min(cvtMin(sE), cvtMin(eE));
-    const toT = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+    const toT = (m) =>
+      `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
     return { start: toT(st), end: toT(en) };
   };
 
@@ -100,17 +121,16 @@ function ClerkConflicts() {
 
       const pending = reassignSnap.docs
         .map((d) => ({ id: d.id, ...d.data() }))
-        .filter((r) => PENDING_STATUSES.includes(String(r.status || "").toLowerCase()));
+        .filter((r) =>
+          PENDING_STATUSES.includes(String(r.status || "").toLowerCase()),
+        );
 
-      // Pending keys — EXCLUDES needs_reassign (para maging active ulit ang Reassign button)
       const pendingKeys = new Set(
         pending
           .filter((r) => r.status !== "needs_reassign")
-          .map((r) => `${r.scheduleId}_${r.eventId}`)
+          .map((r) => `${r.scheduleId}_${r.eventId}`),
       );
 
-      // ── NEW: latest needs_reassign per conflict key ──
-      // Para ipakita sa ConflictCard na "Returned by Admin" ito
       const returnedMap = new Map();
       pending
         .filter((r) => r.status === "needs_reassign")
@@ -128,28 +148,38 @@ function ClerkConflicts() {
           }
         });
 
-      const activeFound = [], unresolvedFound = [], resolvedFound = [];
+      const activeFound = [],
+        unresolvedFound = [],
+        resolvedFound = [];
       const now = new Date();
 
       for (const roomDoc of rooms.docs) {
         const room = roomDoc.data();
-        const scheduleSnap = await getDocs(collection(db, "rooms", roomDoc.id, "schedules"));
+        const scheduleSnap = await getDocs(
+          collection(db, "rooms", roomDoc.id, "schedules"),
+        );
         const allSchedules = scheduleSnap.docs
           .map((d) => ({ id: d.id, ...d.data() }))
-          .filter((s) => !s.initialized && s.faculty && s.day && s.startTime && s.endTime);
+          .filter(
+            (s) =>
+              !s.initialized && s.faculty && s.day && s.startTime && s.endTime,
+          );
 
         if (allSchedules.length === 0) continue;
 
         const latest = allSchedules.reduce((best, cur) => {
-          const by = schoolYearStart(best.schoolYear), bs = semesterRank(best.semester);
-          const cy = schoolYearStart(cur.schoolYear), cs = semesterRank(cur.semester);
+          const by = schoolYearStart(best.schoolYear),
+            bs = semesterRank(best.semester);
+          const cy = schoolYearStart(cur.schoolYear),
+            cs = semesterRank(cur.semester);
           if (cy > by || (cy === by && cs > bs)) return cur;
           return best;
         }, allSchedules[0]);
 
         const schedules = allSchedules.filter(
-          (s) => (s.schoolYear || "") === (latest.schoolYear || "") &&
-                 (s.semester || "") === (latest.semester || "")
+          (s) =>
+            (s.schoolYear || "") === (latest.schoolYear || "") &&
+            (s.semester || "") === (latest.semester || ""),
         );
 
         const roomEvents = events.docs
@@ -157,26 +187,50 @@ function ClerkConflicts() {
           .filter((e) => e.roomId === roomDoc.id && e.status !== "Cancelled");
 
         roomEvents.forEach((event) => {
-          const eventDay = ["SUN","MON","TUE","WED","THU","FRI","SAT"][new Date(event.date).getDay()];
+          const eventDay = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"][
+            new Date(event.date).getDay()
+          ];
           schedules.forEach((schedule) => {
             if (schedule.day !== eventDay) return;
-            if (!overlap(schedule.startTime, schedule.endTime, event.startTime, event.endTime)) return;
+            if (
+              !overlap(
+                schedule.startTime,
+                schedule.endTime,
+                event.startTime,
+                event.endTime,
+              )
+            )
+              return;
 
             const eventEnd = new Date(`${event.date}T${event.endTime}`);
-            const ov = getOverlapTime(schedule.startTime, schedule.endTime, event.startTime, event.endTime);
+            const ov = getOverlapTime(
+              schedule.startTime,
+              schedule.endTime,
+              event.startTime,
+              event.endTime,
+            );
             const conflictKey = `${schedule.id}_${event.id}`;
 
             const conflict = {
-              roomId: roomDoc.id, roomName: room.roomName, floor: room.floor, room,
-              event, schedule,
+              roomId: roomDoc.id,
+              roomName: room.roomName,
+              floor: room.floor,
+              room,
+              event,
+              schedule,
               courseTitle: schedule.courseTitle || schedule.subject || "",
-              faculty: schedule.faculty || "", section: schedule.section || "",
-              day: schedule.day, date: event.date,
-              startTime: schedule.startTime, endTime: schedule.endTime,
-              activityTitle: event.title, activityReason: event.reason,
-              conflictStartTime: ov.start, conflictEndTime: ov.end,
+              faculty: schedule.faculty || "",
+              section: schedule.section || "",
+              day: schedule.day,
+              date: event.date,
+              startTime: schedule.startTime,
+              endTime: schedule.endTime,
+              activityTitle: event.title,
+              activityReason: event.reason,
+              conflictStartTime: ov.start,
+              conflictEndTime: ov.end,
               reassignPending: pendingKeys.has(conflictKey),
-              returnedInfo: returnedMap.get(conflictKey) || null,   // ← NEW
+              returnedInfo: returnedMap.get(conflictKey) || null,
               status: "",
               resolution: event.resolution || null,
               resolutionReason: event.resolutionReason || null,
@@ -224,12 +278,21 @@ function ClerkConflicts() {
 
     loadConflicts();
 
-    const unsubEvents = onSnapshot(collection(db, "events"), scheduleRefresh,
-      (err) => console.error("events listener:", err));
-    const unsubRooms = onSnapshot(collection(db, "rooms"), scheduleRefresh,
-      (err) => console.error("rooms listener:", err));
-    const unsubReassign = onSnapshot(collection(db, "roomReassignments"), scheduleRefresh,
-      (err) => console.error("roomReassignments listener:", err));
+    const unsubEvents = onSnapshot(
+      collection(db, "events"),
+      scheduleRefresh,
+      (err) => console.error("events listener:", err),
+    );
+    const unsubRooms = onSnapshot(
+      collection(db, "rooms"),
+      scheduleRefresh,
+      (err) => console.error("rooms listener:", err),
+    );
+    const unsubReassign = onSnapshot(
+      collection(db, "roomReassignments"),
+      scheduleRefresh,
+      (err) => console.error("roomReassignments listener:", err),
+    );
 
     return () => {
       isMounted = false;
@@ -241,16 +304,17 @@ function ClerkConflicts() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Reset page when tab/search/sort changes
   useEffect(() => {
     setCurrentPage(1);
   }, [activeTab, searchTerm, sortOrder]);
 
-  const handleResolved = () => {
-    showToast("success", "Updated", "Conflict list will refresh automatically.");
-  };
+  const handleResolved = () =>
+    showToast(
+      "success",
+      "Updated",
+      "Conflict list will refresh automatically.",
+    );
 
-  // ── Base list per active tab ─────────────────────────────────
   const baseList = useMemo(() => {
     if (activeTab === "all") return conflicts;
     if (activeTab === "pending") return pendingList;
@@ -258,7 +322,6 @@ function ClerkConflicts() {
     return resolved;
   }, [activeTab, conflicts, pendingList, unresolved, resolved]);
 
-  // ── Apply search + sort (WHOLE filtered list) ────────────────
   const filteredConflicts = useMemo(() => {
     let list = [...baseList];
 
@@ -296,35 +359,43 @@ function ClerkConflicts() {
 
     if (sortOrder === "newest") {
       list.sort((a, b) => {
-        const ac = getCreatedAtMs(a);
-        const bc = getCreatedAtMs(b);
+        const ac = getCreatedAtMs(a),
+          bc = getCreatedAtMs(b);
         if (ac || bc) return bc - ac;
         return String(b.date || "").localeCompare(String(a.date || ""));
       });
     } else if (sortOrder === "oldest") {
       list.sort((a, b) => {
-        const ac = getCreatedAtMs(a);
-        const bc = getCreatedAtMs(b);
+        const ac = getCreatedAtMs(a),
+          bc = getCreatedAtMs(b);
         if (ac || bc) return ac - bc;
         return String(a.date || "").localeCompare(String(b.date || ""));
       });
     } else if (sortOrder === "date_asc") {
-      list.sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+      list.sort((a, b) =>
+        String(a.date || "").localeCompare(String(b.date || "")),
+      );
     } else if (sortOrder === "date_desc") {
-      list.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+      list.sort((a, b) =>
+        String(b.date || "").localeCompare(String(a.date || "")),
+      );
     }
 
     return list;
   }, [baseList, searchTerm, sortOrder]);
 
-  // ── Pagination math ─────────────────────────────────────────
-  const totalPages = Math.max(1, Math.ceil(filteredConflicts.length / ITEMS_PER_PAGE));
+  const totalPages = Math.max(
+    1,
+    Math.ceil(filteredConflicts.length / ITEMS_PER_PAGE),
+  );
   const safePage = Math.min(currentPage, totalPages);
   const startIdx = (safePage - 1) * ITEMS_PER_PAGE;
-  const paginatedConflicts = filteredConflicts.slice(startIdx, startIdx + ITEMS_PER_PAGE);
+  const paginatedConflicts = filteredConflicts.slice(
+    startIdx,
+    startIdx + ITEMS_PER_PAGE,
+  );
 
   const hasActiveFilters = searchTerm.trim() || sortOrder !== "newest";
-
   const clearAllFilters = () => {
     setSearchTerm("");
     setSortOrder("newest");
@@ -338,104 +409,213 @@ function ClerkConflicts() {
   }[activeTab];
   const emptyHint = {
     all: "New booking collisions will show up here.",
-    pending: "Reassignments awaiting Admin decision or faculty response will appear here.",
+    pending:
+      "Reassignments awaiting Admin decision or faculty response will appear here.",
     unresolved: "Nothing has slipped through unaddressed.",
     resolved: "Resolved conflicts are logged here for your records.",
   }[activeTab];
 
-  // ── export helpers ──
-  const csvEscape = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-  const handleExportCSV = () => {
-    if (!filteredConflicts.length) { showToast("error", "Nothing to Export", "No rows in this view."); return; }
-    const headers = ["Room","Floor","Course","Faculty","Section","Day","Date","Class Time","Activity","Overlap Time","Status"];
-    const rows = filteredConflicts.map((c) => [
-      c.roomName || c.oldRoomName || c.newRoomName || "",
-      c.floor || "",
-      c.courseTitle || c.subject || "",
-      c.faculty || c.facultyName || "",
-      c.section || "", c.day || "", c.date || "",
-      `${c.startTime || ""}-${c.endTime || ""}`,
-      c.activityTitle || c.eventTitle || c.title || "",
-      `${c.conflictStartTime || ""}-${c.conflictEndTime || ""}`,
-      c.status || "",
-    ]);
-    const csv = [headers, ...rows].map((r) => r.map(csvEscape).join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `conflict-report-${activeTab}-${new Date().toISOString().slice(0,10)}.csv`;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    showToast("success", "Exported", `${filteredConflicts.length} row(s) as CSV.`);
-    setExportMenuOpen(false);
-  };
+  const handleExportReport = async ({ range, from, to, format }) => {
+    let rows = filteredConflicts;
 
-  const handleExportPDF = () => {
-    if (!filteredConflicts.length) { showToast("error", "Nothing to Export", "No rows in this view."); return; }
-    showToast("loading", "Generating PDF...", "Please wait.");
-    try {
-      const pdf = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
-      const pageW = pdf.internal.pageSize.getWidth();
-      const mX = 40, logo = 50, cx = pageW / 2;
-
-      if (SCHOOL_HEADER.universityLogoUrl) pdf.addImage(SCHOOL_HEADER.universityLogoUrl, "PNG", mX, 22, logo, logo);
-      if (SCHOOL_HEADER.collegeLogoUrl) pdf.addImage(SCHOOL_HEADER.collegeLogoUrl, "PNG", pageW - mX - logo, 22, logo, logo);
-
-      pdf.setFont("helvetica", "bold"); pdf.setFontSize(14); pdf.setTextColor(20,27,45);
-      pdf.text(SCHOOL_HEADER.universityName, cx, 36, { align: "center" });
-      pdf.setFont("helvetica", "normal"); pdf.setFontSize(10); pdf.setTextColor(107,114,128);
-      pdf.text(SCHOOL_HEADER.collegeName, cx, 50, { align: "center" });
-      pdf.text(SCHOOL_HEADER.systemName, cx, 62, { align: "center" });
-
-      pdf.setDrawColor(245,124,0); pdf.setLineWidth(1.5);
-      pdf.line(mX, 82, pageW - mX, 82);
-
-      pdf.setFont("helvetica", "bold"); pdf.setFontSize(16); pdf.setTextColor(245,124,0);
-      pdf.text(`Conflict Report — ${activeTab.toUpperCase()}`, mX, 104);
-      pdf.setFont("helvetica", "normal"); pdf.setFontSize(10); pdf.setTextColor(107,114,128);
-      pdf.text(`Total Rows: ${filteredConflicts.length}`, mX, 120);
-      pdf.text(`Generated: ${new Date().toLocaleString()}`, pageW - mX, 120, { align: "right" });
-
-      const rows = filteredConflicts.map((c) => [
-        c.roomName || c.oldRoomName || c.newRoomName || "",
-        c.floor || "",
-        c.courseTitle || c.subject || "-",
-        c.faculty || c.facultyName || "",
-        c.section || "-", c.day || "", c.date || "",
-        `${c.startTime || ""} - ${c.endTime || ""}`,
-        c.activityTitle || c.eventTitle || c.title || "",
-        `${c.conflictStartTime || ""} - ${c.conflictEndTime || ""}`,
-        (c.status || "").toUpperCase(),
-      ]);
-
-      autoTable(pdf, {
-        startY: 134,
-        head: [["Room","Floor","Course","Faculty","Section","Day","Date","Class Time","Activity","Overlap","Status"]],
-        body: rows,
-        theme: "grid",
-        styles: { font: "helvetica", fontSize: 7, cellPadding: 4, valign: "middle" },
-        headStyles: { fillColor: [245,124,0], textColor: [255,255,255], fontStyle: "bold", fontSize: 7 },
-        bodyStyles: { textColor: [26,26,26] },
-        alternateRowStyles: { fillColor: [253,246,240] },
-        margin: { left: mX, right: mX },
+    if (range === "range" && from && to) {
+      const start = new Date(from + "T00:00:00");
+      const end = new Date(to + "T23:59:59");
+      rows = filteredConflicts.filter((c) => {
+        if (!c.date) return false;
+        const d = new Date(c.date + "T00:00:00");
+        return d >= start && d <= end;
       });
+    }
 
-      const total = pdf.internal.getNumberOfPages();
-      for (let i = 1; i <= total; i++) {
-        pdf.setPage(i);
-        pdf.setFont("helvetica", "normal"); pdf.setFontSize(8); pdf.setTextColor(150,150,150);
-        pdf.text(`Page ${i} of ${total}`, pageW - mX, pdf.internal.pageSize.getHeight() - 20, { align: "right" });
-        pdf.text(`${SCHOOL_HEADER.systemName} — Confidential`, mX, pdf.internal.pageSize.getHeight() - 20);
+    if (rows.length === 0) {
+      showToast(
+        "error",
+        "Nothing to Export",
+        "No rows in this view for the selected range.",
+      );
+      return;
+    }
+
+    setExporting(true);
+    showToast("loading", "Generating...", "Please wait.");
+
+    try {
+      if (format === "csv") {
+        const headers = [
+          "Room",
+          "Floor",
+          "Course",
+          "Faculty",
+          "Section",
+          "Day",
+          "Date",
+          "Class Time",
+          "Activity",
+          "Overlap Time",
+          "Status",
+        ];
+        const body = rows.map((c) => [
+          c.roomName || c.oldRoomName || c.newRoomName || "",
+          c.floor || "",
+          c.courseTitle || c.subject || "",
+          c.faculty || c.facultyName || "",
+          c.section || "",
+          c.day || "",
+          c.date || "",
+          `${c.startTime || ""}-${c.endTime || ""}`,
+          c.activityTitle || c.eventTitle || c.title || "",
+          `${c.conflictStartTime || ""}-${c.conflictEndTime || ""}`,
+          c.status || "",
+        ]);
+        const csv = [headers, ...body]
+          .map((r) =>
+            r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","),
+          )
+          .join("\n");
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `SpaceSCICT_ConflictReport(${getTodayISO()}).csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } else {
+        const pdf = new jsPDF({
+          orientation: "landscape",
+          unit: "pt",
+          format: "a4",
+        });
+        const pageW = pdf.internal.pageSize.getWidth();
+        const mX = 40,
+          logo = 50,
+          cx = pageW / 2;
+
+        if (SCHOOL_HEADER.universityLogoUrl)
+          pdf.addImage(
+            SCHOOL_HEADER.universityLogoUrl,
+            "PNG",
+            mX,
+            22,
+            logo,
+            logo,
+          );
+        if (SCHOOL_HEADER.collegeLogoUrl)
+          pdf.addImage(
+            SCHOOL_HEADER.collegeLogoUrl,
+            "PNG",
+            pageW - mX - logo,
+            22,
+            logo,
+            logo,
+          );
+
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(14);
+        pdf.setTextColor(20, 27, 45);
+        pdf.text(SCHOOL_HEADER.universityName, cx, 36, { align: "center" });
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(10);
+        pdf.setTextColor(107, 114, 128);
+        pdf.text(SCHOOL_HEADER.collegeName, cx, 50, { align: "center" });
+        pdf.text(SCHOOL_HEADER.systemName, cx, 62, { align: "center" });
+
+        pdf.setDrawColor(245, 124, 0);
+        pdf.setLineWidth(1.5);
+        pdf.line(mX, 82, pageW - mX, 82);
+
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(16);
+        pdf.setTextColor(245, 124, 0);
+        pdf.text(`Conflict Report — ${activeTab.toUpperCase()}`, mX, 104);
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(10);
+        pdf.setTextColor(107, 114, 128);
+        pdf.text(`Total Rows: ${rows.length}`, mX, 120);
+        pdf.text(`Generated: ${new Date().toLocaleString()}`, pageW - mX, 120, {
+          align: "right",
+        });
+
+        autoTable(pdf, {
+          startY: 134,
+          head: [
+            [
+              "Room",
+              "Floor",
+              "Course",
+              "Faculty",
+              "Section",
+              "Day",
+              "Date",
+              "Class Time",
+              "Activity",
+              "Overlap",
+              "Status",
+            ],
+          ],
+          body: rows.map((c) => [
+            c.roomName || c.oldRoomName || c.newRoomName || "",
+            c.floor || "",
+            c.courseTitle || c.subject || "-",
+            c.faculty || c.facultyName || "",
+            c.section || "-",
+            c.day || "",
+            c.date || "",
+            `${c.startTime || ""} - ${c.endTime || ""}`,
+            c.activityTitle || c.eventTitle || c.title || "",
+            `${c.conflictStartTime || ""} - ${c.conflictEndTime || ""}`,
+            (c.status || "").toUpperCase(),
+          ]),
+          theme: "grid",
+          styles: {
+            font: "helvetica",
+            fontSize: 7,
+            cellPadding: 4,
+            valign: "middle",
+          },
+          headStyles: {
+            fillColor: [245, 124, 0],
+            textColor: [255, 255, 255],
+            fontStyle: "bold",
+            fontSize: 7,
+          },
+          bodyStyles: { textColor: [26, 26, 26] },
+          alternateRowStyles: { fillColor: [253, 246, 240] },
+          margin: { left: mX, right: mX },
+        });
+
+        const total = pdf.internal.getNumberOfPages();
+        for (let i = 1; i <= total; i++) {
+          pdf.setPage(i);
+          pdf.setFont("helvetica", "normal");
+          pdf.setFontSize(8);
+          pdf.setTextColor(150, 150, 150);
+          pdf.text(
+            `Page ${i} of ${total}`,
+            pageW - mX,
+            pdf.internal.pageSize.getHeight() - 20,
+            { align: "right" },
+          );
+          pdf.text(
+            `${SCHOOL_HEADER.systemName} — Confidential`,
+            mX,
+            pdf.internal.pageSize.getHeight() - 20,
+          );
+        }
+
+        pdf.save(`SpaceSCICT_ConflictReport(${getTodayISO()}).pdf`);
       }
-
-      pdf.save(`conflict-report-${activeTab}-${new Date().toISOString().slice(0,10)}.pdf`);
-      showToast("success", "PDF Exported", `${filteredConflicts.length} row(s) downloaded.`);
+      showToast("success", "Exported", `${rows.length} row(s) exported.`);
+      setShowExportModal(false);
     } catch (err) {
       console.error(err);
-      showToast("error", "Export Failed", "Could not generate PDF.");
+      showToast(
+        "error",
+        "Export Failed",
+        "Could not export. Please try again.",
+      );
     } finally {
-      setExportMenuOpen(false);
+      setExporting(false);
     }
   };
 
@@ -450,7 +630,6 @@ function ClerkConflicts() {
     });
   };
 
-  // ── Pagination page numbers (with ellipsis) ──────────────────
   const renderPageNumbers = () => {
     const pages = [];
     if (totalPages <= 5) {
@@ -459,9 +638,12 @@ function ClerkConflicts() {
     }
     pages.push(1);
     if (safePage > 3) pages.push("...");
-    for (let i = Math.max(2, safePage - 1); i <= Math.min(totalPages - 1, safePage + 1); i++) {
+    for (
+      let i = Math.max(2, safePage - 1);
+      i <= Math.min(totalPages - 1, safePage + 1);
+      i++
+    )
       pages.push(i);
-    }
     if (safePage < totalPages - 2) pages.push("...");
     pages.push(totalPages);
     return pages;
@@ -473,57 +655,68 @@ function ClerkConflicts() {
         <div className="dept-page-header">
           <div>
             <h1>Conflict Monitoring</h1>
-            <p>Review booking collisions and submit room reassignments for Admin approval.</p>
+            <p>
+              Review booking collisions and submit room reassignments for Admin
+              approval.
+            </p>
           </div>
 
-          <div className="dept-export-dropdown">
-            <button className="dept-conflict-export-btn"
-              onClick={() => setExportMenuOpen(!exportMenuOpen)} disabled={loading}>
-              <i className="fa-solid fa-download"></i> Export Report
-              <i className={`fa-solid fa-chevron-down ${exportMenuOpen ? "rotate" : ""}`}></i>
-            </button>
-            {exportMenuOpen && (
-              <div className="dept-export-menu">
-                <button onClick={handleExportPDF}><i className="fa-regular fa-file-pdf"></i> Export as PDF</button>
-                <button onClick={handleExportCSV}><i className="fa-solid fa-file-csv"></i> Export as CSV</button>
-              </div>
-            )}
-          </div>
+          <button
+            className="dept-conflict-export-btn"
+            onClick={() => setShowExportModal(true)}
+            disabled={loading || filteredConflicts.length === 0}
+          >
+            <i className="fa-solid fa-download"></i> Export Report
+          </button>
         </div>
 
-        {/* STATS */}
         <div className="dept-stats-row">
           <div className="dept-stat-card">
-            <div className="dept-stat-icon"><i className="fa-solid fa-triangle-exclamation"></i></div>
+            <div className="dept-stat-icon">
+              <i className="fa-solid fa-triangle-exclamation"></i>
+            </div>
             <div>
-              <div className="dept-stat-value">{loading ? "—" : conflicts.length}</div>
+              <div className="dept-stat-value">
+                {loading ? "—" : conflicts.length}
+              </div>
               <div className="dept-stat-label">Active Conflicts</div>
             </div>
           </div>
           <div className="dept-stat-card">
-            <div className="dept-stat-icon is-warning"><i className="fa-solid fa-hourglass-half"></i></div>
+            <div className="dept-stat-icon is-warning">
+              <i className="fa-solid fa-hourglass-half"></i>
+            </div>
             <div>
-              <div className="dept-stat-value">{loading ? "—" : pendingList.length}</div>
+              <div className="dept-stat-value">
+                {loading ? "—" : pendingList.length}
+              </div>
               <div className="dept-stat-label">Pending Reassignments</div>
             </div>
           </div>
           <div className="dept-stat-card">
-            <div className="dept-stat-icon is-danger"><i className="fa-solid fa-clock-rotate-left"></i></div>
+            <div className="dept-stat-icon is-danger">
+              <i className="fa-solid fa-clock-rotate-left"></i>
+            </div>
             <div>
-              <div className="dept-stat-value">{loading ? "—" : unresolved.length}</div>
+              <div className="dept-stat-value">
+                {loading ? "—" : unresolved.length}
+              </div>
               <div className="dept-stat-label">Unresolved</div>
             </div>
           </div>
           <div className="dept-stat-card">
-            <div className="dept-stat-icon is-success"><i className="fa-solid fa-circle-check"></i></div>
+            <div className="dept-stat-icon is-success">
+              <i className="fa-solid fa-circle-check"></i>
+            </div>
             <div>
-              <div className="dept-stat-value">{loading ? "—" : resolved.length}</div>
+              <div className="dept-stat-value">
+                {loading ? "—" : resolved.length}
+              </div>
               <div className="dept-stat-label">Resolved</div>
             </div>
           </div>
         </div>
 
-        {/* ── TOOLBAR: Search + Sort ─────────────────────────── */}
         <div className="dept-conflict-toolbar">
           <div className="dept-conflict-search">
             <i className="fa-solid fa-magnifying-glass"></i>
@@ -552,36 +745,58 @@ function ClerkConflicts() {
               onChange={(e) => setSortOrder(e.target.value)}
             >
               {SORT_OPTIONS.map((s) => (
-                <option key={s.key} value={s.key}>{s.label}</option>
+                <option key={s.key} value={s.key}>
+                  {s.label}
+                </option>
               ))}
             </select>
             <i className="fa-solid fa-angle-down dept-conflict-sort-chev"></i>
           </div>
 
           {hasActiveFilters && (
-            <button className="dept-conflict-clear-all" onClick={clearAllFilters}>
+            <button
+              className="dept-conflict-clear-all"
+              onClick={clearAllFilters}
+            >
               <i className="fa-solid fa-filter-circle-xmark"></i> Clear
             </button>
           )}
 
           <span className="dept-conflict-result-count">
-            {filteredConflicts.length} result{filteredConflicts.length === 1 ? "" : "s"}
+            {filteredConflicts.length} result
+            {filteredConflicts.length === 1 ? "" : "s"}
           </span>
         </div>
 
         <div className="conflict-main-box">
           <div className="conflict-nav">
-            <div className={`conflict-nav-item ${activeTab === "all" ? "active" : ""}`} onClick={() => setActiveTab("all")}>
-              Active Conflicts <span className="conflict-nav-count">{conflicts.length}</span>
+            <div
+              className={`conflict-nav-item ${activeTab === "all" ? "active" : ""}`}
+              onClick={() => setActiveTab("all")}
+            >
+              Active Conflicts{" "}
+              <span className="conflict-nav-count">{conflicts.length}</span>
             </div>
-            <div className={`conflict-nav-item ${activeTab === "pending" ? "active" : ""}`} onClick={() => setActiveTab("pending")}>
-              Pending Reassignment <span className="conflict-nav-count">{pendingList.length}</span>
+            <div
+              className={`conflict-nav-item ${activeTab === "pending" ? "active" : ""}`}
+              onClick={() => setActiveTab("pending")}
+            >
+              Pending Reassignment{" "}
+              <span className="conflict-nav-count">{pendingList.length}</span>
             </div>
-            <div className={`conflict-nav-item ${activeTab === "unresolved" ? "active" : ""}`} onClick={() => setActiveTab("unresolved")}>
-              Unresolved <span className="conflict-nav-count">{unresolved.length}</span>
+            <div
+              className={`conflict-nav-item ${activeTab === "unresolved" ? "active" : ""}`}
+              onClick={() => setActiveTab("unresolved")}
+            >
+              Unresolved{" "}
+              <span className="conflict-nav-count">{unresolved.length}</span>
             </div>
-            <div className={`conflict-nav-item ${activeTab === "resolved" ? "active" : ""}`} onClick={() => setActiveTab("resolved")}>
-              Resolved <span className="conflict-nav-count">{resolved.length}</span>
+            <div
+              className={`conflict-nav-item ${activeTab === "resolved" ? "active" : ""}`}
+              onClick={() => setActiveTab("resolved")}
+            >
+              Resolved{" "}
+              <span className="conflict-nav-count">{resolved.length}</span>
             </div>
           </div>
 
@@ -615,7 +830,9 @@ function ClerkConflicts() {
                 <ConflictCard
                   key={`${conflict.schedule?.id}-${conflict.event?.id}-${i}`}
                   conflict={conflict}
-                  showReassign={activeTab === "all" && !conflict.reassignPending}
+                  showReassign={
+                    activeTab === "all" && !conflict.reassignPending
+                  }
                   onResolved={handleResolved}
                   onReassignClick={() => openChooser(conflict)}
                   returnedInfo={conflict.returnedInfo}
@@ -624,12 +841,12 @@ function ClerkConflicts() {
             )}
           </div>
 
-          {/* ── Pagination ───────────────────────────────────────── */}
           {!loading && totalPages > 1 && (
             <div className="conflict-pagination">
               <span className="conflict-pagination-info">
-                Showing {startIdx + 1}–{Math.min(startIdx + ITEMS_PER_PAGE, filteredConflicts.length)} of{" "}
-                {filteredConflicts.length}
+                Showing {startIdx + 1}–
+                {Math.min(startIdx + ITEMS_PER_PAGE, filteredConflicts.length)}{" "}
+                of {filteredConflicts.length}
               </span>
               <div className="conflict-pagination-controls">
                 <button
@@ -640,10 +857,14 @@ function ClerkConflicts() {
                 >
                   <i className="fa-solid fa-chevron-left"></i>
                 </button>
-
                 {renderPageNumbers().map((p, idx) =>
                   p === "..." ? (
-                    <span key={`ellipsis-${idx}`} className="conflict-pagination-ellipsis">…</span>
+                    <span
+                      key={`ellipsis-${idx}`}
+                      className="conflict-pagination-ellipsis"
+                    >
+                      …
+                    </span>
                   ) : (
                     <button
                       key={p}
@@ -652,13 +873,14 @@ function ClerkConflicts() {
                     >
                       {p}
                     </button>
-                  )
+                  ),
                 )}
-
                 <button
                   className="conflict-pagination-nav"
                   disabled={safePage === totalPages}
-                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  onClick={() =>
+                    setCurrentPage((p) => Math.min(totalPages, p + 1))
+                  }
                   aria-label="Next page"
                 >
                   <i className="fa-solid fa-chevron-right"></i>
@@ -672,57 +894,109 @@ function ClerkConflicts() {
       {chooser && (
         <div className="rc-modal-overlay" onClick={() => setChooser(null)}>
           <div className="rc-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="rc-modal-icon"><i className="fa-solid fa-right-left"></i></div>
+            <div className="rc-modal-icon">
+              <i className="fa-solid fa-right-left"></i>
+            </div>
             <h3 className="rc-modal-title">What do you want to reassign?</h3>
             <p className="rc-modal-text">
-              Choose which entry to move to a different room. Only one can be reassigned at a time.
+              Choose which entry to move to a different room. Only one can be
+              reassigned at a time.
             </p>
             <div className="rc-modal-options">
-              <button className="rc-option" onClick={() => handleReassignChoice("class")}>
-                <div className="rc-option-icon is-class"><i className="fa-solid fa-chalkboard-user"></i></div>
+              <button
+                className="rc-option"
+                onClick={() => handleReassignChoice("class")}
+              >
+                <div className="rc-option-icon is-class">
+                  <i className="fa-solid fa-chalkboard-user"></i>
+                </div>
                 <div className="rc-option-body">
                   <span className="rc-option-title">Original Class</span>
                   <span className="rc-option-desc">
-                    {chooser.courseTitle || "Untitled"} · {chooser.section || "—"}
+                    {chooser.courseTitle || "Untitled"} ·{" "}
+                    {chooser.section || "—"}
                   </span>
                 </div>
               </button>
-              <button className="rc-option" onClick={() => handleReassignChoice("event")}>
-                <div className="rc-option-icon is-event"><i className="fa-solid fa-calendar-plus"></i></div>
+              <button
+                className="rc-option"
+                onClick={() => handleReassignChoice("event")}
+              >
+                <div className="rc-option-icon is-event">
+                  <i className="fa-solid fa-calendar-plus"></i>
+                </div>
                 <div className="rc-option-body">
                   <span className="rc-option-title">Activity / Event</span>
-                  <span className="rc-option-desc">{chooser.activityTitle || "Untitled activity"}</span>
+                  <span className="rc-option-desc">
+                    {chooser.activityTitle || "Untitled activity"}
+                  </span>
                 </div>
               </button>
             </div>
             <div className="rc-modal-actions">
-              <button className="rc-modal-cancel" onClick={() => setChooser(null)}>Cancel</button>
+              <button
+                className="rc-modal-cancel"
+                onClick={() => setChooser(null)}
+              >
+                Cancel
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      <Toast show={toast.show} type={toast.type} title={toast.title} message={toast.message}
-        onClose={() => setToast((p) => ({ ...p, show: false }))} />
+      <ExportModal
+        isOpen={showExportModal}
+        onClose={() => setShowExportModal(false)}
+        title="Export Conflict Report"
+        filenamePrefix="SpaceSCICT_ConflictReport"
+        exporting={exporting}
+        onExport={handleExportReport}
+      />
+
+      <Toast
+        show={toast.show}
+        type={toast.type}
+        title={toast.title}
+        message={toast.message}
+        onClose={() => setToast((p) => ({ ...p, show: false }))}
+      />
     </>
   );
 }
 
-// ─── Pending reassign card ─────────────────────────────────────────
 function PendingReassignCard({ item }) {
   const statusMap = {
-    pending_admin:   { label: "Needs Review", cls: "status-pending", note: "Waiting for the Admin's review.", icon: "fa-hourglass-half" },
-    pending:         { label: "Needs Review", cls: "status-pending", note: "Waiting for the Admin's review.", icon: "fa-hourglass-half" },
-    pending_faculty: { label: "With Faculty", cls: "status-info", note: "Waiting for the faculty's response.", icon: "fa-user-clock" },
-    needs_reassign:  { label: "Returned to You", cls: "status-danger", note: "Please select a different room and resubmit.", icon: "fa-rotate-left" },
+    pending_admin: {
+      label: "Needs Review",
+      cls: "status-pending",
+      note: "Waiting for the Admin's review.",
+      icon: "fa-hourglass-half",
+    },
+    pending: {
+      label: "Needs Review",
+      cls: "status-pending",
+      note: "Waiting for the Admin's review.",
+      icon: "fa-hourglass-half",
+    },
+    pending_faculty: {
+      label: "With Faculty",
+      cls: "status-info",
+      note: "Waiting for the faculty's response.",
+      icon: "fa-user-clock",
+    },
+    needs_reassign: {
+      label: "Returned to You",
+      cls: "status-danger",
+      note: "Please select a different room and resubmit.",
+      icon: "fa-rotate-left",
+    },
   };
   const meta = statusMap[item.status] || statusMap.pending_admin;
-
   const isEvent = item.reassignType === "event";
   const displayTitle = isEvent
-    ? (item.eventTitle || "Untitled Activity")
-    : (item.courseTitle || item.subject || "Untitled Class");
-
+    ? item.eventTitle || "Untitled Activity"
+    : item.courseTitle || item.subject || "Untitled Class";
   const dayLabel = item.day
     ? item.day
     : item.date
@@ -736,7 +1010,9 @@ function PendingReassignCard({ item }) {
       <div className="conflict-card-top">
         <div className="conflict-card-header">
           <div className="conflict-card-icon">
-            <i className={`fa-solid ${isEvent ? "fa-calendar-plus" : "fa-right-left"}`}></i>
+            <i
+              className={`fa-solid ${isEvent ? "fa-calendar-plus" : "fa-right-left"}`}
+            ></i>
           </div>
           <div className="conflict-card-info">
             <span className="conflict-card-title">{displayTitle}</span>
@@ -746,7 +1022,9 @@ function PendingReassignCard({ item }) {
             </span>
           </div>
         </div>
-        <span className={`conflict-status-badge ${meta.cls}`}>{meta.label}</span>
+        <span className={`conflict-status-badge ${meta.cls}`}>
+          {meta.label}
+        </span>
       </div>
 
       <div className="conflict-detail-grid">

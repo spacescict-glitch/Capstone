@@ -4,30 +4,52 @@ import "./room-issues.css";
 import IssueReportCard from "../../Components/IssueReportCard/IssueReportCard";
 import SubmitIssueModal from "../../Components/SubmitIssueModal/SubmitIssueModal";
 import Toast from "../../Popup/Toast/Toast";
+import ExportModal from "../../Components/ExportModal/ExportModal";
 import { auth, db } from "../../firebase";
 import {
-  collection, query, orderBy, onSnapshot, doc, updateDoc, addDoc,
-  serverTimestamp, getDoc, getDocs,
+  collection,
+  query,
+  orderBy,
+  onSnapshot,
+  doc,
+  updateDoc,
+  addDoc,
+  serverTimestamp,
+  getDoc,
+  getDocs,
 } from "firebase/firestore";
 import { logActivity } from "../../utils/logActivity";
 import { isActiveOnDate } from "../../utils/scheduleActivePeriod";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+import universityLogo from "../../assets/BSU-Logo.png";
+import collegeLogo from "../../assets/CICT-Logo.png";
+
+const SCHOOL_HEADER = {
+  universityLogoUrl: universityLogo,
+  collegeLogoUrl: collegeLogo,
+  universityName: "Bulacan State University",
+  collegeName: "College of Information and Communications Technology",
+  systemName: "SpaceS CICT",
+};
 
 const ITEMS_PER_PAGE = 6;
 
 const SORT_OPTIONS = [
-  { key: "newest",   label: "Newest First" },
-  { key: "oldest",   label: "Oldest First" },
+  { key: "newest", label: "Newest First" },
+  { key: "oldest", label: "Oldest First" },
   { key: "severity", label: "Severity (High → Low)" },
 ];
 
 const SEVERITY_ORDER = { Urgent: 4, High: 3, Medium: 2, Low: 1 };
 
-// ═══════════════════════════════════════════════════════════════
-// Helper: determine if a room is under maintenance
-// ═══════════════════════════════════════════════════════════════
 const isRoomMaintenance = (room) => {
-  const status = String(room.roomStatus || "").toLowerCase().trim();
-  const legacyStatus = String(room.status || "").toLowerCase().trim();
+  const status = String(room.roomStatus || "")
+    .toLowerCase()
+    .trim();
+  const legacyStatus = String(room.status || "")
+    .toLowerCase()
+    .trim();
   return (
     room.maintenance === true ||
     status === "maintenance" ||
@@ -35,9 +57,6 @@ const isRoomMaintenance = (room) => {
   );
 };
 
-// ═══════════════════════════════════════════════════════════════
-// Helpers for matching faculty names to user accounts
-// ═══════════════════════════════════════════════════════════════
 const normalizeName = (name) =>
   name
     ?.toLowerCase()
@@ -63,15 +82,9 @@ const fmt12 = (t) => {
 
 const getTodayISO = () => {
   const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${dd}`;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 
-// ══════════════════════════════════════════════════════════════
-// Inline Confirm Modal
-// ══════════════════════════════════════════════════════════════
 function ConfirmModal({
   title,
   message,
@@ -106,10 +119,8 @@ function ConfirmModal({
         <div className="ri-cm-icon">
           <i className={icon} />
         </div>
-
         <h3 className="ri-cm-title">{title}</h3>
         {message && <p className="ri-cm-message">{message}</p>}
-
         <div className="ri-cm-actions">
           <button
             type="button"
@@ -119,7 +130,6 @@ function ConfirmModal({
           >
             {cancelText}
           </button>
-
           <button
             type="button"
             className="ri-cm-btn ri-cm-btn-confirm"
@@ -142,29 +152,35 @@ function ConfirmModal({
 }
 
 export default function ClerkRoomIssues() {
-  const [issues, setIssues]             = useState([]);
-  const [loading, setLoading]           = useState(true);
-  const [showModal, setShowModal]       = useState(false);
-  const [activeTab, setActiveTab]       = useState("all");
-  const [search, setSearch]             = useState("");
-  const [roomFilter, setRoomFilter]     = useState("");
-  const [sortOrder, setSortOrder]       = useState("newest");
-  const [currentPage, setCurrentPage]   = useState(1);
-  const [busy, setBusy]                 = useState(false);
+  const [issues, setIssues] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showModal, setShowModal] = useState(false);
+  const [activeTab, setActiveTab] = useState("all");
+  const [search, setSearch] = useState("");
+  const [roomFilter, setRoomFilter] = useState("");
+  const [sortOrder, setSortOrder] = useState("newest");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [busy, setBusy] = useState(false);
   const [maintenanceRooms, setMaintenanceRooms] = useState({});
   const [confirmAction, setConfirmAction] = useState(null);
 
-  // ── Room picker popover state ──────────────────────────────
   const [showRoomPicker, setShowRoomPicker] = useState(false);
   const [roomSearch, setRoomSearch] = useState("");
 
-  const [toast, setToast] = useState({ show: false, type: "success", title: "", message: "" });
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  const [toast, setToast] = useState({
+    show: false,
+    type: "success",
+    title: "",
+    message: "",
+  });
   const showToast = (type, title, message) => {
     setToast({ show: true, type, title, message });
     setTimeout(() => setToast((p) => ({ ...p, show: false })), 3500);
   };
 
-  // ── Load issues ────────────────────────────────────────────
   useEffect(() => {
     const q = query(collection(db, "roomIssues"), orderBy("createdAt", "desc"));
     const unsub = onSnapshot(
@@ -176,12 +192,11 @@ export default function ClerkRoomIssues() {
       (err) => {
         console.error(err);
         setLoading(false);
-      }
+      },
     );
     return () => unsub();
   }, []);
 
-  // ── REAL-TIME: Load which rooms are under maintenance ─────
   useEffect(() => {
     const unsub = onSnapshot(
       collection(db, "rooms"),
@@ -189,13 +204,11 @@ export default function ClerkRoomIssues() {
         const map = {};
         snap.docs.forEach((d) => {
           const r = d.data();
-          if (isRoomMaintenance(r)) {
-            map[d.id] = true;
-          }
+          if (isRoomMaintenance(r)) map[d.id] = true;
         });
         setMaintenanceRooms(map);
       },
-      (err) => console.warn("Rooms listener failed:", err)
+      (err) => console.warn("Rooms listener failed:", err),
     );
     return () => unsub();
   }, []);
@@ -212,7 +225,6 @@ export default function ClerkRoomIssues() {
     };
   };
 
-  // ── Notify the original reporter ───────────────────────────
   const notifyReporter = async (issue, title, message) => {
     if (!issue?.reporterId) return;
     try {
@@ -234,42 +246,33 @@ export default function ClerkRoomIssues() {
     }
   };
 
-  // ══════════════════════════════════════════════════════════════
-  // Notify ALL affected faculty (those with schedules in the room)
-  // ══════════════════════════════════════════════════════════════
   const notifyAffectedFaculty = async ({
     roomId,
     roomName,
-    eventType, // "maintenance" | "restored"
+    eventType,
     reason = "",
     actorName = "",
   }) => {
     if (!roomId) return { notifiedCount: 0, totalSchedules: 0 };
-
     try {
       const scheduleSnap = await getDocs(
-        collection(db, "rooms", roomId, "schedules")
+        collection(db, "rooms", roomId, "schedules"),
       );
       const today = getTodayISO();
-
       const activeSchedules = scheduleSnap.docs
         .map((d) => ({ id: d.id, ...d.data() }))
         .filter((s) => {
           if (s.initialized) return false;
           try {
             if (!isActiveOnDate(s, today)) return false;
-          } catch (e) {
-            // ignore
-          }
+          } catch (e) {}
           return true;
         });
 
-      if (activeSchedules.length === 0) {
+      if (activeSchedules.length === 0)
         return { notifiedCount: 0, totalSchedules: 0 };
-      }
 
       const usersSnap = await getDocs(collection(db, "users"));
-
       const facultySchedulesMap = new Map();
 
       for (const schedule of activeSchedules) {
@@ -277,7 +280,7 @@ export default function ClerkRoomIssues() {
         const facultyDoc = usersSnap.docs.find((docUser) => {
           const user = docUser.data();
           const fullname = normalizeName(
-            `${user.firstName || ""} ${user.lastName || ""}`
+            `${user.firstName || ""} ${user.lastName || ""}`,
           );
           return fullname === flipName(schedule.faculty);
         });
@@ -305,21 +308,12 @@ export default function ClerkRoomIssues() {
           .join("\n");
 
         const isMaintenance = eventType === "maintenance";
-
         const title = isMaintenance
           ? "Room Under Maintenance"
           : "Room Available Again";
-
         const message = isMaintenance
-          ? `Room ${roomName} is now under maintenance. ` +
-            `The following ${schedules.length === 1 ? "class" : "classes"} may be affected:\n` +
-            `${scheduleLines}\n\n` +
-            (reason ? `Reason: ${reason}\n\n` : "") +
-            `Please coordinate with the Clerk for a possible room reassignment.`
-          : `Good news! Room ${roomName} is now active and available again. ` +
-            `Your following ${schedules.length === 1 ? "class is" : "classes are"} back on track:\n` +
-            `${scheduleLines}\n\n` +
-            `You may resume your classes in this room as originally scheduled.`;
+          ? `Room ${roomName} is now under maintenance. The following ${schedules.length === 1 ? "class" : "classes"} may be affected:\n${scheduleLines}\n\n${reason ? `Reason: ${reason}\n\n` : ""}Please coordinate with the Clerk for a possible room reassignment.`
+          : `Good news! Room ${roomName} is now active and available again. Your following ${schedules.length === 1 ? "class is" : "classes are"} back on track:\n${scheduleLines}\n\nYou may resume your classes in this room as originally scheduled.`;
 
         await addDoc(collection(db, "notifications"), {
           userId: facultyId,
@@ -335,10 +329,7 @@ export default function ClerkRoomIssues() {
                 maintenanceSetBy: actorName,
                 maintenanceStartDate: today,
               }
-            : {
-                restoredBy: actorName,
-                restoredDate: today,
-              }),
+            : { restoredBy: actorName, restoredDate: today }),
           schedulesAffected: schedules.map((s) => ({
             scheduleId: s.id,
             subject: s.subject || s.courseTitle || "",
@@ -366,9 +357,6 @@ export default function ClerkRoomIssues() {
     }
   };
 
-  // ══════════════════════════════════════════════════════════
-  // ACTION: Mark Under Maintenance
-  // ══════════════════════════════════════════════════════════
   const markUnderMaintenance = (issue) => {
     setConfirmAction({
       title: "Mark Room Under Maintenance?",
@@ -382,7 +370,6 @@ export default function ClerkRoomIssues() {
         try {
           const u = await getCurrentUser();
           const today = getTodayISO();
-
           await updateDoc(doc(db, "rooms", issue.roomId), {
             status: "Under Maintenance",
             roomStatus: "maintenance",
@@ -394,39 +381,37 @@ export default function ClerkRoomIssues() {
             maintenanceSetAt: serverTimestamp(),
             maintenanceStartDate: today,
           });
-
           await updateDoc(doc(db, "roomIssues", issue.id), {
             status: "In Progress",
             inProgressBy: u.name,
             inProgressAt: serverTimestamp(),
           });
-
           await logActivity({
-            user: u.name, role: u.role,
+            user: u.name,
+            role: u.role,
             action: "Marked room under maintenance",
             actionType: "edit",
             target: `${issue.roomName} • ${issue.category || ""}`,
             status: "Success",
           });
-
           await notifyReporter(
             issue,
             "Room Under Maintenance",
-            `Your reported issue in ${issue.roomName} is now being addressed. The room has been flagged as Under Maintenance.`
+            `Your reported issue in ${issue.roomName} is now being addressed. The room has been flagged as Under Maintenance.`,
           );
-
-          const { notifiedCount, totalSchedules } = await notifyAffectedFaculty({
-            roomId: issue.roomId,
-            roomName: issue.roomName,
-            eventType: "maintenance",
-            reason: issue.description || "",
-            actorName: u.name,
-          });
-
+          const { notifiedCount, totalSchedules } = await notifyAffectedFaculty(
+            {
+              roomId: issue.roomId,
+              roomName: issue.roomName,
+              eventType: "maintenance",
+              reason: issue.description || "",
+              actorName: u.name,
+            },
+          );
           showToast(
             "success",
             "Room Flagged",
-            `${issue.roomName} is now Under Maintenance. ${notifiedCount} faculty notified (${totalSchedules} schedule${totalSchedules === 1 ? "" : "s"} affected).`
+            `${issue.roomName} is now Under Maintenance. ${notifiedCount} faculty notified (${totalSchedules} schedule${totalSchedules === 1 ? "" : "s"} affected).`,
           );
         } catch (err) {
           console.error(err);
@@ -439,13 +424,8 @@ export default function ClerkRoomIssues() {
     });
   };
 
-  // ══════════════════════════════════════════════════════════
-  // ACTION: Mark as Resolved
-  // Now also restores the room to Available and notifies faculty.
-  // ══════════════════════════════════════════════════════════
   const markResolved = (issue) => {
     const wasUnderMaintenance = !!maintenanceRooms[issue.roomId];
-
     setConfirmAction({
       title: "Mark as Resolved?",
       message: wasUnderMaintenance
@@ -459,16 +439,11 @@ export default function ClerkRoomIssues() {
         setBusy(true);
         try {
           const u = await getCurrentUser();
-          const today = getTodayISO();
-
-          // 1. Resolve the issue
           await updateDoc(doc(db, "roomIssues", issue.id), {
             status: "Resolved",
             resolvedBy: u.name,
             resolvedAt: serverTimestamp(),
           });
-
-          // 2. Restore room to Available (same as old restoreRoom)
           await updateDoc(doc(db, "rooms", issue.roomId), {
             status: "Available",
             roomStatus: "active",
@@ -480,35 +455,31 @@ export default function ClerkRoomIssues() {
             maintenanceStartDate: null,
             maintenanceEndDate: null,
           });
-
-          // 3. Log activity
           await logActivity({
-            user: u.name, role: u.role,
+            user: u.name,
+            role: u.role,
             action: "Marked issue as Resolved",
             actionType: "edit",
             target: `${issue.roomName} • ${issue.category || ""}`,
             status: "Success",
           });
-
-          // 4. Notify the original reporter
           await notifyReporter(
             issue,
             "Issue Resolved",
-            `Your reported issue in ${issue.roomName} (${issue.category}) has been resolved. The room is now available. Thank you for reporting!`
+            `Your reported issue in ${issue.roomName} (${issue.category}) has been resolved. The room is now available. Thank you for reporting!`,
           );
-
-          // 5. Notify all affected faculty that the room is back
-          const { notifiedCount, totalSchedules } = await notifyAffectedFaculty({
-            roomId: issue.roomId,
-            roomName: issue.roomName,
-            eventType: "restored",
-            actorName: u.name,
-          });
-
+          const { notifiedCount, totalSchedules } = await notifyAffectedFaculty(
+            {
+              roomId: issue.roomId,
+              roomName: issue.roomName,
+              eventType: "restored",
+              actorName: u.name,
+            },
+          );
           showToast(
             "success",
             "Issue Resolved",
-            `${issue.roomName} is now Available. ${notifiedCount} faculty notified (${totalSchedules} schedule${totalSchedules === 1 ? "" : "s"} back on track).`
+            `${issue.roomName} is now Available. ${notifiedCount} faculty notified (${totalSchedules} schedule${totalSchedules === 1 ? "" : "s"} back on track).`,
           );
         } catch (err) {
           console.error(err);
@@ -521,21 +492,21 @@ export default function ClerkRoomIssues() {
     });
   };
 
-  // ── Counts ─────────────────────────────────────────────────
   const counts = useMemo(
     () => ({
       all: issues.length,
       pending: issues.filter((i) => i.status === "Pending").length,
       progress: issues.filter(
-        (i) => i.status === "Acknowledged" || i.status === "In Progress"
+        (i) => i.status === "Acknowledged" || i.status === "In Progress",
       ).length,
       resolved: issues.filter((i) => i.status === "Resolved").length,
-      urgent: issues.filter((i) => i.severity === "Urgent" && i.status !== "Resolved").length,
+      urgent: issues.filter(
+        (i) => i.severity === "Urgent" && i.status !== "Resolved",
+      ).length,
     }),
-    [issues]
+    [issues],
   );
 
-  // ── Unique rooms ───────────────────────────────────────────
   const roomOptions = useMemo(() => {
     const set = new Set();
     issues.forEach((i) => {
@@ -550,19 +521,21 @@ export default function ClerkRoomIssues() {
     return roomOptions.filter((r) => r.toLowerCase().includes(q));
   }, [roomOptions, roomSearch]);
 
-  // ── Filter + sort ──────────────────────────────────────────
   const filtered = useMemo(() => {
     let list = [...issues];
-
-    if (activeTab === "pending") list = list.filter((i) => i.status === "Pending");
+    if (activeTab === "pending")
+      list = list.filter((i) => i.status === "Pending");
     if (activeTab === "progress")
-      list = list.filter((i) => i.status === "In Progress" || i.status === "Acknowledged");
-    if (activeTab === "resolved") list = list.filter((i) => i.status === "Resolved");
+      list = list.filter(
+        (i) => i.status === "In Progress" || i.status === "Acknowledged",
+      );
+    if (activeTab === "resolved")
+      list = list.filter((i) => i.status === "Resolved");
     if (activeTab === "urgent")
-      list = list.filter((i) => i.severity === "Urgent" && i.status !== "Resolved");
-
+      list = list.filter(
+        (i) => i.severity === "Urgent" && i.status !== "Resolved",
+      );
     if (roomFilter) list = list.filter((i) => i.roomName === roomFilter);
-
     if (search.trim()) {
       const s = search.toLowerCase();
       list = list.filter(
@@ -570,20 +543,22 @@ export default function ClerkRoomIssues() {
           (i.roomName || "").toLowerCase().includes(s) ||
           (i.reporterName || "").toLowerCase().includes(s) ||
           (i.category || "").toLowerCase().includes(s) ||
-          (i.description || "").toLowerCase().includes(s)
+          (i.description || "").toLowerCase().includes(s),
       );
     }
-
-    if (sortOrder === "newest") {
-      list.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
-    } else if (sortOrder === "oldest") {
-      list.sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
-    } else if (sortOrder === "severity") {
+    if (sortOrder === "newest")
       list.sort(
-        (a, b) => (SEVERITY_ORDER[b.severity] || 0) - (SEVERITY_ORDER[a.severity] || 0)
+        (a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0),
       );
-    }
-
+    else if (sortOrder === "oldest")
+      list.sort(
+        (a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0),
+      );
+    else if (sortOrder === "severity")
+      list.sort(
+        (a, b) =>
+          (SEVERITY_ORDER[b.severity] || 0) - (SEVERITY_ORDER[a.severity] || 0),
+      );
     return list;
   }, [issues, activeTab, roomFilter, search, sortOrder]);
 
@@ -603,6 +578,183 @@ export default function ClerkRoomIssues() {
     setSortOrder("newest");
   };
 
+  const handleExportReport = async ({ range, from, to, format }) => {
+    let rows = filtered;
+    if (range === "range" && from && to) {
+      const start = new Date(from + "T00:00:00");
+      const end = new Date(to + "T23:59:59");
+      rows = filtered.filter((i) => {
+        const d = i.createdAt?.toDate?.();
+        if (!d) return false;
+        return d >= start && d <= end;
+      });
+    }
+
+    if (rows.length === 0) {
+      showToast(
+        "error",
+        "Nothing to Export",
+        "No issues in the selected range.",
+      );
+      return;
+    }
+
+    setExporting(true);
+    showToast("loading", "Generating...", "Please wait.");
+    try {
+      if (format === "csv") {
+        const headers = [
+          "Room",
+          "Reporter",
+          "Category",
+          "Severity",
+          "Status",
+          "Description",
+          "Date",
+        ];
+        const body = rows.map((i) => [
+          i.roomName || "",
+          i.reporterName || "",
+          i.category || "",
+          i.severity || "",
+          i.status || "",
+          (i.description || "").replace(/\n/g, " "),
+          i.createdAt?.toDate?.().toLocaleString?.() || "",
+        ]);
+        const csv = [headers, ...body]
+          .map((r) =>
+            r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","),
+          )
+          .join("\n");
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `SpaceSCICT_RoomIssues(${getTodayISO()}).csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } else {
+        const pdf = new jsPDF({
+          orientation: "landscape",
+          unit: "pt",
+          format: "a4",
+        });
+        const pageW = pdf.internal.pageSize.getWidth();
+        const mX = 40,
+          logo = 50,
+          cx = pageW / 2;
+
+        if (SCHOOL_HEADER.universityLogoUrl)
+          pdf.addImage(
+            SCHOOL_HEADER.universityLogoUrl,
+            "PNG",
+            mX,
+            22,
+            logo,
+            logo,
+          );
+        if (SCHOOL_HEADER.collegeLogoUrl)
+          pdf.addImage(
+            SCHOOL_HEADER.collegeLogoUrl,
+            "PNG",
+            pageW - mX - logo,
+            22,
+            logo,
+            logo,
+          );
+
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(14);
+        pdf.setTextColor(20, 27, 45);
+        pdf.text(SCHOOL_HEADER.universityName, cx, 36, { align: "center" });
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(10);
+        pdf.setTextColor(107, 114, 128);
+        pdf.text(SCHOOL_HEADER.collegeName, cx, 50, { align: "center" });
+        pdf.text(SCHOOL_HEADER.systemName, cx, 62, { align: "center" });
+
+        pdf.setDrawColor(245, 124, 0);
+        pdf.setLineWidth(1.5);
+        pdf.line(mX, 82, pageW - mX, 82);
+
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(16);
+        pdf.setTextColor(245, 124, 0);
+        pdf.text("Room Issues Report", mX, 104);
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(10);
+        pdf.setTextColor(107, 114, 128);
+        pdf.text(`Total: ${rows.length}`, mX, 120);
+        pdf.text(`Generated: ${new Date().toLocaleString()}`, pageW - mX, 120, {
+          align: "right",
+        });
+
+        autoTable(pdf, {
+          startY: 134,
+          head: [
+            ["Room", "Reporter", "Category", "Severity", "Status", "Date"],
+          ],
+          body: rows.map((i) => [
+            i.roomName || "",
+            i.reporterName || "",
+            i.category || "",
+            i.severity || "",
+            i.status || "",
+            i.createdAt?.toDate?.().toLocaleString?.() || "",
+          ]),
+          theme: "grid",
+          styles: {
+            font: "helvetica",
+            fontSize: 8,
+            cellPadding: 5,
+            valign: "middle",
+          },
+          headStyles: {
+            fillColor: [245, 124, 0],
+            textColor: [255, 255, 255],
+            fontStyle: "bold",
+            fontSize: 8,
+          },
+          bodyStyles: { textColor: [26, 26, 26] },
+          alternateRowStyles: { fillColor: [253, 246, 240] },
+          margin: { left: mX, right: mX },
+        });
+
+        const total = pdf.internal.getNumberOfPages();
+        for (let i = 1; i <= total; i++) {
+          pdf.setPage(i);
+          pdf.setFont("helvetica", "normal");
+          pdf.setFontSize(8);
+          pdf.setTextColor(150, 150, 150);
+          pdf.text(
+            `Page ${i} of ${total}`,
+            pageW - mX,
+            pdf.internal.pageSize.getHeight() - 20,
+            { align: "right" },
+          );
+          pdf.text(
+            `${SCHOOL_HEADER.systemName} — Confidential`,
+            mX,
+            pdf.internal.pageSize.getHeight() - 20,
+          );
+        }
+
+        pdf.save(`SpaceSCICT_RoomIssues(${getTodayISO()}).pdf`);
+      }
+      showToast("success", "Exported", `${rows.length} issue(s) exported.`);
+      setShowExportModal(false);
+    } catch (err) {
+      console.error(err);
+      showToast(
+        "error",
+        "Export Failed",
+        "Could not export. Please try again.",
+      );
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <>
       <div className="ri-page">
@@ -610,16 +762,27 @@ export default function ClerkRoomIssues() {
           <div>
             <h1>Room Issues</h1>
             <p>
-              Manage room issues forwarded by the Admin. You can only act on issues
-              that have been acknowledged.
+              Manage room issues forwarded by the Admin. You can only act on
+              issues that have been acknowledged.
             </p>
           </div>
-          <button className="ri-report-btn" onClick={() => setShowModal(true)}>
-            <i className="fa-solid fa-plus" /> Report Issue
-          </button>
+          <div className="ri-header-actions">
+            <button
+              className="ri-export-btn"
+              onClick={() => setShowExportModal(true)}
+              disabled={loading}
+            >
+              <i className="fa-solid fa-download"></i> Export
+            </button>
+            <button
+              className="ri-report-btn"
+              onClick={() => setShowModal(true)}
+            >
+              <i className="fa-solid fa-plus" /> Report Issue
+            </button>
+          </div>
         </div>
 
-        {/* TABS */}
         <div className="ri-tabs ri-tabs-scroll">
           <button
             className={activeTab === "all" ? "active" : ""}
@@ -650,11 +813,12 @@ export default function ClerkRoomIssues() {
             onClick={() => setActiveTab("urgent")}
           >
             Urgent{" "}
-            <span className="ri-tab-count ri-tab-count-urgent">{counts.urgent}</span>
+            <span className="ri-tab-count ri-tab-count-urgent">
+              {counts.urgent}
+            </span>
           </button>
         </div>
 
-        {/* TOOLBAR */}
         <div className="ri-toolbar">
           <div className="ri-search">
             <i className="fa-solid fa-magnifying-glass" />
@@ -676,7 +840,6 @@ export default function ClerkRoomIssues() {
           </div>
 
           <div className="ri-filters">
-            {/* ── ROOM PICKER ── */}
             <div className="ri-roompicker">
               <button
                 type="button"
@@ -691,12 +854,9 @@ export default function ClerkRoomIssues() {
                   {roomFilter || "All Rooms"}
                 </span>
                 <i
-                  className={`fa-solid fa-chevron-down ri-room-caret ${
-                    showRoomPicker ? "open" : ""
-                  }`}
+                  className={`fa-solid fa-chevron-down ri-room-caret ${showRoomPicker ? "open" : ""}`}
                 ></i>
               </button>
-
               {showRoomPicker && (
                 <>
                   <div
@@ -705,7 +865,6 @@ export default function ClerkRoomIssues() {
                   ></div>
                   <div className="ri-room-popover">
                     <span className="ri-room-popover-arrow"></span>
-
                     <div className="ri-room-search-wrap">
                       <i className="fa-solid fa-magnifying-glass"></i>
                       <input
@@ -726,13 +885,10 @@ export default function ClerkRoomIssues() {
                         </button>
                       )}
                     </div>
-
                     <div className="ri-room-list">
                       <button
                         type="button"
-                        className={`ri-room-option ${
-                          !roomFilter ? "is-active" : ""
-                        }`}
+                        className={`ri-room-option ${!roomFilter ? "is-active" : ""}`}
                         onClick={() => {
                           setRoomFilter("");
                           setShowRoomPicker(false);
@@ -747,7 +903,6 @@ export default function ClerkRoomIssues() {
                           <i className="fa-solid fa-circle-check ri-room-option-check"></i>
                         )}
                       </button>
-
                       {filteredRoomOptions.length === 0 && roomSearch ? (
                         <div className="ri-room-empty">
                           <i className="fa-regular fa-face-frown"></i>
@@ -760,9 +915,7 @@ export default function ClerkRoomIssues() {
                             <button
                               type="button"
                               key={r}
-                              className={`ri-room-option ${
-                                isActive ? "is-active" : ""
-                              }`}
+                              className={`ri-room-option ${isActive ? "is-active" : ""}`}
                               onClick={() => {
                                 setRoomFilter(r);
                                 setShowRoomPicker(false);
@@ -786,7 +939,6 @@ export default function ClerkRoomIssues() {
               )}
             </div>
 
-            {/* ── SORT ── */}
             <div className="ri-select">
               <i className="fa-solid fa-arrow-down-short-wide" />
               <select
@@ -841,11 +993,11 @@ export default function ClerkRoomIssues() {
           </div>
         )}
 
-        {/* PAGINATION */}
         {!loading && totalPages > 1 && (
           <div className="ri-pagination">
             <span className="ri-page-info">
-              Showing {startIdx + 1}–{Math.min(startIdx + ITEMS_PER_PAGE, filtered.length)} of{" "}
+              Showing {startIdx + 1}–
+              {Math.min(startIdx + ITEMS_PER_PAGE, filtered.length)} of{" "}
               {filtered.length}
             </span>
             <div className="ri-page-controls">
@@ -867,7 +1019,9 @@ export default function ClerkRoomIssues() {
               ))}
               <button
                 disabled={safePage === totalPages}
-                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                onClick={() =>
+                  setCurrentPage((p) => Math.min(totalPages, p + 1))
+                }
                 aria-label="Next"
               >
                 <i className="fa-solid fa-chevron-right" />
@@ -896,6 +1050,15 @@ export default function ClerkRoomIssues() {
           onConfirm={confirmAction.onConfirm}
         />
       )}
+
+      <ExportModal
+        isOpen={showExportModal}
+        onClose={() => setShowExportModal(false)}
+        title="Export Room Issues"
+        filenamePrefix="SpaceSCICT_RoomIssues"
+        exporting={exporting}
+        onExport={handleExportReport}
+      />
 
       <Toast
         show={toast.show}

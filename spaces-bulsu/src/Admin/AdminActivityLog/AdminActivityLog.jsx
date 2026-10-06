@@ -6,6 +6,7 @@ import {
   onSnapshot,
   query,
   orderBy,
+  where,
 } from "firebase/firestore";
 import { db } from "../../firebase";
 import Toast from "../../Popup/Toast/Toast";
@@ -467,16 +468,29 @@ export default function AdminActivityLog() {
     return () => unsubscribe();
   }, []);
 
-  useEffect(() => {
-    const q = query(collection(db, "securityLogs"), orderBy("timestamp", "desc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
-      setSecurityLogs(data);
-      setBlockedCount(data.filter((s) => s.blocked).length);
-    });
-    return () => unsubscribe();
-  }, []);
+    // ─── Fetch securityLogs (para sa Security Logs tab) ───────────────
+    useEffect(() => {
+      const q = query(collection(db, "securityLogs"), orderBy("timestamp", "desc"));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const data = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+        setSecurityLogs(data);
+      });
+      return () => unsubscribe();
+    }, []);
 
+    useEffect(() => {
+      const q = query(
+        collection(db, "users"),
+        where("status", "==", "Blocked")
+      );
+      const unsubscribe = onSnapshot(
+        q,
+        (snapshot) => setBlockedCount(snapshot.size),
+        (err) => console.error("Blocked users listener:", err)
+      );
+      return () => unsubscribe();
+    }, []);
+    
   const normalizedSecurityLogs = useMemo(() => {
     return securityLogs.map((s) => ({
       id: `sec_${s.id}`,
