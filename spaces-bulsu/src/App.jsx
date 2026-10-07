@@ -96,7 +96,8 @@ function App() {
         {/* ═══════════════════════════════════════════════════════
             PUBLIC ROUTES — walang login required
             ═══════════════════════════════════════════════════════ */}
-        <Route path="/" element={<Login />} />
+        <Route path="/" element={<Home />} />
+        <Route path="/home" element={<Home />} />
         <Route path="/login" element={<Login />} />
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/room/:roomId" element={<PublicRoomSchedule />} />

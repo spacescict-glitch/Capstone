@@ -75,7 +75,7 @@ export default function Login() {
     {
       question: "How do I know if a room is available?",
       answer:
-        "You can view the real-time status of each classroom (Available, Occupied, or Under Maintenance) on the Rooms page. You can also scan the QR code posted on each room's door to immediately view its current and upcoming schedule, even without logging in.",
+        "You can view the system-record-based status of each classroom (Available, Occupied, or Under Maintenance) on the Rooms page. You can also scan the QR code posted on each room's door to immediately view its current and upcoming schedule, even without logging in.",
     },
     {
       question: "What should I do if I won't be using my assigned room?",
@@ -592,11 +592,10 @@ export default function Login() {
 
   return (
     <>
-      <LoginNav
-        activePage="login"
-        onAboutClick={() => setActiveModal("about")}
-        onContactClick={() => setActiveModal("support")}
-      />
+            <LoginNav
+              activePage="login"
+              onChangePage={(page) => navigate(page === 'home' ? '/' : `/${page}`)}
+            />
       <Toast
         show={toast.show}
         type={toast.type}
@@ -624,7 +623,7 @@ export default function Login() {
             <div className="hero-features">
               <div className="feature-item">
                 <i className="fa-regular fa-calendar" />
-                <span>Real-Time Scheduling</span>
+                <span>System-Record-Based Classroom Availability</span>
               </div>
 
               <div className="feature-item">
@@ -903,7 +902,7 @@ export default function Login() {
                     </li>
                     <li>
                       Lets Clerks handle walk-in and online reservations with
-                      real-time room status.
+                      system-record-based room status.
                     </li>
                     <li>
                       Provides QR codes on classroom doors so anyone can check a
@@ -1038,7 +1037,7 @@ export default function Login() {
 
                   <h4>Availability</h4>
                   <p>
-                    While the system is designed for reliable, real-time use,
+                    While the system is designed for reliable, immediate use,
                     scheduled maintenance or unforeseen issues may occasionally
                     affect availability. Users will be notified of major changes
                     or disruptions when possible.
