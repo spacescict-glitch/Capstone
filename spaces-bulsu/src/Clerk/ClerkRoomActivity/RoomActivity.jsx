@@ -9,20 +9,17 @@ import { auth, db } from "../../firebase";
 import { logActivity } from "../../utils/logActivity";
 import { isRoomUnderMaintenance } from "../../utils/Roommaintenance";
 import { findFacultyUser, findFacultyUserByName } from "../../utils/findFacultyUser";
+// ✅ NEW: used to exclude drafts / inactive terms from conflict detection
+import { isActiveOnDate } from "../../utils/scheduleActivePeriod";
 
 // ═══════════════════════════════════════════════════════════════════
 // Reassignment status helpers
-//
-// A reassignment is "in effect" only after the faculty ACCEPTS it.
-// The Admin flow sets: pending_admin → pending_faculty → accepted
-// (NOT "approved"). Legacy "approved" kept for backward-compat.
 // ═══════════════════════════════════════════════════════════════════
 const ACCEPTED_REASSIGN_STATUSES = new Set(["accepted", "approved"]);
 const isAcceptedReassign = (r) =>
   ACCEPTED_REASSIGN_STATUSES.has(String(r.status || "").toLowerCase());
 
-// Conflict kinds that HARD-BLOCK submission. Schedules & reassignments
-// stay as warnings (the Admin decides whether to move or cancel them).
+// Conflict kinds that HARD-BLOCK submission.
 const BLOCKING_CONFLICT_KINDS = new Set(["event", "reservation"]);
 
 // ─── Time helpers ────────────────────────────────────────────────
@@ -162,8 +159,6 @@ export default function RoomActivity() {
   const [showListModal, setShowListModal] = useState(false);
   const [showCustomTime, setShowCustomTime] = useState(false);
 
-  // NEW: true when the selected room/time has a hard-blocking booking
-  // (existing event or approved reservation).
   const [hasBlockingConflict, setHasBlockingConflict] = useState(false);
 
   const [showRoomPicker, setShowRoomPicker] = useState(false);
@@ -204,7 +199,6 @@ export default function RoomActivity() {
     (r) => (r.roomName || r.name) === form.room
   );
 
-  // Aggregate counts so the conflict card can render correctly.
   const blockingConflicts = conflicts.filter((c) =>
     BLOCKING_CONFLICT_KINDS.has(c.kind)
   );
@@ -221,13 +215,11 @@ export default function RoomActivity() {
   }, []);
 
   // ═════════════════════════════════════════════════════════════
-  // CONFLICT DETECTION — strictly scoped to the SELECTED ROOM only.
-  // Sources:
-  //   1) Class schedules (this room, this weekday)
-  //   2) Events (this room, this date)
-  //   3) Approved reservations (walk-in + online)
-  //   4) ACCEPTED reassignments into this room
-  //   5) ACCEPTED reassignments away from this room (exclude)
+  // CONFLICT DETECTION
+  //
+  // ⚠️ Only schedules that are ACTIVE on the target date are
+  //    considered. Draft / not-yet-activated / already-ended terms
+  //    are skipped so they never show up as conflicts.
   // ═════════════════════════════════════════════════════════════
   useEffect(() => {
     const checkConflict = async () => {
@@ -265,8 +257,6 @@ export default function RoomActivity() {
         const allReservations = resSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
         const allReleases = relSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
-        // ── Schedule IDs reassigned AWAY from this room on this date ──
-        // ✅ FIX: include "accepted" (not just "approved").
         const reassignedAwayIds = new Set(
           allReassignments
             .filter(
@@ -279,7 +269,6 @@ export default function RoomActivity() {
             .filter(Boolean)
         );
 
-        // ── Map of scheduleId → release info (for THIS date) ──
         const releaseMap = new Map();
         allReleases
           .filter(
@@ -291,18 +280,26 @@ export default function RoomActivity() {
             if (r.scheduleId) releaseMap.set(r.scheduleId, r);
           });
 
-        // ── Events happening IN THIS room on THIS date ──
         const roomEventsForDate = allEvents.filter(
           (e) =>
             (e.roomId === room.id || e.roomName === roomLabel) &&
             e.date === form.date
         );
 
-        // ── 1) Class schedules (this room only) ──
+        // ── 1) Class schedules (this room only, ACTIVE on target date) ──
         allSchedules
           .filter((s) => {
             if (s.cancelled || s.initialized) return false;
-            if (s.day !== day) return false;
+
+            // ✅ Only include schedules that are active on the target date.
+            //    This automatically skips drafts (no activeFrom set),
+            //    inactive terms, and terms that already ended before
+            //    form.date.
+            if (!isActiveOnDate(s, form.date)) return false;
+
+            // ✅ Normalize both sides — handles "MON" vs "Mon" vs "MON " etc.
+            const normalizeDay = (d) => String(d || "").trim().toUpperCase();
+            if (normalizeDay(s.day) !== normalizeDay(day)) return false;
             if (reassignedAwayIds.has(s.id)) return false;
 
             const sStart = parseTime(s.startTime);
@@ -372,8 +369,6 @@ export default function RoomActivity() {
           });
 
         // ── 3) Approved reservations for this room on this date ──
-        // Includes BOTH walk-in (auto-approved) and online reservations
-        // that the Clerk approved. Status can be "approved" or "Approved".
         allReservations
           .filter(
             (r) =>
@@ -401,9 +396,7 @@ export default function RoomActivity() {
             });
           });
 
-        // ── 4) ACCEPTED reassignments INTO this room on this date ──
-        // ✅ FIX: "accepted" is now included so accepted reassignments
-        //    surface as conflicts in the new room.
+        // ── 4) Accepted reassignments INTO this room on this date ──
         allReassignments
           .filter(
             (r) =>
@@ -431,7 +424,6 @@ export default function RoomActivity() {
         console.error("Conflict detection failed:", err);
       }
 
-      // Sort for a stable UI
       results.sort((a, b) => parseTime(a.startTime) - parseTime(b.startTime));
 
       setConflicts(results);
@@ -466,7 +458,6 @@ export default function RoomActivity() {
     if (parseTime(form.startTime) >= parseTime(form.endTime)) return "Invalid time range";
     if (maintenanceBlocked) return "This room is under maintenance during the selected date/time.";
 
-    // HARD BLOCK: existing event or approved reservation overlaps.
     if (hasBlockingConflict) {
       return "This room is already booked for the selected time (event or reservation). Please pick a different room or time.";
     }
@@ -690,10 +681,10 @@ export default function RoomActivity() {
               </div>
               <p className="ra-step-text">
                 The Admin sees your request together with any detected
-                conflicts. They can <strong>approve</strong> it outright,{" "}
-                <strong>deny</strong> it, or <strong>reassign</strong> the
-                conflicting classes before approving. You'll see the decision
-                on your "View All Requests" list.
+                conflicts. They can <strong>review</strong> the details and{" "}
+                <strong>edit</strong> them if needed before{" "}
+                <strong>approving</strong>. You'll see the final decision on
+                your "View All Requests" list.
               </p>
             </div>
           </div>

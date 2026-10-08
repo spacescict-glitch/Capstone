@@ -3,10 +3,10 @@ import "./conflict-card.css";
 
 // ─── Status metadata ──────────────────────────────────────────────
 const STATUS_META = {
-  active:     { label: "Active Conflict", className: "status-active",     icon: "fa-triangle-exclamation" },
-  unresolved: { label: "Unresolved",      className: "status-unresolved", icon: "fa-clock-rotate-left" },
-  resolved:   { label: "Resolved",        className: "status-resolved",   icon: "fa-circle-check" },
-  returned:   { label: "Returned by Admin", className: "status-returned", icon: "fa-rotate-left" },
+  active:     { label: "Active Conflict",     className: "status-active",     icon: "fa-triangle-exclamation" },
+  unresolved: { label: "Unresolved",          className: "status-unresolved", icon: "fa-clock-rotate-left" },
+  resolved:   { label: "Resolved",            className: "status-resolved",   icon: "fa-circle-check" },
+  returned:   { label: "Returned by Admin",   className: "status-returned",   icon: "fa-rotate-left" },
 };
 
 const toMinutes = (time) => {
@@ -39,7 +39,6 @@ function ConflictCard({
   onReassignClick,
   returnedInfo = null,
 }) {
-  // ─── Collapse state (default: collapsed) ─────────────────────
   const [expanded, setExpanded] = useState(false);
 
   const formatTime = (time) => {
@@ -50,12 +49,21 @@ function ConflictCard({
     });
   };
 
-  const isReturned = !!returnedInfo;
+  // ═══════════════════════════════════════════════════════════════
+  // ✅ FIX: Resolved status takes priority over Returned.
+  //
+  // Previously, if the Admin had ever returned this conflict
+  // ("needs_reassign"), the "Returned by Admin" badge would keep
+  // showing even AFTER the conflict was resolved (faculty accepted
+  // the reassignment, or admin cancelled the class).
+  // ═══════════════════════════════════════════════════════════════
+  const isResolved = conflict.status === "resolved";
+  const isReturned = !isResolved && !!returnedInfo;
 
-  const statusKey = isReturned
-    ? "returned"
-    : conflict.status === "resolved"
-      ? "resolved"
+  const statusKey = isResolved
+    ? "resolved"
+    : isReturned
+      ? "returned"
       : conflict.status === "unresolved"
         ? "unresolved"
         : "active";
@@ -64,16 +72,23 @@ function ConflictCard({
   const overlapDuration = formatDuration(conflict.conflictStartTime, conflict.conflictEndTime);
   const dateLabel = formatDate(conflict.date);
 
-  const isResolved = conflict.status === "resolved";
   const isApproved = conflict.resolution === "approved";
+  const isCancelledByAdmin = conflict.resolution === "cancelled_class";
 
   const toggleExpand = () => setExpanded((v) => !v);
 
+  // Label + style for the resolution chip
+  const resolutionLabel = isApproved
+    ? "✅ Accepted by Faculty"
+    : isCancelledByAdmin
+      ? "🚫 Cancelled by Admin"
+      : "❌ Denied";
+
+  const resolutionClass = isApproved ? "approved" : "denied";
+
   return (
     <div className={`conflict-card ${meta.className} ${expanded ? "is-expanded" : "is-collapsed"}`}>
-      {/* ═══════════════════════════════════════════════════════════
-          HEADER — always visible, clickable to toggle
-          ═══════════════════════════════════════════════════════════ */}
+      {/* ═══ HEADER ═══ */}
       <button
         type="button"
         className="conflict-card-header-btn"
@@ -108,9 +123,7 @@ function ConflictCard({
         </div>
       </button>
 
-      {/* ═══════════════════════════════════════════════════════════
-          COLLAPSED SUMMARY — minimal info visible always
-          ═══════════════════════════════════════════════════════════ */}
+      {/* ═══ COLLAPSED SUMMARY ═══ */}
       {!expanded && (
         <div className="conflict-card-summary">
           <div className="conflict-summary-pair">
@@ -146,6 +159,21 @@ function ConflictCard({
             )}
           </div>
 
+          {/* Show a resolved hint in the collapsed view too */}
+          {isResolved && (
+            <div
+              className="conflict-summary-flag"
+              style={{
+                background: isApproved ? "#ecfdf5" : "#fff7ed",
+                color: isApproved ? "#065f46" : "#c2410c",
+                borderColor: isApproved ? "#a7f3d0" : "#fed7aa",
+              }}
+            >
+              <i className={`fa-solid ${isApproved ? "fa-circle-check" : "fa-ban"}`}></i>
+              {resolutionLabel}
+            </div>
+          )}
+
           {isReturned && (
             <div className="conflict-summary-flag">
               <i className="fa-solid fa-rotate-left"></i>
@@ -156,12 +184,9 @@ function ConflictCard({
         </div>
       )}
 
-      {/* ═══════════════════════════════════════════════════════════
-          EXPANDED CONTENT — full details
-          ═══════════════════════════════════════════════════════════ */}
+      {/* ═══ EXPANDED CONTENT ═══ */}
       {expanded && (
         <div className="conflict-card-expanded">
-          {/* Detail grid */}
           <div className="conflict-detail-grid">
             <div className="conflict-detail-block">
               <div className="conflict-detail-label">
@@ -203,14 +228,13 @@ function ConflictCard({
             </div>
           </div>
 
-          {/* Overlap chip */}
           {overlapDuration && (
             <div className="conflict-overlap-chip">
               <i className="fa-solid fa-circle-exclamation"></i> Overlaps for {overlapDuration}
             </div>
           )}
 
-          {/* Admin returned note */}
+          {/* Returned note — only show if still returned (not resolved) */}
           {isReturned && (
             <div className="conflict-returned-note">
               <i className="fa-solid fa-rotate-left"></i>
@@ -228,11 +252,11 @@ function ConflictCard({
             </div>
           )}
 
-          {/* Resolution box */}
+          {/* ═══ RESOLUTION BOX ═══ */}
           {isResolved && conflict.resolutionReason && (
             <div className="conflict-resolution-box">
-              <span className={`resolution-badge ${isApproved ? "approved" : "denied"}`}>
-                {isApproved ? "✅ Accepted" : "❌ Denied"}
+              <span className={`resolution-badge ${resolutionClass}`}>
+                {resolutionLabel}
               </span>
               <div className="resolution-reason">
                 <span className="resolution-label">Reason:</span> {conflict.resolutionReason}
@@ -242,9 +266,7 @@ function ConflictCard({
         </div>
       )}
 
-      {/* ═══════════════════════════════════════════════════════════
-          FOOTER — always visible (action buttons)
-          ═══════════════════════════════════════════════════════════ */}
+      {/* ═══ FOOTER ═══ */}
       {conflict.status === "active" ? (
         conflict.reassignPending ? (
           <div className="reassign-pending-badge">
@@ -263,7 +285,13 @@ function ConflictCard({
         <div className={`conflict-footer-note ${meta.className}`}>
           <i className={`fa-solid ${meta.icon}`}></i>
           {conflict.status === "resolved"
-            ? "This conflict has been resolved."
+            ? `This conflict has been resolved${
+                conflict.resolution === "approved"
+                  ? " — faculty accepted the reassignment."
+                  : conflict.resolution === "cancelled_class"
+                    ? " — the class was cancelled by the Admin."
+                    : "."
+              }`
             : "This conflict was left unresolved."}
         </div>
       )}

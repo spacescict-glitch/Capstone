@@ -22,12 +22,38 @@ function getStatusLabel(status) {
 
 function getKindLabel(kind) {
   const map = {
-    schedule:    "Academic Class",
-    reservation: "Reservation",
-    event:       "Room Activity",
+    schedule:     "Academic Class",
+    reservation:  "Reservation",
+    event:        "Room Activity",
     reassignment: "Reassigned",
   };
   return map[kind] || "Class";
+}
+
+// ✅ Dynamic title per kind
+function getModalTitle(kind) {
+  switch (kind) {
+    case "reassignment":
+      return "Mark Reassigned Room Available";
+    case "reservation":
+      return "Mark Reserved Room Available";
+    case "schedule":
+    default:
+      return "Mark Room Available";
+  }
+}
+
+// ✅ Dynamic subtitle per kind
+function getModalSubtitle(kind) {
+  switch (kind) {
+    case "reassignment":
+      return "Confirm that you are marking this reassigned room as available.";
+    case "reservation":
+      return "Confirm that you are marking this reserved room as available.";
+    case "schedule":
+    default:
+      return "Confirm that you are marking this room as available.";
+  }
 }
 
 export default function ReleaseRoomModal({ target, onClose, onConfirm, submitting }) {
@@ -36,8 +62,12 @@ export default function ReleaseRoomModal({ target, onClose, onConfirm, submittin
 
   if (!target) return null;
 
-  const statusInfo = target.status ? getStatusLabel(target.status) : { label: "Scheduled", className: "scheduled" };
+  const statusInfo = target.status
+    ? getStatusLabel(target.status)
+    : { label: "Scheduled", className: "scheduled" };
   const kindLabel = getKindLabel(target.kind);
+  const modalTitle = getModalTitle(target.kind);
+  const modalSubtitle = getModalSubtitle(target.kind);
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -50,8 +80,8 @@ export default function ReleaseRoomModal({ target, onClose, onConfirm, submittin
       <div className="rr-panel" onClick={(e) => e.stopPropagation()}>
         <div className="rr-header">
           <div>
-            <h2>Mark Room Available</h2>
-            <p className="rr-header-sub">Confirm that you are marking this room as available.</p>
+            <h2>{modalTitle}</h2>
+            <p className="rr-header-sub">{modalSubtitle}</p>
           </div>
           <button className="rr-close" onClick={onClose} aria-label="Close">
             <i className="fa-solid fa-xmark"></i>
@@ -59,7 +89,6 @@ export default function ReleaseRoomModal({ target, onClose, onConfirm, submittin
         </div>
 
         <div className="rr-card">
-          {/* ─── Image ──────────────────────────────────────────────── */}
           <div className="rr-image-wrap">
             <img
               src={
@@ -77,7 +106,6 @@ export default function ReleaseRoomModal({ target, onClose, onConfirm, submittin
             </div>
           </div>
 
-          {/* ─── Detail rows ────────────────────────────────────────── */}
           <div className="rr-detail-row">
             <i className="fa-solid fa-tag"></i>
             <div>
@@ -143,7 +171,6 @@ export default function ReleaseRoomModal({ target, onClose, onConfirm, submittin
             </div>
           </div>
 
-          {/* ─── Original Room (only for reassignments) ────────────── */}
           {target.kind === "reassignment" && target.originalRoom && (
             <div className="rr-detail-row">
               <i className="fa-solid fa-arrows-rotate"></i>
@@ -154,7 +181,6 @@ export default function ReleaseRoomModal({ target, onClose, onConfirm, submittin
             </div>
           )}
 
-          {/* ─── Ongoing notice ─────────────────────────────────────── */}
           {target.status === "ONGOING" && (
             <div className="rr-ongoing-note">
               <i className="fa-solid fa-circle-info"></i>
@@ -166,7 +192,6 @@ export default function ReleaseRoomModal({ target, onClose, onConfirm, submittin
             </div>
           )}
 
-          {/* ─── Release form ────────────────────────────────────────── */}
           <div className="rr-form-group">
             <label htmlFor="reason">
               Reason <span>*</span>

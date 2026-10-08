@@ -5,7 +5,7 @@
 // - Respects room-schedule activation windows
 // - Online classes tied to the active term
 // - Mid-class release preserves elapsed time (effectiveEndTime)
-// - Responsive: horizontal scroll on mobile (grid stays 7-day)
+// - ✅ NEW: Reassignments & Reservations can also be released
 // ============================================================
 import { useEffect, useMemo, useState, useRef } from "react";
 import "./faculty-schedule.css";
@@ -50,6 +50,9 @@ const LEGEND = [
   { label: "Online", color: "#c38af8" },
 ];
 
+// ✅ Kinds na pwedeng i-release (hindi lang schedule)
+const RELEASABLE_KINDS = new Set(["schedule", "reassignment", "reservation"]);
+
 // ─── Helpers ──────────────────────────────────────────────────────
 const normalizeName = (name = "") =>
   name
@@ -59,7 +62,6 @@ const normalizeName = (name = "") =>
     .replace(/\s+/g, " ")
     .trim();
 
-// ✅ Accepts BOTH "approved" and "accepted" reassignment statuses.
 const isApprovedReassignment = (status) =>
   ["approved", "accepted"].includes(String(status || "").toLowerCase());
 
@@ -227,6 +229,15 @@ const notifyReleaseRoom = async ({
     console.error("Notification Error:", err);
     throw err;
   }
+};
+
+// ═════════════════════════════════════════════════════════════════
+// Compute a stable release-key for a given kind + item + date
+// ═════════════════════════════════════════════════════════════════
+const makeReleaseKey = (kind, id, date) => {
+  if (kind === "reassignment") return `reassign_${id}_${date}`;
+  if (kind === "reservation") return `resv_${id}_${date}`;
+  return `${id}_${date}`; // schedule
 };
 
 // ─── MAIN COMPONENT ─────────────────────────────────────────────
@@ -463,6 +474,8 @@ export default function WeeklyCalendar() {
         );
         unsubsRef.current.push(unsubReservations);
 
+        // ✅ Now keys releases by kind so schedules, reassignments,
+        //    and reservations each get their own release slot.
         const unsubReleases = onSnapshot(
           query(
             collection(db, "roomReleases"),
@@ -472,7 +485,19 @@ export default function WeeklyCalendar() {
             const map = new Map();
             snap.docs.forEach((d) => {
               const r = d.data();
-              map.set(`${r.scheduleId}_${r.date}`, r);
+
+              // Distinguish by releaseType when present
+              let key;
+              if (r.releaseType === "reassignment" && r.reassignmentId) {
+                key = `reassign_${r.reassignmentId}_${r.date}`;
+              } else if (r.releaseType === "reservation" && r.reservationId) {
+                key = `resv_${r.reservationId}_${r.date}`;
+              } else if (r.scheduleId) {
+                key = `${r.scheduleId}_${r.date}`;
+              } else {
+                return; // unknown release kind — skip
+              }
+              map.set(key, r);
             });
             setReleasedMap(map);
           },
@@ -489,7 +514,6 @@ export default function WeeklyCalendar() {
             where("facultyId", "==", user.uid)
           ),
           (snap) => {
-            // ✅ Now matches both "approved" AND "accepted"
             const myReassignments = snap.docs
               .map((d) => ({ id: d.id, ...d.data() }))
               .filter((r) => isApprovedReassignment(r.status));
@@ -572,6 +596,7 @@ export default function WeeklyCalendar() {
       reassignedEvents.map((r) => `${r.scheduleId}_${r.date}`)
     );
 
+    // ─── 1) Schedules ───
     const scheduleItems = [];
     scheduleEvents.forEach((s) => {
       const dayIdx = DAYS.indexOf(s.day) + 1;
@@ -584,7 +609,9 @@ export default function WeeklyCalendar() {
       if (!isActiveOnDate(s, occurrenceDateStr)) return;
       if (reassignedKeys.has(`${s.id}_${occurrenceDateStr}`)) return;
 
-      const releaseInfo = releasedMap.get(`${s.id}_${occurrenceDateStr}`);
+      const releaseInfo = releasedMap.get(
+        makeReleaseKey("schedule", s.id, occurrenceDateStr)
+      );
       if (releaseInfo && !releaseInfo.effectiveEndTime) return;
 
       const [startH, startM] = parseTimeParts(s.startTime);
@@ -601,6 +628,7 @@ export default function WeeklyCalendar() {
 
       scheduleItems.push({
         id: `sched-${s.id}-${occurrenceDateStr}`,
+        rawId: s.id,
         kind: "schedule",
         scheduleId: s.id,
         roomId: s.roomId,
@@ -628,6 +656,7 @@ export default function WeeklyCalendar() {
       });
     });
 
+    // ─── 2) Room activities (overrides) ───
     const activityItems = [];
     overrideEvents.forEach((e) => {
       if (!isWithinWeek(e.date, weekStart, weekEnd)) return;
@@ -649,10 +678,13 @@ export default function WeeklyCalendar() {
         }
       }
 
+      // ✅ Ipakita lang ang room activity kung may tumamang schedule
+      if (!conflictsWithSchedule) return;
+
       activityItems.push({
         id: `event-${e.id}`,
         kind: "event",
-        title: e.title || e.purpose || "Room Activity",
+        title: `⚠️ ${e.title || e.purpose || "Room Activity"} — Conflicts with your class`,
         location: `${e.roomName || "-"} | Room Activity`,
         roomName: e.roomName || "-",
         dayIdx,
@@ -684,6 +716,7 @@ export default function WeeklyCalendar() {
 
     for (const activity of activityItems) items.push(activity);
 
+    // ─── 3) Faculty online classes ───
     facultyOnlineEvents.forEach((s) => {
       if (activeTerm) {
         const sameTerm =
@@ -729,18 +762,43 @@ export default function WeeklyCalendar() {
       });
     });
 
+    // ─── 4) Reservations (✅ release-aware now) ───
     reservationEvents.forEach((r) => {
       if (!isWithinWeek(r.date, weekStart, weekEnd)) return;
       const dayIdx = mondayIndexFromDate(r.date);
       const [startH, startM] = parseTimeParts(r.startTime);
-      const [endH, endM] = parseTimeParts(r.endTime);
+      let [endH, endM] = parseTimeParts(r.endTime);
+
+      const releaseInfo = releasedMap.get(
+        makeReleaseKey("reservation", r.id, r.date)
+      );
+      // Fully released → hide entirely
+      if (releaseInfo && !releaseInfo.effectiveEndTime) return;
+
+      let isReleased = false;
+      let releasedAtTime = null;
+
+      if (releaseInfo?.effectiveEndTime) {
+        const [rH, rM] = parseTimeParts(releaseInfo.effectiveEndTime);
+        if (rH * 60 + rM <= startH * 60 + startM) return;
+        endH = rH;
+        endM = rM;
+        isReleased = true;
+        releasedAtTime = releaseInfo.effectiveEndTime;
+      } else if (releaseInfo) {
+        isReleased = true;
+      }
+
       items.push({
         id: `resv-${r.id}`,
+        rawId: r.id,
         kind: "reservation",
         title: r.customPurpose || r.courseTitle || r.purpose || "Reservation",
-        section: r.section || "",
+        subject: r.customPurpose || r.courseTitle || r.purpose || "Reservation",
+        section: r.section || r.yearSectionGroup || "",
         location: `${r.roomName || "-"} | Reservation`,
         roomName: r.roomName || "-",
+        roomId: r.roomId,
         dayIdx,
         daySpan: 1,
         startH,
@@ -752,21 +810,48 @@ export default function WeeklyCalendar() {
         date: r.date,
         rawStartTime: r.startTime,
         rawEndTime: r.endTime,
+        isReleased,
+        releasedAtTime,
       });
     });
 
+    // ─── 5) Reassignments (✅ release-aware now) ───
     reassignedEvents.forEach((r) => {
       if (!isWithinWeek(r.date, weekStart, weekEnd)) return;
       const dayIdx = mondayIndexFromDate(r.date);
       const [startH, startM] = parseTimeParts(r.startTime);
-      const [endH, endM] = parseTimeParts(r.endTime);
+      let [endH, endM] = parseTimeParts(r.endTime);
+
+      const releaseInfo = releasedMap.get(
+        makeReleaseKey("reassignment", r.id, r.date)
+      );
+      // Fully released → hide entirely
+      if (releaseInfo && !releaseInfo.effectiveEndTime) return;
+
+      let isReleased = false;
+      let releasedAtTime = null;
+
+      if (releaseInfo?.effectiveEndTime) {
+        const [rH, rM] = parseTimeParts(releaseInfo.effectiveEndTime);
+        if (rH * 60 + rM <= startH * 60 + startM) return;
+        endH = rH;
+        endM = rM;
+        isReleased = true;
+        releasedAtTime = releaseInfo.effectiveEndTime;
+      } else if (releaseInfo) {
+        isReleased = true;
+      }
+
       items.push({
         id: `reassign-${r.id}`,
+        rawId: r.id,
         kind: "reassignment",
         title: r.courseTitle || "Class",
+        subject: r.courseTitle || "Class",
         section: r.section || "",
         location: `${r.newRoomName || "-"} | Reassigned Room`,
         roomName: r.newRoomName || "-",
+        roomId: r.newRoomId,
         dayIdx,
         daySpan: 1,
         startH,
@@ -779,6 +864,8 @@ export default function WeeklyCalendar() {
         rawStartTime: r.startTime,
         rawEndTime: r.endTime,
         originalRoom: r.oldRoomName,
+        isReleased,
+        releasedAtTime,
       });
     });
 
@@ -804,7 +891,8 @@ export default function WeeklyCalendar() {
       status = result.status;
     }
 
-    if (ev.kind === "schedule") {
+    // ✅ Reassignments & reservations can now be released too
+    if (RELEASABLE_KINDS.has(ev.kind)) {
       if (ev.isReleased) {
         setDetailsTarget({ ...ev, status });
         return;
@@ -825,11 +913,15 @@ export default function WeeklyCalendar() {
     );
 
     setReleaseTarget({
+      kind: ev.kind,
+      rawId: ev.rawId || null,
       scheduleId: ev.scheduleId,
+      reassignmentId: ev.kind === "reassignment" ? ev.rawId : null,
+      reservationId: ev.kind === "reservation" ? ev.rawId : null,
       roomId: ev.roomId,
       roomName: ev.roomName,
       image: ev.image,
-      subject: ev.subject,
+      subject: ev.subject || ev.title || "",
       section: ev.section,
       day: ev.day,
       date: ev.date,
@@ -839,7 +931,6 @@ export default function WeeklyCalendar() {
       endTimeLabel: fmtTime12Compact(ev.rawEndTime),
       status,
       remainingMinutes,
-      kind: ev.kind,
       faculty: ev.faculty,
       rawStartTime: ev.rawStartTime,
       rawEndTime: ev.rawEndTime,
@@ -865,6 +956,7 @@ export default function WeeklyCalendar() {
       const me = userSnap.exists() ? userSnap.data() : {};
       const fullName = `${me.firstName || ""} ${me.lastName || ""}`.trim();
 
+      // Mid-class release: keep elapsed time, release remaining
       let effectiveEndTime = null;
       const nowD = new Date();
       const nowMin = nowD.getHours() * 60 + nowD.getMinutes();
@@ -880,10 +972,8 @@ export default function WeeklyCalendar() {
         )}:${String(nowD.getMinutes()).padStart(2, "0")}`;
       }
 
-      await addDoc(collection(db, "roomReleases"), {
-        scheduleId: releaseTarget.scheduleId,
-        roomId: releaseTarget.roomId,
-        roomName: releaseTarget.roomName,
+      // Base payload for roomReleases doc
+      const releaseDoc = {
         date: releaseTarget.date,
         day: releaseTarget.day,
         subject: releaseTarget.subject || "",
@@ -898,7 +988,21 @@ export default function WeeklyCalendar() {
         details: details || "",
         status: "released",
         releasedAt: serverTimestamp(),
-      });
+        roomId: releaseTarget.roomId || null,
+        roomName: releaseTarget.roomName || null,
+        releaseType: releaseTarget.kind || "schedule",
+      };
+
+      // Attach the correct ID per kind
+      if (releaseTarget.kind === "reassignment") {
+        releaseDoc.reassignmentId = releaseTarget.reassignmentId;
+      } else if (releaseTarget.kind === "reservation") {
+        releaseDoc.reservationId = releaseTarget.reservationId;
+      } else {
+        releaseDoc.scheduleId = releaseTarget.scheduleId;
+      }
+
+      await addDoc(collection(db, "roomReleases"), releaseDoc);
 
       await notifyReleaseRoom({
         facultyId: firebaseUser.uid,
@@ -920,6 +1024,7 @@ export default function WeeklyCalendar() {
           target: `${releaseTarget.roomName} | ${releaseTarget.subject || ""}`,
           status: "SUCCESS",
           details: {
+            kind: releaseTarget.kind,
             reason,
             details,
             effectiveEndTime,
@@ -1088,8 +1193,10 @@ export default function WeeklyCalendar() {
                           4;
                         const leftPct = ((ev.dayIdx - 1) / 7) * 100;
                         const widthPct = (ev.daySpan / 7) * 100;
+
+                        // ✅ Reassignments & reservations clickable too
                         const isClickable =
-                          ev.kind === "schedule" &&
+                          RELEASABLE_KINDS.has(ev.kind) &&
                           !ev.isReleased &&
                           computeStatus(
                             ev.date,
@@ -1139,9 +1246,15 @@ export default function WeeklyCalendar() {
                                 {ev.isReleased && (
                                   <span
                                     className="wc-released-badge"
-                                    title={`Released at ${ev.releasedAtTime}`}
+                                    title={
+                                      ev.releasedAtTime
+                                        ? `Released at ${ev.releasedAtTime}`
+                                        : "Released"
+                                    }
                                   >
-                                    Released {ev.releasedAtTime}
+                                    {ev.releasedAtTime
+                                      ? `Released ${ev.releasedAtTime}`
+                                      : "Released"}
                                   </span>
                                 )}
                               </span>

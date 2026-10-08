@@ -69,6 +69,15 @@ const PENDING_STATUSES = [
   "pending",
 ];
 
+// Helper: convert Firestore Timestamp / number / Date to milliseconds
+const toMillisOf = (v) => {
+  if (!v) return 0;
+  if (typeof v === "number") return v;
+  if (v.seconds != null) return v.seconds * 1000;
+  if (typeof v.toDate === "function") return v.toDate().getTime();
+  return 0;
+};
+
 function ClerkConflicts() {
   const navigate = useNavigate();
   const [conflicts, setConflicts] = useState([]);
@@ -113,24 +122,45 @@ function ClerkConflicts() {
     return { start: toT(st), end: toT(en) };
   };
 
+  // ═════════════════════════════════════════════════════════════════════
+  // LOAD CONFLICTS
+  //
+  // ⚠️ IMPORTANT: Resolution is PER-SCHEDULE, not per-event.
+  // A single event can conflict with MANY schedules (e.g. one room
+  // activity overlapping 3 classes). Each schedule must be resolved
+  // independently — accepting a reassignment for one class must NOT
+  // mark the sibling classes as resolved.
+  //
+  // We derive per-schedule status from the LATEST reassignment for
+  // that (scheduleId + eventId) pair, not from the event-level
+  // `conflictResolved` flag (which we only trust as a legacy fallback
+  // when there is no reassignment history at all).
+  // ═════════════════════════════════════════════════════════════════════
   const loadConflicts = async () => {
     try {
       const rooms = await getDocs(collection(db, "rooms"));
       const events = await getDocs(collection(db, "events"));
       const reassignSnap = await getDocs(collection(db, "roomReassignments"));
 
-      const pending = reassignSnap.docs
-        .map((d) => ({ id: d.id, ...d.data() }))
-        .filter((r) =>
-          PENDING_STATUSES.includes(String(r.status || "").toLowerCase()),
-        );
+      const allReassignments = reassignSnap.docs.map((d) => ({
+        id: d.id,
+        ...d.data(),
+      }));
 
+      // ── Pending list (for the "Pending Reassignment" tab) ──
+      const pending = allReassignments.filter((r) =>
+        PENDING_STATUSES.includes(String(r.status || "").toLowerCase()),
+      );
+
+      // Keys that should mark a card as "reassignPending"
+      // (exclude needs_reassign so Clerk can act again)
       const pendingKeys = new Set(
         pending
           .filter((r) => r.status !== "needs_reassign")
           .map((r) => `${r.scheduleId}_${r.eventId}`),
       );
 
+      // Latest "needs_reassign" info per pair (shown as "Returned by Admin")
       const returnedMap = new Map();
       pending
         .filter((r) => r.status === "needs_reassign")
@@ -148,9 +178,32 @@ function ClerkConflicts() {
           }
         });
 
-      const activeFound = [],
-        unresolvedFound = [],
-        resolvedFound = [];
+      // ══════════════════════════════════════════════════════════════
+      // LATEST REASSIGNMENT MAP — per (scheduleId + eventId)
+      // This is what lets us resolve each affected schedule
+      // SEPARATELY instead of trusting the event-level flag.
+      // ══════════════════════════════════════════════════════════════
+      const latestReassignMap = new Map();
+      allReassignments.forEach((r) => {
+        if (!r.scheduleId || !r.eventId) return;
+        const key = `${r.scheduleId}_${r.eventId}`;
+        const prev = latestReassignMap.get(key);
+        if (!prev || toMillisOf(r.createdAt) > toMillisOf(prev.createdAt)) {
+          latestReassignMap.set(key, r);
+        }
+      });
+
+      // Track which events have ANY reassignment history at all.
+      // Used to decide if the legacy `event.conflictResolved` flag can
+      // still be trusted (only when there's no per-schedule data yet).
+      const eventsWithReassignments = new Set();
+      allReassignments.forEach((r) => {
+        if (r.eventId) eventsWithReassignments.add(r.eventId);
+      });
+
+      const activeFound = [];
+      const unresolvedFound = [];
+      const resolvedFound = [];
       const now = new Date();
 
       for (const roomDoc of rooms.docs) {
@@ -190,6 +243,7 @@ function ClerkConflicts() {
           const eventDay = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"][
             new Date(event.date).getDay()
           ];
+
           schedules.forEach((schedule) => {
             if (schedule.day !== eventDay) return;
             if (
@@ -211,6 +265,52 @@ function ClerkConflicts() {
             );
             const conflictKey = `${schedule.id}_${event.id}`;
 
+            const latestReassign = latestReassignMap.get(conflictKey);
+            const latestStatus = String(
+              latestReassign?.status || "",
+            ).toLowerCase();
+
+            // ══════════════════════════════════════════════════════
+            // DETERMINE PER-SCHEDULE STATUS (not per-event!)
+            // ══════════════════════════════════════════════════════
+            let conflictStatus = "active";
+            let resolution = null;
+            let resolutionReason = null;
+
+            if (latestStatus === "accepted" || latestStatus === "approved") {
+              // Faculty accepted the reassignment for THIS schedule
+              conflictStatus = "resolved";
+              resolution = "approved";
+              resolutionReason =
+                latestReassign.resolutionReason || "Accepted by faculty";
+            } else if (latestStatus === "cancelled") {
+              // Admin cancelled the class for THIS specific conflict
+              conflictStatus = "resolved";
+              resolution = "cancelled_class";
+              resolutionReason =
+                latestReassign.adminNote || "Class cancelled by Admin";
+            } else if (schedule.cancelled === true) {
+              // Schedule itself was directly cancelled
+              conflictStatus = "resolved";
+              resolution = "cancelled_class";
+              resolutionReason = schedule.cancelledReason || "Class cancelled";
+            } else if (
+              !latestReassign &&
+              event.conflictResolved &&
+              !eventsWithReassignments.has(event.id)
+            ) {
+              // Legacy fallback — only trust event.conflictResolved if
+              // there is truly NO reassignment history at all for this
+              // event, so we don't accidentally resolve siblings.
+              conflictStatus = "resolved";
+              resolution = event.resolution || "resolved";
+              resolutionReason = event.resolutionReason || "";
+            } else if (eventEnd < now) {
+              conflictStatus = "unresolved";
+            } else {
+              conflictStatus = "active";
+            }
+
             const conflict = {
               roomId: roomDoc.id,
               roomName: room.roomName,
@@ -231,24 +331,16 @@ function ClerkConflicts() {
               conflictEndTime: ov.end,
               reassignPending: pendingKeys.has(conflictKey),
               returnedInfo: returnedMap.get(conflictKey) || null,
-              status: "",
-              resolution: event.resolution || null,
-              resolutionReason: event.resolutionReason || null,
+              status: conflictStatus,
+              resolution,
+              resolutionReason,
               createdAt: event.createdAt || null,
             };
 
-            if (event.conflictResolved) {
-              conflict.status = "resolved";
-              conflict.resolution = event.resolution || "resolved";
-              conflict.resolutionReason = event.resolutionReason || "";
-              resolvedFound.push(conflict);
-            } else if (eventEnd < now) {
-              conflict.status = "unresolved";
+            if (conflictStatus === "resolved") resolvedFound.push(conflict);
+            else if (conflictStatus === "unresolved")
               unresolvedFound.push(conflict);
-            } else {
-              conflict.status = "active";
-              activeFound.push(conflict);
-            }
+            else activeFound.push(conflict);
           });
         });
       }

@@ -14,6 +14,7 @@ import {
 } from "firebase/firestore";
 import { logActivity } from "../../utils/logActivity";
 import { findFacultyUserByName } from "../../utils/findFacultyUser";
+import { isActiveOnDate } from "../../utils/scheduleActivePeriod";
 
 const ITEMS_PER_PAGE = 5;
 
@@ -30,6 +31,16 @@ const SORT_OPTIONS = [
   { key: "date_desc", label: "Schedule Date ↓" },
 ];
 
+// ─── Time helpers ────────────────────────────────────────────────
+const parseTime = (t) => {
+  if (!t) return null;
+  const [h, m] = t.split(":").map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return null;
+  return h * 60 + m;
+};
+const overlap = (aS, aE, bS, bE) => aS < bE && aE > bS;
+const normDay = (d) => String(d || "").trim().toUpperCase().slice(0, 3);
+
 const fmt12 = (t) => {
   if (!t) return "";
   const [h, m] = t.split(":").map(Number);
@@ -44,9 +55,43 @@ const fmtDate = (d) => {
   });
 };
 
+const toDateInputValue = (date) => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+};
+const todayStr = () => toDateInputValue(new Date());
+
 // ═════════════════════════════════════════════════════════════════════
-// RECENCY HELPERS — normalize any date-like value to milliseconds.
-// Handles Firestore Timestamp, Date, number, ISO string, or missing.
+// ✅ Past date/time checker
+// ═════════════════════════════════════════════════════════════════════
+const isSlotInPast = (dateStr, startTimeStr) => {
+  if (!dateStr) return false;
+  const today = todayStr();
+  if (dateStr < today) return true;
+  if (dateStr > today) return false;
+  if (!startTimeStr) return false;
+  const startMin = parseTime(startTimeStr);
+  if (startMin == null) return false;
+  const now = new Date();
+  return startMin < now.getHours() * 60 + now.getMinutes();
+};
+
+// ═════════════════════════════════════════════════════════════════════
+// REASSIGNMENT STATUS HELPERS
+// ═════════════════════════════════════════════════════════════════════
+const ACCEPTED_REASSIGN_STATUSES = new Set(["accepted", "approved"]);
+const isAcceptedReassign = (r) =>
+  ACCEPTED_REASSIGN_STATUSES.has(String(r.status || "").toLowerCase());
+
+// ═════════════════════════════════════════════════════════════════════
+// ✅ Blocking conflict kinds (existing event or reservation)
+// ═════════════════════════════════════════════════════════════════════
+const BLOCKING_CONFLICT_KINDS = new Set(["event", "reservation"]);
+
+// ═════════════════════════════════════════════════════════════════════
+// RECENCY HELPERS
 // ═════════════════════════════════════════════════════════════════════
 const toMillis = (v) => {
   if (!v) return 0;
@@ -59,11 +104,196 @@ const toMillis = (v) => {
   return Number.isNaN(t) ? 0 : t;
 };
 
-// Best-effort "when was this request submitted" timestamp.
 const recencyOf = (item) =>
   toMillis(item?.createdAt) ||
   toMillis(item?.updatedAt) ||
   (item?.date ? new Date(`${item.date}T00:00:00`).getTime() : 0);
+
+// ═════════════════════════════════════════════════════════════════════
+// CONFLICT DETECTION
+// ═════════════════════════════════════════════════════════════════════
+const detectConflicts = async ({ roomId, roomName, date, startTime, endTime }) => {
+  if (!roomId || !date || !startTime || !endTime) return [];
+
+  const reqStart = parseTime(startTime);
+  const reqEnd = parseTime(endTime);
+  if (reqStart == null || reqEnd == null) return [];
+
+  const day = normDay(
+    new Date(`${date}T00:00:00`).toLocaleDateString("en-US", {
+      weekday: "short",
+    })
+  );
+
+  const results = [];
+
+  try {
+    const [reSnap, schedSnap, evSnap, resSnap, relSnap] = await Promise.all([
+      getDocs(collection(db, "roomReassignments")),
+      getDocs(collection(db, "rooms", roomId, "schedules")),
+      getDocs(collection(db, "events")),
+      getDocs(collection(db, "reservationRequests")),
+      getDocs(collection(db, "roomReleases")),
+    ]);
+
+    const allReassignments = reSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const allSchedules = schedSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const allEvents = evSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const allReservations = resSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const allReleases = relSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+    const reassignedAwayIds = new Set(
+      allReassignments
+        .filter(
+          (r) =>
+            isAcceptedReassign(r) &&
+            r.date === date &&
+            (r.oldRoomId === roomId || r.oldRoomName === roomName)
+        )
+        .map((r) => r.scheduleId)
+        .filter(Boolean)
+    );
+
+    const releaseMap = new Map();
+    allReleases
+      .filter(
+        (r) =>
+          r.date === date &&
+          (r.roomId === roomId || r.roomName === roomName)
+      )
+      .forEach((r) => {
+        if (r.scheduleId) releaseMap.set(r.scheduleId, r);
+      });
+
+    const roomEventsForDate = allEvents.filter(
+      (e) =>
+        (e.roomId === roomId || e.roomName === roomName) &&
+        e.date === date &&
+        String(e.status || "").toLowerCase() !== "cancelled"
+    );
+
+    // 1) Class schedules
+    allSchedules
+      .filter((s) => {
+        if (s.cancelled || s.initialized) return false;
+        if (!isActiveOnDate(s, date)) return false;
+        if (normDay(s.day) !== day) return false;
+        if (reassignedAwayIds.has(s.id)) return false;
+
+        const sStart = parseTime(s.startTime);
+        let sEnd = parseTime(s.endTime);
+        if (sStart == null || sEnd == null) return false;
+
+        const release = releaseMap.get(s.id);
+        if (release) {
+          if (!release.effectiveEndTime) return false;
+          const effectiveEnd = parseTime(release.effectiveEndTime);
+          if (effectiveEnd == null || effectiveEnd <= sStart) return false;
+          sEnd = effectiveEnd;
+        }
+
+        if (!overlap(reqStart, reqEnd, sStart, sEnd)) return false;
+
+        const isOverriddenByEvent = roomEventsForDate.some((e) =>
+          overlap(sStart, sEnd, parseTime(e.startTime), parseTime(e.endTime))
+        );
+        return !isOverriddenByEvent;
+      })
+      .forEach((s) => {
+        const release = releaseMap.get(s.id);
+        results.push({
+          id: s.id,
+          kind: "schedule",
+          sourceLabel: release ? "Class Schedule (Released Early)" : "Class Schedule",
+          subject: s.subject || s.title || "Class",
+          section: s.section || "",
+          faculty: s.facultyName || s.faculty || "",
+          facultyLastName: s.facultyLastName || "",
+          facultyFirstName: s.facultyFirstName || "",
+          day: s.day,
+          startTime: s.startTime,
+          endTime: release?.effectiveEndTime || s.endTime,
+          isReleased: !!release,
+        });
+      });
+
+    // 2) Events
+    roomEventsForDate
+      .filter((e) =>
+        overlap(reqStart, reqEnd, parseTime(e.startTime), parseTime(e.endTime))
+      )
+      .forEach((e) => {
+        results.push({
+          id: e.id,
+          kind: "event",
+          sourceLabel: "Room Activity",
+          subject: e.title || e.purpose || "Room Activity",
+          section: "",
+          faculty: e.faculty || e.requestedByName || "Admin",
+          day,
+          startTime: e.startTime,
+          endTime: e.endTime,
+        });
+      });
+
+    // 3) Approved reservations
+    allReservations
+      .filter(
+        (r) =>
+          String(r.status || "").toLowerCase() === "approved" &&
+          (r.roomId === roomId || r.roomName === roomName) &&
+          r.date === date &&
+          overlap(reqStart, reqEnd, parseTime(r.startTime), parseTime(r.endTime))
+      )
+      .forEach((r) => {
+        const isWalkIn =
+          String(r.reservationType || "").toLowerCase() === "walk-in";
+        results.push({
+          id: r.id,
+          kind: "reservation",
+          sourceLabel: isWalkIn ? "Walk-in Reservation" : "Faculty Reservation",
+          subject: r.customPurpose || r.courseTitle || r.purpose || "Reservation",
+          section: r.yearSectionGroup || r.attendees?.yearSectionGroup || "",
+          faculty: r.requesterName || r.facultyName || "-",
+          day,
+          startTime: r.startTime,
+          endTime: r.endTime,
+        });
+      });
+
+    // 4) Accepted reassignments INTO this room
+    allReassignments
+      .filter(
+        (r) =>
+          isAcceptedReassign(r) &&
+          r.date === date &&
+          (r.newRoomId === roomId || r.newRoomName === roomName) &&
+          overlap(reqStart, reqEnd, parseTime(r.startTime), parseTime(r.endTime))
+      )
+      .forEach((r) => {
+        results.push({
+          id: r.id,
+          kind: "reassignment",
+          sourceLabel: "Reassigned Class",
+          subject: r.courseTitle || r.subject || "Class (Moved)",
+          section: r.section || "",
+          faculty: r.facultyName || "-",
+          facultyLastName: r.facultyLastName || "",
+          facultyFirstName: r.facultyFirstName || "",
+          day,
+          startTime: r.startTime,
+          endTime: r.endTime,
+        });
+      });
+  } catch (err) {
+    console.error("Conflict detection failed:", err);
+  }
+
+  results.sort(
+    (a, b) => (parseTime(a.startTime) ?? 0) - (parseTime(b.startTime) ?? 0)
+  );
+  return results;
+};
 
 // ═════════════════════════════════════════════════════════════════════
 // CALENDAR HELPERS
@@ -74,12 +304,6 @@ const MONTH_NAMES = [
 ];
 const WEEKDAY_LABELS = ["Su","Mo","Tu","We","Th","Fr","Sa"];
 
-const toDateInputValue = (date) => {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-};
 const formatDateLongLocal = (dateStr) => {
   if (!dateStr) return "";
   const d = new Date(`${dateStr}T00:00:00`);
@@ -112,6 +336,32 @@ const buildCalendarGrid = (year, month) => {
 };
 
 // ═════════════════════════════════════════════════════════════════════
+// ✅ PRESET SLOTS + TIME OPTIONS (for the improved time picker)
+// ═════════════════════════════════════════════════════════════════════
+const PRESET_SLOTS = [
+  { label: "7:00 – 8:30 AM",   start: "07:00", end: "08:30" },
+  { label: "8:30 – 10:00 AM",  start: "08:30", end: "10:00" },
+  { label: "10:00 – 11:30 AM", start: "10:00", end: "11:30" },
+  { label: "11:30 – 1:00 PM",  start: "11:30", end: "13:00" },
+  { label: "1:00 – 2:30 PM",   start: "13:00", end: "14:30" },
+  { label: "2:30 – 4:00 PM",   start: "14:30", end: "16:00" },
+  { label: "4:00 – 5:30 PM",   start: "16:00", end: "17:30" },
+  { label: "5:30 – 7:00 PM",   start: "17:30", end: "19:00" },
+];
+
+const buildTimeOptions = () => {
+  const options = [];
+  for (let m = 7 * 60; m <= 20 * 60; m += 30) {
+    const h = Math.floor(m / 60);
+    const mm = m % 60;
+    const value = `${String(h).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+    options.push({ value, label: fmt12(value) });
+  }
+  return options;
+};
+const TIME_OPTIONS = buildTimeOptions();
+
+// ═════════════════════════════════════════════════════════════════════
 // INLINE DATE PICKER
 // ═════════════════════════════════════════════════════════════════════
 function InlineDatePicker({ value, onChange, placeholder = "Select date", icon = "fa-regular fa-calendar" }) {
@@ -130,7 +380,7 @@ function InlineDatePicker({ value, onChange, placeholder = "Select date", icon =
     return () => document.removeEventListener("mousedown", handle);
   }, []);
 
-  const todayStr = toDateInputValue(new Date());
+  const todayInputStr = toDateInputValue(new Date());
 
   const toggle = () => {
     const base = value ? new Date(`${value}T00:00:00`) : new Date();
@@ -160,8 +410,8 @@ function InlineDatePicker({ value, onChange, placeholder = "Select date", icon =
           <div className="ra-mp-quick">
             <button
               type="button"
-              className={value === todayStr ? "active" : ""}
-              onClick={() => pick(todayStr)}
+              className={value === todayInputStr ? "active" : ""}
+              onClick={() => pick(todayInputStr)}
             >
               Today
             </button>
@@ -209,13 +459,15 @@ function InlineDatePicker({ value, onChange, placeholder = "Select date", icon =
           <div className="ra-mp-cal-grid">
             {buildCalendarGrid(cursor.year, cursor.month).map((cell, i) => {
               const cellStr = toDateInputValue(cell.date);
+              const isPast = cellStr < todayInputStr;
               const isSelected = cellStr === value;
               return (
                 <button
                   type="button"
                   key={i}
-                  className={`ra-mp-cal-day ${!cell.inMonth ? "is-outside" : ""} ${isSelected ? "is-selected" : ""}`}
-                  onClick={() => pick(cellStr)}
+                  disabled={isPast}
+                  className={`ra-mp-cal-day ${!cell.inMonth ? "is-outside" : ""} ${isSelected ? "is-selected" : ""} ${isPast ? "is-disabled" : ""}`}
+                  onClick={() => { if (!isPast) pick(cellStr); }}
                 >
                   {cell.day}
                 </button>
@@ -351,19 +603,137 @@ function InlineRoomPicker({ value, valueId, onChange, rooms = [], placeholder = 
 }
 
 // ═════════════════════════════════════════════════════════════════════
+// ✅ INLINE TIME PICKER — preset slots + custom dropdowns
+// ═════════════════════════════════════════════════════════════════════
+function InlineTimePicker({ startValue, endValue, onChange }) {
+  const [showCustom, setShowCustom] = useState(false);
+
+  const isPresetActive = (slot) =>
+    slot.start === startValue && slot.end === endValue;
+
+  const handlePreset = (slot) => {
+    onChange(slot.start, slot.end);
+    setShowCustom(false);
+  };
+
+  return (
+    <div className="ra-time-picker">
+      <div className="time-preset-grid">
+        {PRESET_SLOTS.map((slot) => (
+          <button
+            key={slot.label}
+            type="button"
+            className={`time-preset-chip ${isPresetActive(slot) ? "active" : ""}`}
+            onClick={() => handlePreset(slot)}
+          >
+            {slot.label}
+          </button>
+        ))}
+      </div>
+
+      <button
+        type="button"
+        className={`time-custom-toggle ${showCustom ? "open" : ""}`}
+        onClick={() => setShowCustom((v) => !v)}
+      >
+        <i className="fa-solid fa-sliders"></i>
+        {showCustom ? "Hide custom time" : "Set a custom time instead"}
+        <i className={`fa-solid fa-chevron-down time-custom-chev ${showCustom ? "open" : ""}`}></i>
+      </button>
+
+      {showCustom && (
+        <div className="time-custom-grid">
+          <div className="time-custom-field">
+            <span className="time-custom-label">Start Time</span>
+            <div className="ra-select-wrap">
+              <select
+                className="ra-select"
+                value={startValue || ""}
+                onChange={(e) => onChange(e.target.value, endValue)}
+              >
+                <option value="">Select start time</option>
+                {TIME_OPTIONS.map((t) => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
+              </select>
+              <i className="fa-solid fa-chevron-down ra-chevron"></i>
+            </div>
+          </div>
+          <div className="time-custom-arrow">
+            <i className="fa-solid fa-arrow-right"></i>
+          </div>
+          <div className="time-custom-field">
+            <span className="time-custom-label">End Time</span>
+            <div className="ra-select-wrap">
+              <select
+                className="ra-select"
+                value={endValue || ""}
+                onChange={(e) => onChange(startValue, e.target.value)}
+              >
+                <option value="">Select end time</option>
+                {TIME_OPTIONS.map((t) => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
+              </select>
+              <i className="fa-solid fa-chevron-down ra-chevron"></i>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════
 // CONFLICT ROW
 // ═════════════════════════════════════════════════════════════════════
 function ConflictRow({ conflict }) {
+  const kindIcon = {
+    schedule: "fa-solid fa-chalkboard-user",
+    event: "fa-solid fa-calendar-star",
+    reservation: "fa-solid fa-book-bookmark",
+    reassignment: "fa-solid fa-right-left",
+  };
+  const isBlocking = BLOCKING_CONFLICT_KINDS.has(conflict.kind);
   return (
-    <div className="ra-conflict-row">
-      <div className="ra-conflict-row-icon">
-        <i className="fa-solid fa-triangle-exclamation"></i>
+    <div
+      className="ra-conflict-row"
+      style={isBlocking ? { borderColor: "#fecaca", background: "#fff" } : undefined}
+    >
+      <div
+        className="ra-conflict-row-icon"
+        style={isBlocking ? { background: "#fee2e2", color: "#b91c1c" } : undefined}
+      >
+        <i className={kindIcon[conflict.kind] || "fa-solid fa-triangle-exclamation"}></i>
       </div>
       <div className="ra-conflict-row-body">
         <div className="ra-conflict-row-title">
           {conflict.subject || "Untitled class"}
+          {isBlocking && (
+            <span
+              style={{
+                marginLeft: 6,
+                fontSize: 9.5,
+                fontWeight: 800,
+                padding: "1px 6px",
+                borderRadius: 999,
+                background: "#fee2e2",
+                color: "#b91c1c",
+                letterSpacing: ".05em",
+                verticalAlign: "middle",
+              }}
+            >
+              BLOCKING
+            </span>
+          )}
         </div>
         <div className="ra-conflict-row-meta">
+          {conflict.sourceLabel && (
+            <span>
+              <i className="fa-solid fa-tag"></i>
+              {conflict.sourceLabel}
+            </span>
+          )}
           {conflict.faculty && (
             <span>
               <i className="fa-regular fa-user"></i>
@@ -422,6 +792,9 @@ function RoomActivity() {
   const [draft, setDraft] = useState({});
   const [processing, setProcessing] = useState(false);
 
+  const [draftConflicts, setDraftConflicts] = useState([]);
+  const [checkingDraftConflicts, setCheckingDraftConflicts] = useState(false);
+
   const [toast, setToast] = useState({ show: false, type: "success", title: "", message: "" });
   const showToast = (type, title, message) => {
     setToast({ show: true, type, title, message });
@@ -453,6 +826,47 @@ function RoomActivity() {
     );
     return () => unsub();
   }, []);
+
+  // ═════════════════════════════════════════════════════════════════
+  // LIVE CONFLICT DETECTION — rerun on draft change
+  // ═════════════════════════════════════════════════════════════════
+  useEffect(() => {
+    if (!reviewing) {
+      setDraftConflicts([]);
+      return;
+    }
+
+    const { roomId, roomName, date, startTime, endTime } = draft;
+
+    if (!roomId || !date || !startTime || !endTime) {
+      setDraftConflicts([]);
+      return;
+    }
+
+    let cancelled = false;
+    const run = async () => {
+      setCheckingDraftConflicts(true);
+      try {
+        const found = await detectConflicts({ roomId, roomName, date, startTime, endTime });
+        if (!cancelled) setDraftConflicts(found);
+      } catch (err) {
+        console.error("Draft conflict detection failed:", err);
+        if (!cancelled) setDraftConflicts([]);
+      } finally {
+        if (!cancelled) setCheckingDraftConflicts(false);
+      }
+    };
+    run();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    reviewing,
+    draft.roomId,
+    draft.roomName,
+    draft.date,
+    draft.startTime,
+    draft.endTime,
+  ]);
 
   const counts = useMemo(() => ({
     pending_admin: items.filter((i) => i.status === "pending_admin").length,
@@ -486,12 +900,10 @@ function RoomActivity() {
     }
     const sorted = [...list];
 
-    // ── NEWEST FIRST is the default & must always win ──
     if (sortOrder === "newest") {
       sorted.sort((a, b) => {
         const diff = recencyOf(b) - recencyOf(a);
         if (diff !== 0) return diff;
-        // Stable tie-breaker: newest schedule date first, then id.
         const dateDiff = String(b.date || "").localeCompare(String(a.date || ""));
         if (dateDiff !== 0) return dateDiff;
         return String(b.id || "").localeCompare(String(a.id || ""));
@@ -534,8 +946,55 @@ function RoomActivity() {
     });
   };
 
+  // ═════════════════════════════════════════════════════════════════
+  // ✅ Derived: past date/time + blocking conflict sa DRAFT
+  // ═════════════════════════════════════════════════════════════════
+  const draftIsPastDate = !!draft.date && draft.date < todayStr();
+  const draftIsPastTimeToday =
+    draft.date === todayStr() &&
+    !!draft.startTime &&
+    isSlotInPast(draft.date, draft.startTime);
+  const draftPastBlocked = draftIsPastDate || draftIsPastTimeToday;
+
+  const draftBlockingConflicts = useMemo(
+    () => draftConflicts.filter((c) => BLOCKING_CONFLICT_KINDS.has(c.kind)),
+    [draftConflicts]
+  );
+  const draftHasBlockingConflict = draftBlockingConflicts.length > 0;
+
+  const approveDisabled =
+    processing ||
+    checkingDraftConflicts ||
+    draftPastBlocked ||
+    draftHasBlockingConflict ||
+    !draft.roomId ||
+    !draft.date ||
+    !draft.startTime ||
+    !draft.endTime;
+
   const handleApprove = async () => {
     if (!reviewing) return;
+
+    // ═════════════════════════════════════════════════════════════
+    // Final safety net — reject invalid draft before doing anything
+    // ═════════════════════════════════════════════════════════════
+    if (draftPastBlocked) {
+      showToast(
+        "error",
+        "Invalid Date / Time",
+        "Cannot approve a request with a past date or past start time."
+      );
+      return;
+    }
+    if (draftHasBlockingConflict) {
+      showToast(
+        "error",
+        "Room Already Booked",
+        "This room already has an event or reservation in the selected slot. Change the room/time before approving."
+      );
+      return;
+    }
+
     const { item } = reviewing;
     setProcessing(true);
     try {
@@ -543,56 +1002,123 @@ function RoomActivity() {
       const me = userDoc.data();
       const myName = `${me.firstName} ${me.lastName}`;
 
+      const usersSnap = await getDocs(collection(db, "users"));
+
+      const enrichedConflicts = draftConflicts.map((c) => {
+        let facultyId = "";
+        if (c.facultyLastName && c.facultyFirstName) {
+          const fDoc = usersSnap.docs.find((d) => {
+            const fd = d.data();
+            const ln = String(fd.lastName || "").trim().toLowerCase();
+            const fn = String(fd.firstName || "").trim().toLowerCase();
+            return (
+              ln === String(c.facultyLastName).trim().toLowerCase() &&
+              fn.startsWith(String(c.facultyFirstName).trim().toLowerCase().split(" ")[0])
+            );
+          });
+          if (fDoc) facultyId = fDoc.id;
+        }
+        if (!facultyId && c.faculty) {
+          const fDoc = findFacultyUserByName(usersSnap, c.faculty);
+          if (fDoc) facultyId = fDoc.id;
+        }
+        return {
+          scheduleId: c.id,
+          kind: c.kind,
+          sourceLabel: c.sourceLabel,
+          subject: c.subject || c.title || "",
+          section: c.section || "",
+          faculty: c.faculty || "",
+          facultyId,
+          day: c.day,
+          startTime: c.startTime,
+          endTime: c.endTime,
+          isReleased: !!c.isReleased,
+          status: "pending",
+        };
+      });
+
       await updateDoc(doc(db, "roomActivityRequests", item.id), {
-        title: draft.title.trim(), roomName: draft.roomName, roomId: draft.roomId,
-        date: draft.date, startTime: draft.startTime, endTime: draft.endTime,
-        reason: draft.reason.trim(), status: "approved",
-        approvedById: auth.currentUser.uid, approvedByName: myName,
-        approvedAt: serverTimestamp(), updatedAt: serverTimestamp(),
+        title: draft.title.trim(),
+        roomName: draft.roomName,
+        roomId: draft.roomId,
+        date: draft.date,
+        startTime: draft.startTime,
+        endTime: draft.endTime,
+        reason: draft.reason.trim(),
+        status: "approved",
+        conflicts: enrichedConflicts,
+        approvedById: auth.currentUser.uid,
+        approvedByName: myName,
+        approvedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
       });
 
       let eventId = item.eventId;
       if (!eventId) {
         const eventRef = await addDoc(collection(db, "events"), {
-          roomId: draft.roomId, roomName: draft.roomName,
-          title: draft.title.trim(), reason: draft.reason.trim(),
-          date: draft.date, startTime: draft.startTime, endTime: draft.endTime,
+          roomId: draft.roomId,
+          roomName: draft.roomName,
+          title: draft.title.trim(),
+          reason: draft.reason.trim(),
+          date: draft.date,
+          startTime: draft.startTime,
+          endTime: draft.endTime,
           status: "active",
-          createdById: item.requestedById, createdByName: item.requestedByName,
-          approvedById: auth.currentUser.uid, createdAt: serverTimestamp(),
+          createdById: item.requestedById,
+          createdByName: item.requestedByName,
+          approvedById: auth.currentUser.uid,
+          createdAt: serverTimestamp(),
         });
         eventId = eventRef.id;
         await updateDoc(doc(db, "roomActivityRequests", item.id), { eventId });
       }
 
-      const usersSnap = await getDocs(collection(db, "users"));
       let notified = 0;
-      for (const conflict of item.conflicts || []) {
+      for (const conflict of enrichedConflicts) {
         let facultyDoc = null;
-        if (conflict.facultyId) facultyDoc = usersSnap.docs.find((d) => d.id === conflict.facultyId) || null;
-        if (!facultyDoc && conflict.faculty) facultyDoc = findFacultyUserByName(usersSnap, conflict.faculty);
+        if (conflict.facultyId)
+          facultyDoc = usersSnap.docs.find((d) => d.id === conflict.facultyId) || null;
+        if (!facultyDoc && conflict.faculty)
+          facultyDoc = findFacultyUserByName(usersSnap, conflict.faculty);
         if (!facultyDoc) continue;
 
         await addDoc(collection(db, "notifications"), {
-          userId: facultyDoc.id, ownerType: "faculty",
-          activityId: eventId, title: "Room Activity Override",
+          userId: facultyDoc.id,
+          ownerType: "faculty",
+          activityId: eventId,
+          title: "Room Activity Override",
           message: `${draft.title} will use ${draft.roomName} on ${draft.date} (${fmt12(draft.startTime)} - ${fmt12(draft.endTime)}). Your scheduled class may be affected.`,
-          type: "room-activity", unread: true, archived: false, badge: "NEW",
-          roomId: draft.roomId, roomName: draft.roomName,
-          activityTitle: draft.title, activityReason: draft.reason,
-          activityDate: draft.date, activityStart: draft.startTime, activityEnd: draft.endTime,
-          affectedScheduleId: conflict.scheduleId, affectedSubject: conflict.subject,
-          affectedFaculty: conflict.faculty, createdAt: serverTimestamp(),
+          type: "room-activity",
+          unread: true,
+          archived: false,
+          badge: "NEW",
+          roomId: draft.roomId,
+          roomName: draft.roomName,
+          activityTitle: draft.title,
+          activityReason: draft.reason,
+          activityDate: draft.date,
+          activityStart: draft.startTime,
+          activityEnd: draft.endTime,
+          affectedScheduleId: conflict.scheduleId,
+          affectedSubject: conflict.subject,
+          affectedFaculty: conflict.faculty,
+          createdAt: serverTimestamp(),
         });
         notified++;
       }
 
       if (item.requestedById) {
         await addDoc(collection(db, "notifications"), {
-          userId: item.requestedById, ownerType: "clerk",
-          activityRequestId: item.id, title: "Room Activity Approved",
+          userId: item.requestedById,
+          ownerType: "clerk",
+          activityRequestId: item.id,
+          title: "Room Activity Approved",
           message: `"${draft.title}" was approved for ${draft.roomName} on ${draft.date}. ${notified} faculty notified.`,
-          type: "room-activity-status", unread: true, archived: false, badge: "INFO",
+          type: "room-activity-status",
+          unread: true,
+          archived: false,
+          badge: "INFO",
           createdAt: serverTimestamp(),
         });
       }
@@ -782,26 +1308,135 @@ function RoomActivity() {
                 </p>
               </div>
 
-              {/* Conflict details — compact scrollable list */}
-              {(reviewing.item.conflicts?.length || 0) > 0 && (
-                <div className="ra-conflict-panel">
-                  <div className="ra-conflict-panel-header">
-                    <i className="fa-solid fa-triangle-exclamation"></i>
+              {/* ═════ PAST DATE / TIME WARNING ═════ */}
+              {draftPastBlocked && (
+                <div
+                  className="ra-conflict-panel"
+                  style={{ background: "#fef2f2", borderColor: "#fecaca" }}
+                >
+                  <div
+                    className="ra-conflict-panel-header"
+                    style={{ borderBottomColor: "#fecaca" }}
+                  >
+                    <i
+                      className={`fa-solid ${
+                        draftIsPastDate ? "fa-calendar-xmark" : "fa-clock-rotate-left"
+                      }`}
+                      style={{ color: "#b91c1c" }}
+                    ></i>
                     <div>
-                      <strong>
-                        {reviewing.item.conflicts.length} conflicting{" "}
-                        {reviewing.item.conflicts.length === 1 ? "schedule" : "schedules"}
+                      <strong style={{ color: "#991b1b" }}>
+                        {draftIsPastDate
+                          ? "Past date is not allowed"
+                          : "Start time is already in the past"}
                       </strong>
-                      <p>These classes will be overridden. Affected faculty will be notified.</p>
+                      <p style={{ color: "#b91c1c" }}>
+                        {draftIsPastDate
+                          ? "Cannot approve a room activity scheduled on a past date. Update the date to today or a future date."
+                          : `The start time (${fmt12(draft.startTime)}) has already passed. Change the time or pick a different date before approving.`}
+                      </p>
                     </div>
                   </div>
-
-                  <div className="ra-conflict-panel-list ra-conflict-panel-list--compact">
-                    {reviewing.item.conflicts.map((conflict, i) => (
-                      <ConflictRow key={conflict.scheduleId || i} conflict={conflict} />
-                    ))}
-                  </div>
                 </div>
+              )}
+
+              {/* ═════ LIVE CONFLICT PANEL ═════ */}
+              {!draftPastBlocked && (
+                <>
+                  {checkingDraftConflicts ? (
+                    <div className="ra-conflict-panel">
+                      <div className="ra-conflict-panel-header">
+                        <i className="fa-solid fa-spinner fa-spin"></i>
+                        <div>
+                          <strong>Checking for conflicts…</strong>
+                          <p>Scanning schedules, events, reservations, reassignments, and releases.</p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : draftHasBlockingConflict ? (
+                    <div
+                      className="ra-conflict-panel"
+                      style={{ background: "#fef2f2", borderColor: "#fecaca" }}
+                    >
+                      <div
+                        className="ra-conflict-panel-header"
+                        style={{ borderBottomColor: "#fecaca" }}
+                      >
+                        <i className="fa-solid fa-circle-xmark" style={{ color: "#b91c1c" }}></i>
+                        <div>
+                          <strong style={{ color: "#991b1b" }}>
+                            Cannot approve — {draftBlockingConflicts.length} existing booking
+                            {draftBlockingConflicts.length > 1 ? "s" : ""}
+                          </strong>
+                          <p style={{ color: "#b91c1c" }}>
+                            This room already has an event or reservation during the
+                            selected slot. Change the room, date, or time before approving.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="ra-conflict-panel-list ra-conflict-panel-list--compact">
+                        {draftBlockingConflicts.map((conflict, i) => (
+                          <ConflictRow
+                            key={`${conflict.kind}-${conflict.id || i}`}
+                            conflict={{
+                              ...conflict,
+                              roomName: draft.roomName,
+                              date: draft.date,
+                            }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  ) : draftConflicts.length > 0 ? (
+                    <div className="ra-conflict-panel">
+                      <div className="ra-conflict-panel-header">
+                        <i className="fa-solid fa-triangle-exclamation"></i>
+                        <div>
+                          <strong>
+                            {draftConflicts.length} conflicting{" "}
+                            {draftConflicts.length === 1 ? "schedule" : "schedules"}
+                          </strong>
+                          <p>
+                            These classes will be overridden. Affected faculty will
+                            be notified after approval.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="ra-conflict-panel-list ra-conflict-panel-list--compact">
+                        {draftConflicts.map((conflict, i) => (
+                          <ConflictRow
+                            key={`${conflict.kind}-${conflict.id || i}`}
+                            conflict={{
+                              ...conflict,
+                              roomName: draft.roomName,
+                              date: draft.date,
+                            }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div
+                      className="ra-conflict-panel"
+                      style={{ background: "#ecfdf5", borderColor: "#a7f3d0" }}
+                    >
+                      <div
+                        className="ra-conflict-panel-header"
+                        style={{ borderBottomColor: "#a7f3d0" }}
+                      >
+                        <i className="fa-solid fa-circle-check" style={{ color: "#16a34a" }}></i>
+                        <div>
+                          <strong style={{ color: "#065f46" }}>No conflicts detected</strong>
+                          <p style={{ color: "#047857" }}>
+                            The selected room, date, and time are clear.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
 
               <button className="ra-edit-toggle" onClick={() => setEditMode((v) => !v)}>
@@ -841,23 +1476,14 @@ function RoomActivity() {
                     />
                   </label>
 
-                  <div className="ra-row-2">
-                    <label>
-                      Start
-                      <input
-                        type="time"
-                        value={draft.startTime}
-                        onChange={(e) => setDraft({ ...draft, startTime: e.target.value })}
-                      />
-                    </label>
-                    <label>
-                      End
-                      <input
-                        type="time"
-                        value={draft.endTime}
-                        onChange={(e) => setDraft({ ...draft, endTime: e.target.value })}
-                      />
-                    </label>
+                  {/* ✅ UPDATED: preset slots + custom time picker */}
+                  <div className="ra-edit-time-block">
+                    <span className="ra-edit-label-text">Time</span>
+                    <InlineTimePicker
+                      startValue={draft.startTime}
+                      endValue={draft.endTime}
+                      onChange={(s, e) => setDraft({ ...draft, startTime: s, endTime: e })}
+                    />
                   </div>
 
                   <label>
@@ -881,11 +1507,36 @@ function RoomActivity() {
 
             {/* ═════════════ FIXED FOOTER ═════════════ */}
             <div className="ra-modal-actions">
-              <button className="ra-modal-cancel" onClick={() => setReviewing(null)} disabled={processing}>
+              <button
+                className="ra-modal-cancel"
+                onClick={() => setReviewing(null)}
+                disabled={processing}
+              >
                 Cancel
               </button>
-              <button className="ra-modal-confirm" onClick={handleApprove} disabled={processing}>
-                {processing ? "Approving…" : "Approve Request"}
+              <button
+                className="ra-modal-confirm"
+                onClick={handleApprove}
+                disabled={approveDisabled}
+                title={
+                  draftPastBlocked
+                    ? "Cannot approve — past date or past start time."
+                    : draftHasBlockingConflict
+                    ? "Cannot approve — this room is already booked during the selected slot."
+                    : checkingDraftConflicts
+                    ? "Checking conflicts…"
+                    : ""
+                }
+              >
+                {processing
+                  ? "Approving…"
+                  : checkingDraftConflicts
+                  ? "Checking…"
+                  : draftPastBlocked
+                  ? "Past Date/Time"
+                  : draftHasBlockingConflict
+                  ? "Conflicts Found"
+                  : "Approve Request"}
               </button>
             </div>
           </div>
@@ -914,7 +1565,6 @@ function ReviewCard({ item, onReview }) {
 
   return (
     <div className={`ra-review-card ${statusMeta.cls}`}>
-      {/* Header */}
       <div className="ra-review-card-top">
         <div className="ra-review-card-title-block">
           <div className="ra-review-card-title">{item.title}</div>
@@ -933,7 +1583,6 @@ function ReviewCard({ item, onReview }) {
         <span className={`ra-review-status ${statusMeta.cls}`}>{statusMeta.label}</span>
       </div>
 
-      {/* Info grid — same layout as ReassignmentCard */}
       <div className="ra-review-info-grid">
         <div className="ra-review-info-item">
           <div className="ra-review-info-icon">
@@ -982,7 +1631,6 @@ function ReviewCard({ item, onReview }) {
         </div>
       </div>
 
-      {/* Conflicts preview */}
       {conflicts.length > 0 && (
         <div className="ra-review-conflict-preview">
           <div className="ra-review-conflict-preview-title">
@@ -1012,7 +1660,6 @@ function ReviewCard({ item, onReview }) {
         </div>
       )}
 
-      {/* Reason */}
       {item.reason && (
         <div className="ra-review-reason">
           <i className="fa-solid fa-note-sticky"></i>
@@ -1020,7 +1667,6 @@ function ReviewCard({ item, onReview }) {
         </div>
       )}
 
-      {/* Actions */}
       {item.status === "pending_admin" && (
         <div className="ra-review-actions">
           <button className="ra-review-btn is-approve" onClick={onReview}>
