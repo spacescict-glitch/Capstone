@@ -982,3 +982,30 @@
     transition: none;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   TOAST ABOVE MODAL — prevents blurred toast behind sim-overlay
+   ═══════════════════════════════════════════════════════════ */
+
+.sim-toast-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;    /* huwag harangin ang clicks kapag walang toast */
+  z-index: 2147483647;     /* max int — siguradong nasa pinakataas */
+}
+
+.sim-toast-layer > * {
+  pointer-events: auto;    /* pwedeng i-click ang toast mismo */
+}
+
+/* Fallback: kung may sariling fixed z-index ang Toast component,
+   pwersahin itong tumaas nang hindi binabago ang Toast.css */
+.sim-toast-layer .toast,
+.sim-toast-layer .toast-container,
+.sim-toast-layer [class^="toast"],
+.sim-toast-layer [class*=" toast"],
+.sim-toast-layer [class^="Toast"],
+.sim-toast-layer [class*=" Toast"],
+.sim-toast-layer [class*="toast-"] {
+  z-index: 2147483647 !important;
+}

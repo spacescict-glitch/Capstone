@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { db, auth } from "../../../firebase";
 import {
   collection, query, where, getDocs, getDoc,
-  doc, addDoc, setDoc, updateDoc, serverTimestamp,
+  doc, addDoc, setDoc, serverTimestamp,
 } from "firebase/firestore";
 import { logActivity } from "../../../utils/logActivity";
 import Toast from "../../../Popup/Toast/Toast";
@@ -97,14 +97,16 @@ function RoomManagementAddRoom({ onBack = () => {}, onSuccess = () => {} }) {
   const [equipment, setEquipment]     = useState(INITIAL_EQUIPMENT);
   const [floor, setFloor]             = useState('');
 
-  // ⬅️ DEFAULT BUILDING: "Pimentel Hall"
+  // DEFAULT BUILDING: "Pimentel Hall"
   const [building, setBuilding]       = useState('Pimentel Hall');
   const [buildingCustom, setBuildingCustom] = useState('');
   const [isOtherBuilding, setIsOtherBuilding] = useState(false);
 
-  // ⬅️ OPTIONAL PHOTO
+  // OPTIONAL PHOTO
   const [photoFile, setPhotoFile]       = useState(null);
   const [photoPreview, setPhotoPreview] = useState('');
+  const [dragOver, setDragOver]         = useState(false);
+  const dragCounter = useRef(0);
   const photoInputRef = useRef(null);
 
   const [cancelModalOpen, setCancelModalOpen]   = useState(false);
@@ -115,14 +117,8 @@ function RoomManagementAddRoom({ onBack = () => {}, onSuccess = () => {} }) {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
-  // ─── Toast state ──────────────────────────────────────────────────────
-  const [toast, setToast] = useState({
-    show: false,
-    type: "success",
-    title: "",
-    message: "",
-  });
-
+  // Toast
+  const [toast, setToast] = useState({ show: false, type: "success", title: "", message: "" });
   const showToast = (type, title, message) => {
     setToast({ show: true, type, title, message });
     if (type !== "loading") {
@@ -136,39 +132,78 @@ function RoomManagementAddRoom({ onBack = () => {}, onSuccess = () => {} }) {
   const adjustCapacity = (delta) =>
     setCapacity((prev) => Math.min(200, Math.max(1, Number(prev || 0) + delta)));
 
-  /* ─── Photo handlers ─────────────────────────────────── */
-  const handlePhotoSelect = (e) => {
-    const file = e.target.files?.[0];
+  /* ─── Photo processing (shared for input + drag-drop) ─── */
+  const processFile = (file) => {
     if (!file) return;
-
     if (!file.type.startsWith("image/")) {
       showToast("error", "Invalid file", "Please choose an image file (JPG, PNG, WEBP).");
-      e.target.value = "";
       return;
     }
     if (file.size > MAX_PHOTO_MB * 1024 * 1024) {
       showToast("error", "File too large", `Max photo size is ${MAX_PHOTO_MB}MB.`);
-      e.target.value = "";
       return;
     }
-
-    if (photoPreview) URL.revokeObjectURL(photoPreview);
+    if (photoPreview && photoPreview.startsWith("blob:")) {
+      URL.revokeObjectURL(photoPreview);
+    }
     setPhotoFile(file);
     setPhotoPreview(URL.createObjectURL(file));
+  };
+
+  const handlePhotoSelect = (e) => {
+    const file = e.target.files?.[0];
+    processFile(file);
     e.target.value = "";
   };
 
   const handleRemovePhoto = () => {
-    if (photoPreview) URL.revokeObjectURL(photoPreview);
+    if (photoPreview && photoPreview.startsWith("blob:")) {
+      URL.revokeObjectURL(photoPreview);
+    }
     setPhotoFile(null);
     setPhotoPreview("");
     if (photoInputRef.current) photoInputRef.current.value = "";
   };
 
+  /* ─── Drag & Drop handlers ─── */
+  const handleDragEnter = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current += 1;
+    if (e.dataTransfer?.items?.length > 0) setDragOver(true);
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current -= 1;
+    if (dragCounter.current <= 0) {
+      dragCounter.current = 0;
+      setDragOver(false);
+    }
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current = 0;
+    setDragOver(false);
+    const file = e.dataTransfer?.files?.[0];
+    if (file) processFile(file);
+  };
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (photoPreview) URL.revokeObjectURL(photoPreview);
+      if (photoPreview && photoPreview.startsWith("blob:")) {
+        URL.revokeObjectURL(photoPreview);
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -186,13 +221,11 @@ function RoomManagementAddRoom({ onBack = () => {}, onSuccess = () => {} }) {
     return Object.keys(errs).length === 0;
   };
 
-  /* open preview instead of submitting directly */
   const handleCreateClick = (e) => {
-    e.preventDefault();
+    e?.preventDefault?.();
     if (validateForm()) setPreviewModalOpen(true);
   };
 
-  /* actual Firestore submit — called from preview modal */
   const handleConfirmCreate = async () => {
     setPreviewModalOpen(false);
     setLoading(true);
@@ -222,7 +255,6 @@ function RoomManagementAddRoom({ onBack = () => {}, onSuccess = () => {} }) {
 
       const buildingFinal = isOtherBuilding ? buildingCustom.trim() : building;
 
-      /* ── 1) Upload photo to Cloudinary (optional) ── */
       let photoUrl = "";
       if (photoFile) {
         try {
@@ -233,7 +265,6 @@ function RoomManagementAddRoom({ onBack = () => {}, onSuccess = () => {} }) {
         }
       }
 
-      /* ── 2) Create room doc ── */
       const roomRef = await addDoc(collection(db, "rooms"), {
         roomName: roomName.trim(),
         capacity: Number(capacity),
@@ -246,7 +277,6 @@ function RoomManagementAddRoom({ onBack = () => {}, onSuccess = () => {} }) {
         photoUrl: photoUrl || null,
       });
 
-      /* ── 3) Metadata docs ── */
       await setDoc(doc(db, "rooms", roomRef.id, "schedules", "_metadata"), {
         initialized: true, totalSchedules: 0,
         semester: "", schoolYear: "", createdAt: serverTimestamp(),
@@ -287,7 +317,6 @@ function RoomManagementAddRoom({ onBack = () => {}, onSuccess = () => {} }) {
 
   const checkedEquipment = EQUIPMENT_OPTIONS.filter(({ id }) => equipment[id]);
 
-  /* ── render ── */
   return (
     <main className="add-room-page dashboard-main">
 
@@ -413,62 +442,72 @@ function RoomManagementAddRoom({ onBack = () => {}, onSuccess = () => {} }) {
                   setBuildingCustom(e.target.value);
                   setErrors(p => ({...p, building: ''}));
                 }}
+                style={{ marginTop: 8 }}
               />
             )}
             {errors.building && <span className="field-error">{errors.building}</span>}
           </div>
 
-          {/* Room Photo (Optional) */}
+          {/* Room Photo (Optional) — DRAG & DROP */}
           <div className="field-group">
             <label className="field-label">
               Room Photo <span className="photo-optional-tag">Optional</span>
             </label>
 
-            <div className="photo-upload-wrap">
-              <div className="photo-upload-preview">
-                {photoPreview ? (
+            <div
+              className={`photo-dropzone ${dragOver ? 'drag-over' : ''} ${photoPreview ? 'has-image' : ''}`}
+              onClick={() => { if (!photoPreview) photoInputRef.current?.click(); }}
+              onDragEnter={handleDragEnter}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
+              <input
+                ref={photoInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handlePhotoSelect}
+                style={{ display: "none" }}
+              />
+
+              {photoPreview ? (
+                <div className="photo-dropzone-preview">
                   <img src={photoPreview} alt="Room preview" />
-                ) : (
-                  <div className="photo-upload-preview-placeholder">
-                    <i className="fa-regular fa-image"></i>
-                    <span>No image</span>
+                  <div className="photo-dropzone-overlay">
+                    <button
+                      type="button"
+                      className="photo-action-btn change"
+                      onClick={(e) => { e.stopPropagation(); photoInputRef.current?.click(); }}
+                    >
+                      <i className="fa-solid fa-arrow-up-from-bracket"></i>
+                      Change
+                    </button>
+                    <button
+                      type="button"
+                      className="photo-action-btn remove"
+                      onClick={(e) => { e.stopPropagation(); handleRemovePhoto(); }}
+                    >
+                      <i className="fa-solid fa-trash-can"></i>
+                      Remove
+                    </button>
                   </div>
-                )}
-              </div>
-
-              <div className="photo-upload-controls">
-                <button
-                  type="button"
-                  className="photo-upload-btn"
-                  onClick={() => photoInputRef.current?.click()}
-                >
-                  <i className="fa-solid fa-arrow-up-from-bracket"></i>
-                  {photoFile ? "Change photo" : "Upload photo"}
-                </button>
-
-                <input
-                  ref={photoInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={handlePhotoSelect}
-                  style={{ display: "none" }}
-                />
-
-                {photoFile && (
-                  <button
-                    type="button"
-                    className="photo-remove-btn"
-                    onClick={handleRemovePhoto}
-                  >
-                    <i className="fa-solid fa-trash-can"></i>
-                    Remove photo
-                  </button>
-                )}
-
-                <span className="photo-hint">
-                  JPG, PNG, o WEBP. Max {MAX_PHOTO_MB}MB. Kung walang photo, "No image" ang ipapakita.
-                </span>
-              </div>
+                </div>
+              ) : (
+                <div className="photo-dropzone-empty">
+                  <div className="photo-dropzone-icon">
+                    <i className={`fa-solid ${dragOver ? 'fa-cloud-arrow-down' : 'fa-cloud-arrow-up'}`}></i>
+                  </div>
+                  <p className="photo-dropzone-title">
+                    {dragOver ? "Drop your photo here" : "Drag & drop your photo"}
+                  </p>
+                  <p className="photo-dropzone-sub">
+                    or <span className="photo-dropzone-browse">click to browse</span>
+                  </p>
+                  <span className="photo-dropzone-hint">
+                    JPG, PNG, WEBP • Max {MAX_PHOTO_MB}MB
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -580,7 +619,6 @@ function RoomManagementAddRoom({ onBack = () => {}, onSuccess = () => {} }) {
             </div>
 
             <div className="preview-card">
-              {/* Preview Photo */}
               <div className="preview-photo">
                 {photoPreview ? (
                   <img src={photoPreview} alt="Room preview" />

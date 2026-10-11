@@ -27,6 +27,50 @@ const SCHOOL_HEADER = {
 };
 
 // ═════════════════════════════════════════════════════════════════════
+// EMAIL MASKING — GCash style
+// juan.delacruz@gmail.com → ju***********@g****.com
+// ═════════════════════════════════════════════════════════════════════
+const maskEmail = (email) => {
+  if (!email || typeof email !== "string") return email || "";
+
+  const trimmed = email.trim();
+  const atIndex = trimmed.indexOf("@");
+  if (atIndex <= 0) return trimmed; // not an email — return as-is
+
+  const local = trimmed.slice(0, atIndex);
+  const domain = trimmed.slice(atIndex + 1);
+
+  // ── Local part: show first 2 chars, mask the rest (min 3 asterisks) ──
+  const visibleLocal = local.slice(0, Math.min(2, local.length));
+  const localMaskLen = Math.max(3, local.length - visibleLocal.length);
+  const maskedLocal = `${visibleLocal}${"*".repeat(localMaskLen)}`;
+
+  // ── Domain: split into name + TLD, mask the middle ──
+  const dotIndex = domain.lastIndexOf(".");
+  if (dotIndex <= 0) {
+    return `${maskedLocal}@${"*".repeat(3)}`;
+  }
+
+  const domainName = domain.slice(0, dotIndex);   // e.g. "gmail"
+  const domainTld  = domain.slice(dotIndex);      // e.g. ".com"
+
+  const visibleDomain = domainName.slice(0, 1);   // first char only
+  const domainMaskLen = Math.max(3, domainName.length - visibleDomain.length);
+  const maskedDomain = `${visibleDomain}${"*".repeat(domainMaskLen)}`;
+
+  return `${maskedLocal}@${maskedDomain}${domainTld}`;
+};
+
+// ✅ Mask ONLY if the value actually looks like an email.
+// Otherwise return unchanged (names, room numbers, etc.)
+const maskIfEmail = (value) => {
+  if (!value || typeof value !== "string") return value;
+  const trimmed = value.trim();
+  const emailLike = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+  return emailLike ? maskEmail(trimmed) : value;
+};
+
+// ═════════════════════════════════════════════════════════════════════
 // CUSTOM FILTER SELECT — pretty dropdown with icons
 // ═════════════════════════════════════════════════════════════════════
 function FilterSelect({
@@ -468,29 +512,31 @@ export default function AdminActivityLog() {
     return () => unsubscribe();
   }, []);
 
-    // ─── Fetch securityLogs (para sa Security Logs tab) ───────────────
-    useEffect(() => {
-      const q = query(collection(db, "securityLogs"), orderBy("timestamp", "desc"));
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        const data = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
-        setSecurityLogs(data);
-      });
-      return () => unsubscribe();
-    }, []);
+  // ─── Fetch securityLogs ────────────────────────────────────────────
+  useEffect(() => {
+    const q = query(collection(db, "securityLogs"), orderBy("timestamp", "desc"));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setSecurityLogs(data);
+    });
+    return () => unsubscribe();
+  }, []);
 
-    useEffect(() => {
-      const q = query(
-        collection(db, "users"),
-        where("status", "==", "Blocked")
-      );
-      const unsubscribe = onSnapshot(
-        q,
-        (snapshot) => setBlockedCount(snapshot.size),
-        (err) => console.error("Blocked users listener:", err)
-      );
-      return () => unsubscribe();
-    }, []);
-    
+  // ─── Blocked accounts count — from `users` collection ──────────────
+  useEffect(() => {
+    const q = query(
+      collection(db, "users"),
+      where("status", "==", "Blocked")
+    );
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => setBlockedCount(snapshot.size),
+      (err) => console.error("Blocked users listener:", err)
+    );
+    return () => unsubscribe();
+  }, []);
+
+  // ─── Normalize security logs — RAW values (masking at render time) ─
   const normalizedSecurityLogs = useMemo(() => {
     return securityLogs.map((s) => ({
       id: `sec_${s.id}`,
@@ -610,7 +656,6 @@ export default function AdminActivityLog() {
 
   // ═══════════════════════════════════════════════════════════════
   // FUTURE-DATE GUARD
-  // The maximum selectable date is today (no future exports).
   // ═══════════════════════════════════════════════════════════════
   const todayISO = useMemo(() => getTodayISO(), []);
 
@@ -660,10 +705,10 @@ export default function AdminActivityLog() {
     const rows = logsToExport.map((log) => {
       const date = log.timestamp?.toDate?.().toLocaleDateString?.() || "";
       return [
-        log.user || "",
+        maskIfEmail(log.user) || "",
         log.role || "",
         log.action || "",
-        log.target || "",
+        maskIfEmail(log.target) || "",
         date,
         log.status || "",
       ];
@@ -738,10 +783,10 @@ export default function AdminActivityLog() {
         hour: "2-digit", minute: "2-digit",
       }) || "";
       return [
-        log.user || "-",
+        maskIfEmail(log.user) || "-",
         log.role || "-",
         log.action || "-",
-        log.target || "-",
+        maskIfEmail(log.target) || "-",
         `${date} ${time}`,
         log.status || "-",
       ];
@@ -933,12 +978,19 @@ export default function AdminActivityLog() {
                   hour: "2-digit", minute: "2-digit",
                 }) || "";
 
+                // ✅ Mask any email-looking value in user / target
+                const displayUser = maskIfEmail(log.user) || "—";
+                const displayTarget = maskIfEmail(log.target) || "—";
+                const userWasMasked = displayUser !== (log.user || "—");
+                const targetWasMasked = displayTarget !== (log.target || "—");
+
                 return (
                   <tr key={log.id}>
                     <td>
                       <div className="user-cell">
                         <div className="user-avatar">
-                          {(log.user || "")
+                          {(displayUser || "")
+                            .replace(/\*/g, "")
                             .split(/[\s@]+/)
                             .filter(Boolean)
                             .slice(0, 2)
@@ -947,7 +999,12 @@ export default function AdminActivityLog() {
                             .toUpperCase()}
                         </div>
                         <div>
-                          <p className="user-name">{log.user}</p>
+                          <p
+                            className="user-name"
+                            title={userWasMasked ? log.user : undefined}
+                          >
+                            {displayUser}
+                          </p>
                           <p className="user-role">{log.role}</p>
                         </div>
                       </div>
@@ -963,8 +1020,11 @@ export default function AdminActivityLog() {
                       </div>
                     </td>
 
-                    <td className="target-cell">
-                      {log.target}
+                    <td
+                      className="target-cell"
+                      title={targetWasMasked ? log.target : undefined}
+                    >
+                      {displayTarget}
                       {log._kind === "security" && log.userAgent && (
                         <span className="ua-hint" title={log.userAgent}>
                           <i className="fa-solid fa-circle-info"></i>

@@ -618,10 +618,6 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
                 <span className="sim-preview-value">
                   {selectedCategoryMeta ? (
                     <>
-                      <i
-                        className={`fa-solid ${selectedCategoryMeta.icon}`}
-                        style={{ marginRight: 6, color: "#f57c00" }}
-                      />
                       {selectedCategoryMeta.label}
                     </>
                   ) : (
@@ -707,10 +703,13 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
         </div>
       )}
 
-      <Toast
-        show={toast.show} type={toast.type} title={toast.title} message={toast.message}
-        onClose={() => setToast(p => ({ ...p, show: false }))}
-      />
+            {/* ═══ TOAST — wrapped para hindi matakpan ng modal overlay ═══ */}
+      <div className="sim-toast-layer">
+        <Toast
+          show={toast.show} type={toast.type} title={toast.title} message={toast.message}
+          onClose={() => setToast(p => ({ ...p, show: false }))}
+        />
+      </div>
     </>
   );
 }

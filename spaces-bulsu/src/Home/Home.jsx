@@ -18,7 +18,7 @@ const researchers = [
   { name: "Dan Ivan V. Cajucom", role: "Project Leader", image: danImage },
   { name: "Mark William P. Bravo", role: "Researcher", image: markImage },
   { name: "Theodora Gwyleth Margareth N. Gabriel", role: "Researcher", image: theaImage },
-  { name: "Raiza Shane Torres", role: "Researcher", image: raizaImage },
+  { name: "Raiza Shane L. Torres", role: "Researcher", image: raizaImage },
   { name: "Renzo O. Tuazon", role: "Researcher", image: renzoImage },
 ];
 

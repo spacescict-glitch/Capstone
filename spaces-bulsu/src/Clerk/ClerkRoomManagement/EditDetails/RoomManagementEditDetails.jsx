@@ -7,7 +7,7 @@ import "./room-management-edit-details.css";
 import SavePopup from "../../../Popup/SavePopup/SavePopup";
 import Toast from "../../../Popup/Toast/Toast";
 
-/* ─── Cloudinary config (same as AddRoom / SubmitIssueModal) ─── */
+/* ─── Cloudinary config ─── */
 const CLOUDINARY_CLOUD_NAME    = "dqn1s5ujs";
 const CLOUDINARY_UPLOAD_PRESET = "SpaceSCICT";
 
@@ -35,10 +35,10 @@ const ROOM_TYPES = [
 ];
 
 const EQUIPMENT_OPTIONS = [
-  { id: "projector", label: "Projector" },
-  { id: "tvDisplay", label: "TV Display" },
-  { id: "ac", label: "AC" },
-  { id: "computer", label: "Computer" },
+  { id: "projector",  label: "Projector" },
+  { id: "tvDisplay",  label: "TV Display" },
+  { id: "ac",         label: "AC" },
+  { id: "computer",   label: "Computer" },
   { id: "smartBoard", label: "Smart Board" },
 ];
 
@@ -107,16 +107,17 @@ function RoomManagementEditDetails() {
     smartBoard: false,
   });
 
-  /* ─── Photo state ─────────────────────────────────────── */
+  /* ─── Photo state ─── */
   const [photoFile, setPhotoFile]             = useState(null);
   const [photoPreview, setPhotoPreview]       = useState("");
   const [existingPhotoUrl, setExistingPhotoUrl] = useState("");
   const [removePhoto, setRemovePhoto]         = useState(false);
+  const [dragOver, setDragOver]               = useState(false);
+  const dragCounter = useRef(0);
   const photoInputRef = useRef(null);
 
   const [confirmModalType, setConfirmModalType] = useState(null);
 
-  // ─── Toast state ──────────────────────────────────────────────────────
   const [toast, setToast] = useState({
     show: false,
     type: "success",
@@ -167,7 +168,6 @@ function RoomManagementEditDetails() {
           smartBoard: data.equipment?.smartBoard || false,
         });
 
-        // ✅ Load existing photo (kung meron)
         setExistingPhotoUrl(data.photoUrl || "");
         setPhotoPreview(data.photoUrl || "");
 
@@ -188,30 +188,31 @@ function RoomManagementEditDetails() {
     };
 
     loadRoom();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, navigate]);
 
-  /* ─── Photo handlers ─────────────────────────────────── */
-  const handlePhotoSelect = (e) => {
-    const file = e.target.files?.[0];
+  /* ─── Photo processing (shared) ─── */
+  const processFile = (file) => {
     if (!file) return;
-
     if (!file.type.startsWith("image/")) {
       showToast("error", "Invalid file", "Please choose an image file (JPG, PNG, WEBP).");
-      e.target.value = "";
       return;
     }
     if (file.size > MAX_PHOTO_MB * 1024 * 1024) {
       showToast("error", "File too large", `Max photo size is ${MAX_PHOTO_MB}MB.`);
-      e.target.value = "";
       return;
     }
-
     if (photoPreview && photoPreview.startsWith("blob:")) {
       URL.revokeObjectURL(photoPreview);
     }
     setPhotoFile(file);
     setPhotoPreview(URL.createObjectURL(file));
     setRemovePhoto(false);
+  };
+
+  const handlePhotoSelect = (e) => {
+    const file = e.target.files?.[0];
+    processFile(file);
     e.target.value = "";
   };
 
@@ -224,6 +225,39 @@ function RoomManagementEditDetails() {
     setExistingPhotoUrl("");
     setRemovePhoto(true);
     if (photoInputRef.current) photoInputRef.current.value = "";
+  };
+
+  /* ─── Drag & Drop ─── */
+  const handleDragEnter = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current += 1;
+    if (e.dataTransfer?.items?.length > 0) setDragOver(true);
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current -= 1;
+    if (dragCounter.current <= 0) {
+      dragCounter.current = 0;
+      setDragOver(false);
+    }
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current = 0;
+    setDragOver(false);
+    const file = e.dataTransfer?.files?.[0];
+    if (file) processFile(file);
   };
 
   // Cleanup blob on unmount
@@ -265,7 +299,6 @@ function RoomManagementEditDetails() {
 
       const buildingFinal = isOtherBuilding ? buildingCustom.trim() : building;
 
-      /* ── 1) Upload bagong photo kung meron (optional) ── */
       let newPhotoUrl = existingPhotoUrl || "";
       if (photoFile) {
         try {
@@ -279,7 +312,6 @@ function RoomManagementEditDetails() {
         newPhotoUrl = "";
       }
 
-      /* ── 2) Update room doc ── */
       await updateDoc(doc(db, "rooms", id), {
         roomName,
         capacity,
@@ -404,57 +436,66 @@ function RoomManagementEditDetails() {
           </div>
         </div>
 
-        {/* ─── Room Photo (Optional) ─────────────────── */}
+        {/* ─── Room Photo (Optional) — DRAG & DROP ─── */}
         <div className="form-row full">
           <label>
             Room Photo <span className="photo-optional-tag">Optional</span>
           </label>
 
-          <div className="photo-upload-wrap">
-            <div className="photo-upload-preview">
-              {photoPreview ? (
+          <div
+            className={`photo-dropzone ${dragOver ? 'drag-over' : ''} ${photoPreview ? 'has-image' : ''}`}
+            onClick={() => { if (!photoPreview) photoInputRef.current?.click(); }}
+            onDragEnter={handleDragEnter}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
+            <input
+              ref={photoInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handlePhotoSelect}
+              style={{ display: "none" }}
+            />
+
+            {photoPreview ? (
+              <div className="photo-dropzone-preview">
                 <img src={photoPreview} alt="Room preview" />
-              ) : (
-                <div className="photo-upload-preview-placeholder">
-                  <i className="fa-regular fa-image"></i>
-                  <span>No image</span>
+                <div className="photo-dropzone-overlay">
+                  <button
+                    type="button"
+                    className="photo-action-btn change"
+                    onClick={(e) => { e.stopPropagation(); photoInputRef.current?.click(); }}
+                  >
+                    <i className="fa-solid fa-arrow-up-from-bracket"></i>
+                    Change
+                  </button>
+                  <button
+                    type="button"
+                    className="photo-action-btn remove"
+                    onClick={(e) => { e.stopPropagation(); handleRemovePhoto(); }}
+                  >
+                    <i className="fa-solid fa-trash-can"></i>
+                    Remove
+                  </button>
                 </div>
-              )}
-            </div>
-
-            <div className="photo-upload-controls">
-              <button
-                type="button"
-                className="photo-upload-btn"
-                onClick={() => photoInputRef.current?.click()}
-              >
-                <i className="fa-solid fa-arrow-up-from-bracket"></i>
-                {photoFile ? "Change photo" : photoPreview ? "Replace photo" : "Upload photo"}
-              </button>
-
-              <input
-                ref={photoInputRef}
-                type="file"
-                accept="image/*"
-                onChange={handlePhotoSelect}
-                style={{ display: "none" }}
-              />
-
-              {photoPreview && (
-                <button
-                  type="button"
-                  className="photo-remove-btn"
-                  onClick={handleRemovePhoto}
-                >
-                  <i className="fa-solid fa-trash-can"></i>
-                  Remove photo
-                </button>
-              )}
-
-              <span className="photo-hint">
-                JPG, PNG, o WEBP. Max {MAX_PHOTO_MB}MB. If it has no image, room name will be displayed.
-              </span>
-            </div>
+              </div>
+            ) : (
+              <div className="photo-dropzone-empty">
+                <div className="photo-dropzone-icon">
+                  <i className={`fa-solid ${dragOver ? 'fa-cloud-arrow-down' : 'fa-cloud-arrow-up'}`}></i>
+                </div>
+                <p className="photo-dropzone-title">
+                  {dragOver ? "Drop your photo here" : "Drag & drop your photo"}
+                </p>
+                <p className="photo-dropzone-sub">
+                  or <span className="photo-dropzone-browse">click to browse</span>
+                </p>
+                <span className="photo-dropzone-hint">
+                  JPG, PNG, WEBP • Max {MAX_PHOTO_MB}MB
+                </span>
+              </div>
+            )}
           </div>
         </div>
 
