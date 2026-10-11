@@ -106,47 +106,46 @@ export default function FacultyRoomReassignment() {
   // na tumutugma sa assignmentId na ito at hindi pa naka-mark as decided,
   // saka nila ina-update. Kapag bagong reassignment (fresh doc), wala
   // itong maapektuhan.
-  const markRelatedNotifications = async (decision) => {
-    try {
-      const currentUser = auth.currentUser;
-      if (!currentUser) return;
+const markRelatedNotifications = async (decision) => {
+  try {
+    const currentUser = auth.currentUser;
+    if (!currentUser) return;
 
-      const q = query(
-        collection(db, "notifications"),
-        where("assignmentId", "==", assignment.id),
-        where("type", "==", "room-reassignment")
-      );
+    // ⚠️ SINGLE where clause lang — walang composite index na kailangan
+    const q = query(
+      collection(db, "notifications"),
+      where("assignmentId", "==", assignment.id)
+    );
 
-      const snap = await getDocs(q);
-      let markedCount = 0;
+    const snap = await getDocs(q);
+    let markedCount = 0;
 
-      for (const notifDoc of snap.docs) {
-        const data = notifDoc.data();
+    for (const notifDoc of snap.docs) {
+      const data = notifDoc.data();
 
-        // ✅ Skip kapag decided na
-        if (data.decided === true) continue;
+      // ── Client-side filter (para walang composite index) ──
+      if (data.userId !== currentUser.uid) continue;
+      if (String(data.type || "").toLowerCase() !== "room-reassignment") continue;
+      if (data.decided === true) continue;
 
-        // ✅ Skip kapag hindi para sa user na ito
-        if (data.userId !== currentUser.uid) continue;
-
-        await updateDoc(notifDoc.ref, {
-          decided: true,
-          decidedAt: serverTimestamp(),
-          badge: decision.toUpperCase(),
-        });
-        markedCount++;
-      }
-
-      console.log(
-        `[FacultyRoomReassignment] Marked ${markedCount} notification(s) as decided.`
-      );
-    } catch (err) {
-      console.warn(
-        "[FacultyRoomReassignment] Failed to mark notifications:",
-        err
-      );
+      await updateDoc(notifDoc.ref, {
+        decided: true,
+        decidedAt: serverTimestamp(),
+        badge: decision.toUpperCase(),
+      });
+      markedCount++;
     }
-  };
+
+    console.log(
+      `[FacultyRoomReassignment] Marked ${markedCount} notification(s) as decided.`
+    );
+  } catch (err) {
+    console.error(
+      "[FacultyRoomReassignment] Failed to mark notifications:",
+      err
+    );
+  }
+};
 
   // ─── Send notifications ───────────────────────────────────────
   const sendDecisionNotifications = async (decision) => {

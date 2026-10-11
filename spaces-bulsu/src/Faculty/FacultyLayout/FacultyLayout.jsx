@@ -24,6 +24,7 @@ export default function FacultyLayout() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [notifications, setNotifications] = useState([]);
+const [decidedAssignmentIds, setDecidedAssignmentIds] = useState(new Set());
   const [activeTab, setActiveTab] = useState("all");
   const [loggingOut, setLoggingOut] = useState(false);
   const [selectedNotification, setSelectedNotification] = useState(null);
@@ -88,6 +89,50 @@ export default function FacultyLayout() {
 
     return () => unsubscribeAuth();
   }, []);
+
+  /* ---------- Live listener: decided reassignments ---------- */
+useEffect(() => {
+  const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+    if (!user) return;
+
+    // Single where clause — walang composite index kailangan
+    const q = query(
+      collection(db, "roomReassignments"),
+      where("facultyId", "==", user.uid)
+    );
+
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const decidedSet = new Set();
+        snap.docs.forEach((d) => {
+          const data = d.data();
+          const status = String(data.status || "").toLowerCase();
+          // Marks as "decided" — hindi na pwedeng mag-respond
+          if (
+            status === "accepted" ||
+            status === "declined" ||
+            status === "cancelled" ||
+            status === "needs_reassign"
+          ) {
+            decidedSet.add(d.id);
+          }
+        });
+        setDecidedAssignmentIds(decidedSet);
+      },
+      (err) => {
+        console.warn(
+          "[FacultyLayout] roomReassignments listener failed:",
+          err
+        );
+      }
+    );
+
+    return () => unsub();
+  });
+
+  return () => unsubscribeAuth();
+}, []);
 
   /* ---------- Close dropdown on outside click ---------- */
   useEffect(() => {
@@ -213,11 +258,15 @@ export default function FacultyLayout() {
   const closeNotificationDetail = () => setSelectedNotification(null);
 
 const isDecidedNotification = (item) => {
-  // 🆕 Priority: kung na-mark na as decided yung notification mismo,
-  // i-hide agad yung View button. Ito yung ina-update ng
-  // FacultyRoomReassignment pagkatapos mag-decide ng faculty.
+  // 1️⃣ Notification mismo naka-mark as decided
   if (item?.decided === true) return true;
 
+  // 2️⃣ Fallback: check kung ang linked reassignment ay decided na
+  if (item?.assignmentId && decidedAssignmentIds.has(item.assignmentId)) {
+    return true;
+  }
+
+  // 3️⃣ Legacy checks (para sa mga lumang notification)
   const badge = String(item?.badge || "").toUpperCase();
   const type = String(item?.type || "").toLowerCase();
   return (
