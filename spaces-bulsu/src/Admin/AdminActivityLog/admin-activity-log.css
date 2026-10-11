@@ -229,7 +229,6 @@
   margin-bottom: 12px;
 }
 
-/* Wrapper */
 .fs-wrap {
   position: relative;
   display: flex;
@@ -248,7 +247,6 @@
   padding-left: 2px;
 }
 
-/* Trigger button */
 .fs-trigger {
   display: flex;
   align-items: center;
@@ -326,7 +324,6 @@
   transform: rotate(180deg);
 }
 
-/* Clickaway */
 .fs-clickaway {
   position: fixed;
   inset: 0;
@@ -334,7 +331,6 @@
   background: transparent;
 }
 
-/* Popover */
 .fs-popover {
   position: absolute;
   top: calc(100% + 8px);
@@ -585,7 +581,6 @@
   border-radius: 2px 0 0 0;
 }
 
-/* Calendar header */
 .dp-cal-header {
   display: flex;
   align-items: center;
@@ -620,7 +615,6 @@
   color: #f57c00;
 }
 
-/* Weekdays */
 .dp-cal-weekdays {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
@@ -638,7 +632,6 @@
   padding: 4px 0;
 }
 
-/* Grid */
 .dp-cal-grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
@@ -710,7 +703,6 @@
   color: #e5e7eb;
 }
 
-/* Calendar footer */
 .dp-cal-footer {
   display: flex;
   gap: 8px;
@@ -954,7 +946,7 @@
 .ua-hint:hover { color: #f57c00; }
 
 /* ═══════════════════════════════════════════════════════════════
-   EXPORT MODAL
+   EXPORT MODAL — RESPONSIVE
    ═══════════════════════════════════════════════════════════════ */
 
 .export-modal-overlay {
@@ -969,6 +961,8 @@
   justify-content: center;
   padding: 24px;
   animation: exportFadeIn 0.2s ease;
+  padding-left: max(24px, env(safe-area-inset-left));
+  padding-right: max(24px, env(safe-area-inset-right));
 }
 
 @keyframes exportFadeIn {
@@ -981,13 +975,14 @@
   border-radius: 20px;
   width: 100%;
   max-width: 520px;
-  max-height: 90vh;
-  max-height: 90dvh;
+  max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
   display: flex;
   flex-direction: column;
   box-shadow: 0 24px 64px rgba(8, 16, 31, 0.28);
   overflow: visible;
   animation: exportPop 0.22s cubic-bezier(.22, 1, .36, 1);
+  box-sizing: border-box;
 }
 
 @keyframes exportPop {
@@ -1054,6 +1049,8 @@
   flex-direction: column;
   gap: 22px;
   overflow: visible;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .export-section {
@@ -1111,7 +1108,6 @@
 
 .export-range-btn i { font-size: 14px; }
 
-/* Date row */
 .export-date-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1159,7 +1155,6 @@
   font-weight: 800;
 }
 
-/* Format buttons */
 .export-format-options {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1232,6 +1227,7 @@
   border-radius: 10px;
   font-size: 12.5px;
   color: #475569;
+  word-break: break-all;
 }
 
 .export-file-preview i {
@@ -1243,7 +1239,6 @@
 .export-file-preview strong {
   color: #16213e;
   font-weight: 700;
-  word-break: break-all;
 }
 
 .export-modal-footer {
@@ -1288,11 +1283,14 @@
 .export-btn.confirm:hover:not(:disabled) { background: #d96a00; }
 .export-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-/* RESPONSIVE */
+/* ═══════════════════════════════════════════════════════════════
+   RESPONSIVE
+   ═══════════════════════════════════════════════════════════════ */
 @media (max-width: 1024px) {
   .log-page-header { flex-direction: column; }
   .log-actions { margin-top: 10px; }
   .log-table-wrap { overflow-x: auto; }
+  .log-table { min-width: 720px; }
 }
 
 @media (max-width: 768px) {
@@ -1332,36 +1330,351 @@
   .fs-popover { width: 100%; }
 }
 
-@media (max-width: 600px) {
+/* ═══════════════════════════════════════════════════════════════
+   TABLET EXPORT MODAL (≤ 700px)
+   ═══════════════════════════════════════════════════════════════ */
+@media (max-width: 700px) {
   .export-modal-overlay {
-    padding: 16px;
-    align-items: flex-end;
+    padding: 20px;
   }
 
   .export-modal {
-    max-height: 92vh;
+    max-width: 460px;
+    max-height: calc(100vh - 40px);
+    max-height: calc(100dvh - 40px);
+  }
+
+  .export-modal-header {
+    padding: 18px 22px;
+  }
+
+  .export-modal-body {
+    padding: 20px 22px;
+    gap: 20px;
+  }
+
+  .export-modal-footer {
+    padding: 14px 22px 18px;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   MOBILE EXPORT MODAL (≤ 600px) — bottom sheet pattern
+   ═══════════════════════════════════════════════════════════════ */
+@media (max-width: 600px) {
+  .export-modal-overlay {
+    padding: 0;
+    align-items: flex-end;
+    justify-content: center;
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+
+  .export-modal {
+    width: 100%;
+    max-width: 100%;
     max-height: 92dvh;
-    border-radius: 20px 20px 0 0;
-    animation: exportSlideUp 0.28s cubic-bezier(.22, 1, .36, 1);
+    border-radius: 22px 22px 0 0;
+    animation: exportSlideUp 0.3s cubic-bezier(.22, 1, .36, 1);
+    box-shadow: 0 -8px 40px rgba(8, 16, 31, 0.24);
   }
 
   @keyframes exportSlideUp {
-    from { opacity: 0; transform: translateY(60px); }
+    from { opacity: 0; transform: translateY(100%); }
     to   { opacity: 1; transform: translateY(0); }
   }
 
-  .export-modal-header { padding: 18px 20px; }
-  .export-modal-body { padding: 18px 20px; gap: 18px; }
-  .export-modal-footer { padding: 14px 20px 18px; }
+  /* Header with drag handle */
+  .export-modal-header {
+    padding: 12px 20px 14px;
+    border-radius: 22px 22px 0 0;
+    position: relative;
+  }
 
+  .export-modal-header::before {
+    content: "";
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 40px;
+    height: 4px;
+    border-radius: 999px;
+    background: #e2e1de;
+  }
+
+  .export-modal-title h3 {
+    font-size: 16px;
+    margin-top: 6px;
+  }
+
+  .export-modal-title i {
+    font-size: 16px;
+    margin-top: 6px;
+  }
+
+  .export-modal-close {
+    margin-top: 6px;
+    width: 32px;
+    height: 32px;
+    font-size: 14px;
+  }
+
+  /* Body scrolls */
+  .export-modal-body {
+    padding: 16px 18px 20px;
+    gap: 18px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+  }
+
+  .export-modal-body::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .export-modal-body::-webkit-scrollbar-thumb {
+    background: #e5e7eb;
+    border-radius: 999px;
+  }
+
+  /* Stack everything */
   .export-range-options,
   .export-format-options,
   .export-date-row {
     grid-template-columns: 1fr;
   }
 
-  .export-modal-title h3 { font-size: 15px; }
-  .export-modal-title i { font-size: 16px; }
+  /* Bigger touch targets */
+  .export-range-btn {
+    min-height: 46px;
+    font-size: 14px;
+  }
+
+  .export-format-btn {
+    padding: 14px 16px;
+    min-height: 66px;
+  }
+
+  .export-format-btn > i {
+    font-size: 22px;
+  }
+
+  .export-format-name {
+    font-size: 14.5px;
+  }
+
+  .export-format-desc {
+    font-size: 11.5px;
+  }
+
+  .export-file-preview {
+    padding: 12px 14px;
+    font-size: 12px;
+  }
+
+  /* Footer with safe-area, stacked buttons */
+  .export-modal-footer {
+    display: flex;
+    flex-direction: column-reverse;
+    align-items: stretch;
+    gap: 8px;
+    padding: 14px 18px calc(16px + env(safe-area-inset-bottom, 0px));
+    border-radius: 0;
+  }
+
+  /* ✅ Kill flex-grow so `height` actually applies in column layout */
+  .export-btn {
+    flex: 0 0 auto;
+    width: 100%;
+    min-height: 50px;
+    height: 50px;
+    font-size: 14.5px;
+    border-radius: 14px;
+    padding: 0 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .export-btn.cancel { order: 1; }
+  .export-btn.confirm { order: 2; }
+
+  /* ── Date picker: center as modal dialog on mobile ── */
+  .dp-popover {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: calc(100vw - 32px);
+    max-width: 340px;
+    padding: 16px;
+    z-index: 100002;
+    animation: dp-pop-in-mobile 0.2s ease-out;
+  }
+
+  @keyframes dp-pop-in-mobile {
+    from { opacity: 0; transform: translate(-50%, -46%) scale(0.96); }
+    to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  }
+
+  .dp-arrow { display: none; }
+
+  .dp-clickaway {
+    z-index: 100001;
+    background: rgba(8, 16, 31, 0.35);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+  }
+
+  /* Larger touch targets for date picker */
+  .dp-cal-nav {
+    width: 34px;
+    height: 34px;
+  }
+
+  .dp-cal-day {
+    font-size: 13.5px;
+    border-radius: 10px;
+  }
+
+  .dp-cal-footer-btn {
+    height: 42px;
+    font-size: 13.5px;
+    border-radius: 10px;
+  }
+
+  .dp-trigger {
+    height: 50px;
+    font-size: 14px;
+    border-radius: 12px;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   VERY SMALL (≤ 380px)
+   ═══════════════════════════════════════════════════════════════ */
+@media (max-width: 380px) {
+  .export-modal-header {
+    padding: 10px 16px 12px;
+  }
+
+  .export-modal-title h3 {
+    font-size: 15px;
+  }
+
+  .export-modal-body {
+    padding: 14px 16px 18px;
+    gap: 16px;
+  }
+
+  .export-modal-footer {
+    padding: 12px 16px calc(14px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .export-btn {
+    flex: 0 0 auto;
+    width: 100%;
+    height: 46px;
+    min-height: 46px;
+    font-size: 14px;
+  }
+
+  .dp-popover {
+    padding: 14px;
+    max-width: calc(100vw - 24px);
+  }
+
+  .dp-cal-day {
+    font-size: 12.5px;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   LANDSCAPE PHONE (short height)
+   ═══════════════════════════════════════════════════════════════ */
+@media (max-height: 520px) and (orientation: landscape) {
+  .export-modal-overlay {
+    align-items: center;
+    padding: 12px;
+  }
+
+  .export-modal {
+    max-height: 94dvh;
+    border-radius: 16px;
+    animation: exportPop 0.22s cubic-bezier(.22, 1, .36, 1);
+  }
+
+  .export-modal-header {
+    padding: 12px 20px;
+  }
+
+  .export-modal-header::before { display: none; }
+
+  .export-modal-title h3,
+  .export-modal-title i {
+    margin-top: 0;
+  }
+
+  .export-modal-close {
+    margin-top: 0;
+  }
+
+  .export-modal-body {
+    padding: 14px 20px;
+    gap: 14px;
+    overflow-y: auto;
+  }
+
+  .export-range-options,
+  .export-format-options,
+  .export-date-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .export-format-btn {
+    padding: 10px 12px;
+    min-height: 54px;
+  }
+
+  .export-format-btn > i { font-size: 18px; }
+
+  .export-modal-footer {
+    flex-direction: row;
+    padding: 12px 20px 14px;
+  }
+
+  .export-btn {
+    flex: 1 1 0;
+    height: 42px;
+    min-height: 42px;
+    font-size: 13.5px;
+  }
+
+  /* Date picker back to inline-style popover in landscape */
+  .dp-popover {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    transform: none;
+    width: 300px;
+    max-width: calc(100vw - 40px);
+    padding: 12px;
+  }
+
+  @keyframes dp-pop-in-mobile {
+    from { opacity: 0; transform: translateY(-6px) scale(0.98); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  .dp-arrow { display: block; }
+
+  .dp-clickaway {
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
 }
 
 /* Reduced motion */

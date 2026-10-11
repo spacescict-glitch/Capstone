@@ -608,14 +608,27 @@ export default function AdminActivityLog() {
     setShowExportModal(false);
   };
 
+  // ═══════════════════════════════════════════════════════════════
+  // FUTURE-DATE GUARD
+  // The maximum selectable date is today (no future exports).
+  // ═══════════════════════════════════════════════════════════════
+  const todayISO = useMemo(() => getTodayISO(), []);
+
   const exportDateError = useMemo(() => {
     if (exportRange !== "range") return "";
     if (!exportFrom || !exportTo) return "";
+
     if (new Date(exportTo) < new Date(exportFrom)) {
       return "The 'To' date cannot be earlier than the 'From' date.";
     }
+    if (exportFrom > todayISO) {
+      return "Future dates are not allowed. Please select today or earlier.";
+    }
+    if (exportTo > todayISO) {
+      return "Future dates are not allowed. Please select today or earlier.";
+    }
     return "";
-  }, [exportRange, exportFrom, exportTo]);
+  }, [exportRange, exportFrom, exportTo, todayISO]);
 
   const isExportValid = useMemo(() => {
     if (exportRange === "all") return true;
@@ -1091,7 +1104,7 @@ export default function AdminActivityLog() {
                       value={exportFrom}
                       onChange={setExportFrom}
                       placeholder="Pick start date"
-                      max={exportTo || undefined}
+                      max={exportTo || todayISO}
                       disabled={exporting}
                     />
                     <DatePickerInput
@@ -1100,6 +1113,7 @@ export default function AdminActivityLog() {
                       onChange={setExportTo}
                       placeholder="Pick end date"
                       min={exportFrom || undefined}
+                      max={todayISO}
                       disabled={exporting}
                     />
                   </div>

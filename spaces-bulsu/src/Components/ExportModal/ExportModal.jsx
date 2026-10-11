@@ -186,11 +186,16 @@ export default function ExportModal({
   filenamePrefix = "SpaceSCICT_Report",
   exporting = false,
   onExport,
+  maxDate = null,          // Optional override; defaults to today
 }) {
   const [range, setRange] = useState("all");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [format, setFormat] = useState("csv");
+
+  // Today's ISO date — used as the default upper bound
+  const todayISO = useMemo(() => getTodayISO(), []);
+  const effectiveMaxDate = maxDate || todayISO;
 
   useEffect(() => {
     if (isOpen) {
@@ -201,12 +206,24 @@ export default function ExportModal({
     }
   }, [isOpen]);
 
+  // ═══════════════════════════════════════════════════════════════
+  // VALIDATION — with future-date guard
+  // ═══════════════════════════════════════════════════════════════
   const dateError = useMemo(() => {
     if (range !== "range") return "";
     if (!from || !to) return "";
-    if (new Date(to) < new Date(from)) return "The 'To' date cannot be earlier than the 'From' date.";
+
+    if (new Date(to) < new Date(from)) {
+      return "The 'To' date cannot be earlier than the 'From' date.";
+    }
+    if (from > effectiveMaxDate) {
+      return "Future dates are not allowed. Please select today or earlier.";
+    }
+    if (to > effectiveMaxDate) {
+      return "Future dates are not allowed. Please select today or earlier.";
+    }
     return "";
-  }, [range, from, to]);
+  }, [range, from, to, effectiveMaxDate]);
 
   const isValid = useMemo(() => {
     if (range === "all") return true;
@@ -256,8 +273,23 @@ export default function ExportModal({
           {range === "range" && (
             <div className="export-section">
               <div className="export-date-row">
-                <DatePickerInput label="FROM" value={from} onChange={setFrom} placeholder="Pick start date" max={to || undefined} disabled={exporting} />
-                <DatePickerInput label="TO" value={to} onChange={setTo} placeholder="Pick end date" min={from || undefined} disabled={exporting} />
+                <DatePickerInput
+                  label="FROM"
+                  value={from}
+                  onChange={setFrom}
+                  placeholder="Pick start date"
+                  max={to || effectiveMaxDate}
+                  disabled={exporting}
+                />
+                <DatePickerInput
+                  label="TO"
+                  value={to}
+                  onChange={setTo}
+                  placeholder="Pick end date"
+                  min={from || undefined}
+                  max={effectiveMaxDate}
+                  disabled={exporting}
+                />
               </div>
               {dateError && (
                 <p className="export-error">

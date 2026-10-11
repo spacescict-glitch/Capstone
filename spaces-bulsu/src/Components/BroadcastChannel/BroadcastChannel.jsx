@@ -20,7 +20,7 @@ import { logActivity } from "../../utils/logActivity";
 import Toast from "../../Popup/Toast/Toast";
 
 // ─── Cloudinary constants ─────────────────────────────────────────────
-const CLOUDINARY_CLOUD_NAME = "dzu1qb8oz";
+const CLOUDINARY_CLOUD_NAME = "dqn1s5ujs";
 const CLOUDINARY_UPLOAD_PRESET = "SpacesCICT";
 
 // ═══════════════════════════════════════════════════════════════════
@@ -57,7 +57,8 @@ async function uploadToCloudinary(file, folder) {
   formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
   formData.append("folder", `spaces/${folder}`);
 
-  const resourceType = isImage ? "image" : "raw";
+  const isPdf = file.type === "application/pdf";
+  const resourceType = isImage || isPdf ? "image" : "raw";
   const endpoint = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/${resourceType}/upload`;
 
   const res = await fetch(endpoint, { method: "POST", body: formData });
@@ -876,9 +877,26 @@ export default function BroadcastChannel() {
 
     const icon = getFileIcon(fileName);
     const color = getFileColor(fileName);
-    const viewUrl = fileUrl.includes("?")
-      ? `${fileUrl}&fl_attachment=0`
-      : `${fileUrl}?fl_attachment=0`;
+
+    const ext = (fileName || "").split(".").pop()?.toLowerCase() || "";
+    const isPdf = ext === "pdf";
+    const isImg = ["jpg", "jpeg", "png", "gif", "webp"].includes(ext);
+    const isTxt = ext === "txt";
+    const isViewableInBrowser = isPdf || isImg || isTxt;
+
+    const isImageResource = fileUrl.includes("/image/upload/");
+    const sep = fileUrl.includes("?") ? "&" : "?";
+
+    // For image-type resources, fl_attachment=0 forces inline preview.
+    // For raw resources, we can't force it — URL works as-is.
+    const viewUrl = isImageResource
+      ? `${fileUrl}${sep}fl_attachment=0`
+      : fileUrl;
+
+    // Force-download URL for image resource
+    const downloadUrl = isImageResource
+      ? `${fileUrl}${sep}fl_attachment=${encodeURIComponent(fileName || "file")}`
+      : fileUrl;
 
     return (
       <div className="bc-file-attachment">
@@ -888,18 +906,24 @@ export default function BroadcastChannel() {
         <div className="bc-file-info">
           <span className="bc-file-name">{fileName || "File"}</span>
           <div className="bc-file-actions">
+            {isViewableInBrowser && (
+              <a
+                href={viewUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="bc-file-action-btn view"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <i className="fa-solid fa-eye"></i> View
+              </a>
+            )}
             <a
-              href={viewUrl}
+              href={downloadUrl}
+              {...(!isImageResource ? { download: fileName || "file" } : {})}
               target="_blank"
               rel="noopener noreferrer"
-              className="bc-file-action-btn view"
-            >
-              <i className="fa-solid fa-eye"></i> View
-            </a>
-            <a
-              href={fileUrl}
-              download={fileName || "file"}
               className="bc-file-action-btn download"
+              onClick={(e) => e.stopPropagation()}
             >
               <i className="fa-solid fa-download"></i> Download
             </a>
