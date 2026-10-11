@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { Navigate, Outlet, useLocation } from "react-router-dom";
-import { onAuthStateChanged } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
+import { onAuthStateChanged, signOut } from "firebase/auth";
+import { doc, onSnapshot } from "firebase/firestore";
 import { auth, db } from "../../firebase";
+
+const BLOCK_KEY = "spaces_block_info";
 
 /**
  * Route guard — renders child routes via <Outlet />.
@@ -20,36 +22,97 @@ export default function ProtectedRoute({ allowedRoles = [] }) {
   const [role, setRole] = useState(null);
   const [debugInfo, setDebugInfo] = useState("");
 
+  // Stable key para hindi mag-rerun ang effect sa bawat render
+  const rolesKey = allowedRoles.map((r) => String(r).toLowerCase()).join("|");
+
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (user) => {
+    let unsubUserDoc = null;
+    let cancelled = false;
+
+    const unsubAuth = onAuthStateChanged(auth, (user) => {
+      // Clean previous user-doc listener (auth fires multiple times)
+      if (unsubUserDoc) {
+        unsubUserDoc();
+        unsubUserDoc = null;
+      }
+
+      // ── Walang naka-login ──
       if (!user) {
-        setDebugInfo("No Firebase user");
-        setStatus("unauthenticated");
+        if (!cancelled) {
+          setDebugInfo("No Firebase user");
+          setStatus("unauthenticated");
+        }
         return;
       }
 
-      try {
-        const snap = await getDoc(doc(db, "users", user.uid));
-        if (!snap.exists()) {
-          setDebugInfo(`No /users doc for uid ${user.uid}`);
-          setStatus("no-profile");
-          return;
-        }
+      // ── Live listener sa user's own document ──
+      const ref = doc(db, "users", user.uid);
 
-        const data = snap.data();
-        const r = data.role || "";
-        setRole(r);
-        setDebugInfo(`role="${r}" (uid ${user.uid})`);
-        setStatus("ok");
-      } catch (err) {
-        console.error("ProtectedRoute: failed to load profile:", err);
-        setDebugInfo(`Error: ${err.message}`);
-        setStatus("error");
-      }
+      unsubUserDoc = onSnapshot(
+        ref,
+        async (snap) => {
+          if (cancelled) return;
+
+          if (!snap.exists()) {
+            setDebugInfo(`No /users doc for uid ${user.uid}`);
+            setStatus("no-profile");
+            return;
+          }
+
+          const data = snap.data();
+          const userStatus = String(data.status || "").toLowerCase();
+
+          // ═══════════════════════════════════════════════════
+          // 🔒 BLOCKED — auto sign out + redirect sa /login
+          // ═══════════════════════════════════════════════════
+          if (userStatus === "blocked") {
+            const blockInfo = {
+              reason:
+                data.blockReason ||
+                "Your account has been blocked by an administrator. Please contact the admin for assistance.",
+              email: data.email || user.email || "",
+              blockedAt: Date.now(),
+            };
+
+            try {
+              sessionStorage.setItem(BLOCK_KEY, JSON.stringify(blockInfo));
+            } catch (e) {
+              console.warn("Failed to save block info:", e);
+            }
+
+            setDebugInfo(`Account blocked (uid ${user.uid})`);
+            setStatus("blocked");
+
+            try {
+              await signOut(auth);
+            } catch (err) {
+              console.warn("Sign out failed:", err);
+            }
+            return;
+          }
+
+          // ── Normal — role check ──
+          const r = data.role || "";
+          setRole(r);
+          setDebugInfo(`role="${r}" (uid ${user.uid})`);
+          setStatus("ok");
+        },
+        (err) => {
+          console.error("ProtectedRoute: user doc listener failed:", err);
+          if (!cancelled) {
+            setDebugInfo(`Error: ${err.message}`);
+            setStatus("error");
+          }
+        }
+      );
     });
 
-    return () => unsub();
-  }, []);
+    return () => {
+      cancelled = true;
+      if (unsubUserDoc) unsubUserDoc();
+      unsubAuth();
+    };
+  }, [rolesKey]);
 
   // ── 1. Still checking auth + role ──
   if (status === "checking") {
@@ -83,7 +146,12 @@ export default function ProtectedRoute({ allowedRoles = [] }) {
     );
   }
 
-  // ── 3. Logged in but no profile / error ──
+  // ── 3. 🔒 Blocked → already signed out above; just redirect ──
+  if (status === "blocked") {
+    return <Navigate to="/login" replace />;
+  }
+
+  // ── 4. Logged in but no profile / error ──
   if (status === "no-profile" || status === "error") {
     return (
       <div
@@ -127,7 +195,9 @@ export default function ProtectedRoute({ allowedRoles = [] }) {
           administrator.
         </p>
         <button
-          onClick={() => auth.signOut().then(() => window.location.replace("/login"))}
+          onClick={() =>
+            signOut(auth).then(() => window.location.replace("/login"))
+          }
           style={{
             marginTop: 8,
             background: "#f57c00",
@@ -147,7 +217,7 @@ export default function ProtectedRoute({ allowedRoles = [] }) {
     );
   }
 
-  // ── 4. Role check ──
+  // ── 5. Role check ──
   const normalized = String(role || "").trim().toLowerCase();
   const allowed = allowedRoles.map((r) => String(r).toLowerCase());
 
@@ -211,7 +281,9 @@ export default function ProtectedRoute({ allowedRoles = [] }) {
           {debugInfo}
         </p>
         <button
-          onClick={() => auth.signOut().then(() => window.location.replace("/login"))}
+          onClick={() =>
+            signOut(auth).then(() => window.location.replace("/login"))
+          }
           style={{
             marginTop: 8,
             background: "#f57c00",
@@ -231,7 +303,6 @@ export default function ProtectedRoute({ allowedRoles = [] }) {
     );
   }
 
-  // ── 5. All good → render child routes ──
-  // ✅ THIS is the fix: use <Outlet />, NOT `children`
+  // ── 6. All good → render child routes ──
   return <Outlet />;
 }

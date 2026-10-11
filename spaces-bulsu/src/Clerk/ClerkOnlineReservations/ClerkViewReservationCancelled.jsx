@@ -52,11 +52,6 @@ function ClerkViewReservationCancelled() {
 
   return (
     <div className="clerk-cancelled-reservation-room">
-      <i
-        className="fa-solid fa-arrow-left clerk-cancelled-back-arrow"
-        onClick={() => navigate(-1)}
-        style={{ cursor: "pointer", fontSize: "20px", marginBottom: "12px" }}
-      ></i>
 
       <div className="clerk-white-box-cancelled">
         <h2 className="clerk-cancelled-title">Cancelled Reservation Details</h2>

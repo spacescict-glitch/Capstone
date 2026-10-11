@@ -85,6 +85,49 @@ const getTodayISO = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 
+/* ══════════════════════════════════════════════════════════════
+   🔔 NOTIFY HELPERS
+   ══════════════════════════════════════════════════════════════ */
+async function notifyAllAdmins({
+  title,
+  message,
+  type = "room-maintenance",
+  badge = "NEW",
+  roomId,
+  roomName,
+  issueId,
+  extra = {},
+}) {
+  try {
+    const usersSnap = await getDocs(collection(db, "users"));
+    const jobs = [];
+    usersSnap.forEach((u) => {
+      const role = (u.data().role || "").toLowerCase().trim();
+      if (role !== "admin") return;
+      jobs.push(
+        addDoc(collection(db, "notifications"), {
+          userId: u.id,
+          ownerType: "admin",
+          title,
+          message,
+          type,
+          roomId: roomId || null,
+          roomName: roomName || "",
+          issueId: issueId || null,
+          unread: true,
+          archived: false,
+          badge,
+          ...extra,
+          createdAt: serverTimestamp(),
+        })
+      );
+    });
+    if (jobs.length) await Promise.all(jobs);
+  } catch (err) {
+    console.warn("notifyAllAdmins failed:", err);
+  }
+}
+
 function ConfirmModal({
   title,
   message,
@@ -408,6 +451,28 @@ export default function ClerkRoomIssues() {
               actorName: u.name,
             },
           );
+
+          // 🔔 NEW: notify all admins
+          await notifyAllAdmins({
+            title: "Room Under Maintenance",
+            message:
+              `${u.name} marked ${issue.roomName} as Under Maintenance. ` +
+              `Reason: ${issue.description || "N/A"}. ` +
+              `${notifiedCount} faculty notified (${totalSchedules} schedule${totalSchedules === 1 ? "" : "s"} affected).`,
+            type: "room-maintenance",
+            badge: "URGENT",
+            roomId: issue.roomId,
+            roomName: issue.roomName,
+            issueId: issue.id,
+            extra: {
+              maintenanceReason: issue.description || "",
+              maintenanceCategory: issue.category || "",
+              maintenanceSetBy: u.name,
+              notifiedFacultyCount: notifiedCount,
+              totalSchedulesNotified: totalSchedules,
+            },
+          });
+
           showToast(
             "success",
             "Room Flagged",

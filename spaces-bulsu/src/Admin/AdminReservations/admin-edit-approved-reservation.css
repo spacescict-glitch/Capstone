@@ -535,3 +535,784 @@
     font-size: 12px;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   HEADER
+   ═══════════════════════════════════════════════════════════════ */
+.dh-edit-header {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #F0F0EE;
+}
+
+.dh-edit-subtitle {
+  font-size: 13.5px;
+  color: #6b7280;
+  margin: 4px 0 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   FIELDS GRID
+   ═══════════════════════════════════════════════════════════════ */
+.dh-edit-fields-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.dh-edit-span-2 {
+  grid-column: 1 / -1;
+}
+
+.dh-edit-time-pair {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   EDITABLE BOX
+   ═══════════════════════════════════════════════════════════════ */
+.dh-edit-approved-info-box.editable {
+  grid-column: 1 / -1;
+  border: 1.5px solid #f57c00;
+  background: linear-gradient(180deg, #fffaf5 0%, #fff8f0 100%);
+  box-shadow: 0 2px 12px rgba(245, 124, 0, 0.06);
+}
+
+.dh-edit-approved-info-box-title.editable-title {
+  color: #b45309;
+  padding-bottom: 12px;
+  border-bottom: 1px dashed #fcd9b3;
+  margin-bottom: 16px;
+}
+
+.dh-editable-pill {
+  margin-left: auto;
+  background: #f57c00;
+  color: #fff;
+  font-size: 9.5px;
+  font-weight: 800;
+  padding: 3px 8px;
+  border-radius: 999px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   PICKER INLINE WRAPPER
+   ═══════════════════════════════════════════════════════════════ */
+.dh-picker-inline {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  overflow: visible;
+}
+
+.dh-roompicker,
+.dh-datepicker,
+.dh-timepicker {
+  position: relative;
+  width: 100%;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   PICKER TRIGGER
+   ═══════════════════════════════════════════════════════════════ */
+.dh-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  padding: 0 40px 0 14px;
+  border: 1.5px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fff;
+  font-family: inherit;
+  font-size: 14px;
+  color: #1a1a1a;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s;
+  text-align: left;
+  box-sizing: border-box;
+  position: relative;
+}
+
+.dh-trigger > i:first-child {
+  color: #9ca3af;
+  font-size: 14px;
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+
+.dh-trigger:hover:not(:disabled) { border-color: #d1d5db; }
+
+.dh-trigger.open,
+.dh-trigger:focus {
+  outline: none;
+  border-color: #f57c00;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(245, 124, 0, 0.12);
+}
+
+.dh-trigger.open > i:first-child { color: #f57c00; }
+
+.dh-trigger:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: #F3F4F6;
+}
+
+.dh-trigger > span {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.dh-trigger.is-warn {
+  border-color: #fbbf24;
+  background: #fffbeb;
+}
+
+.dh-trigger .trigger-warn-icon { color: #d97706 !important; }
+
+.dh-trigger-loading {
+  position: absolute;
+  right: 34px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #f57c00;
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.dh-caret {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 10px;
+  color: #9ca3af;
+  transition: transform 0.2s ease;
+  pointer-events: none;
+}
+
+.dh-caret.open { transform: translateY(-50%) rotate(180deg); }
+
+/* ═══════════════════════════════════════════════════════════════
+   CLICKAWAY
+   ═══════════════════════════════════════════════════════════════ */
+.dh-picker-clickaway {
+  position: fixed;
+  inset: 0;
+  z-index: 99998;
+  background: transparent;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   POPOVERS (shared)
+   ═══════════════════════════════════════════════════════════════ */
+.dh-date-popover,
+.dh-time-popover,
+.dh-room-popover-edit {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05), 0 12px 40px rgba(0, 0, 0, 0.18);
+  padding: 12px;
+  z-index: 99999;
+  animation: dh-pop-in 0.15s ease-out;
+  border: 1px solid #F0F0EE;
+}
+
+.dh-date-popover { width: 300px; max-width: calc(100vw - 40px); }
+.dh-time-popover { width: 260px; max-width: calc(100vw - 40px); }
+.dh-room-popover-edit { width: 340px; max-width: calc(100vw - 40px); }
+
+.dh-popover-arrow {
+  position: absolute;
+  top: -6px;
+  left: 20px;
+  width: 12px;
+  height: 12px;
+  background: #fff;
+  transform: rotate(45deg);
+  border-radius: 2px;
+  border-left: 1px solid #F0F0EE;
+  border-top: 1px solid #F0F0EE;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   CALENDAR
+   ═══════════════════════════════════════════════════════════════ */
+.dh-date-quick-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.dh-date-quick-row > button {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: #4b5563;
+  cursor: pointer;
+  transition: 0.15s;
+}
+
+.dh-date-quick-row > button:hover {
+  border-color: #f57c00;
+  color: #f57c00;
+  background: #fff7ed;
+}
+
+.dh-date-quick-row > button.active {
+  background: #f57c00;
+  border-color: #f57c00;
+  color: #fff;
+}
+
+.dh-cal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  padding: 0 2px;
+}
+
+.dh-cal-title { font-size: 12.5px; font-weight: 800; color: #1a1a1a; }
+
+.dh-cal-nav {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  border: none;
+  background: #f4f6f9;
+  color: #5c6378;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  transition: 0.15s;
+}
+
+.dh-cal-nav:hover { background: #fef0e7; color: #f57c00; }
+
+.dh-cal-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  margin-bottom: 3px;
+}
+
+.dh-cal-weekdays > span {
+  font-size: 9px;
+  font-weight: 800;
+  color: #9ca3af;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 3px 0;
+}
+
+.dh-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.dh-cal-day {
+  aspect-ratio: 1;
+  border-radius: 8px;
+  border: none;
+  background: #fff;
+  color: #1a1a1a;
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: all 0.12s ease;
+}
+
+.dh-cal-day:hover:not(:disabled):not(.is-selected) {
+  background: #fef0e7;
+  color: #f57c00;
+}
+
+.dh-cal-day.is-outside { color: #cbd5e1; font-weight: 500; }
+
+.dh-cal-day.is-selected {
+  background: #f57c00;
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(245, 124, 0, 0.3);
+}
+
+.dh-cal-day.is-disabled {
+  color: #e5e7eb;
+  cursor: not-allowed;
+  background: transparent;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   TIME PICKER
+   ═══════════════════════════════════════════════════════════════ */
+.dh-time-period-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.dh-time-period-btn {
+  padding: 9px 0;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #4b5563;
+  cursor: pointer;
+  transition: 0.15s;
+}
+
+.dh-time-period-btn:hover { border-color: #f57c00; color: #f57c00; background: #fff7ed; }
+
+.dh-time-period-btn.is-active {
+  background: #f57c00;
+  border-color: #f57c00;
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(245, 124, 0, 0.3);
+}
+
+.dh-time-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.dh-time-col { display: flex; flex-direction: column; gap: 4px; }
+
+.dh-time-col-title {
+  font-size: 9.5px;
+  font-weight: 800;
+  color: #9ca3af;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 3px 0;
+}
+
+.dh-time-list {
+  max-height: 160px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px;
+  scroll-behavior: smooth;
+}
+
+.dh-time-list::-webkit-scrollbar { width: 5px; }
+.dh-time-list::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 999px; }
+.dh-time-list::-webkit-scrollbar-thumb:hover { background: #f57c00; }
+
+.dh-time-item {
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  color: #1a1a1a;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.12s ease;
+}
+
+.dh-time-item:hover:not(:disabled):not(.is-active) {
+  background: #fef0e7;
+  color: #f57c00;
+}
+
+.dh-time-item.is-active {
+  background: #f57c00;
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(245, 124, 0, 0.3);
+}
+
+.dh-time-item.is-disabled {
+  color: #d1d5db;
+  cursor: not-allowed;
+  background: transparent;
+}
+
+.dh-time-footer {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #f0f0ee;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.dh-time-done-btn {
+  padding: 8px 22px;
+  border-radius: 8px;
+  border: none;
+  background: #f57c00;
+  color: #fff;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: 0.15s;
+  box-shadow: 0 2px 6px rgba(245, 124, 0, 0.25);
+}
+
+.dh-time-done-btn:hover {
+  background: #fff3e8;
+  border: 1px solid #f57c00;
+  color: #f57c00;
+  box-shadow: none;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   ROOM PICKER
+   ═══════════════════════════════════════════════════════════════ */
+.dh-search-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1.5px solid #e5e7eb;
+  border-radius: 9px;
+  background: #fafafa;
+  margin-bottom: 8px;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.dh-search-wrap:focus-within {
+  border-color: #f57c00;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(245, 124, 0, 0.1);
+}
+
+.dh-search-wrap > i { color: #9ca3af; font-size: 11px; flex-shrink: 0; }
+.dh-search-wrap:focus-within > i { color: #f57c00; }
+
+.dh-search {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  color: #1a1a1a;
+}
+
+.dh-search::placeholder { color: #9ca3af; }
+
+.dh-search-clear {
+  background: #e5e7eb;
+  border: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  color: #6b7280;
+  font-size: 9px;
+  flex-shrink: 0;
+}
+
+.dh-search-clear:hover { background: #fee2e2; color: #dc2626; }
+
+.dh-room-list {
+  max-height: 260px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-right: 4px;
+}
+
+.dh-room-list::-webkit-scrollbar { width: 5px; }
+.dh-room-list::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 999px; }
+.dh-room-list::-webkit-scrollbar-thumb:hover { background: #f57c00; }
+
+.dh-room-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 9px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: background 0.12s ease;
+  width: 100%;
+}
+
+.dh-room-option:hover { background: #fef0e7; }
+
+.dh-room-option.is-active {
+  background: #fff7ed;
+  box-shadow: inset 0 0 0 1.5px #f57c00;
+}
+
+.dh-room-option-warn {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+}
+
+.dh-room-option-warn:hover { background: #fef3c7; }
+
+.dh-room-option-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: #f4f6f9;
+  color: #6b7280;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  flex-shrink: 0;
+  transition: 0.15s;
+}
+
+.dh-room-option:hover .dh-room-option-icon,
+.dh-room-option.is-active .dh-room-option-icon {
+  background: #f57c00;
+  color: #fff;
+}
+
+.dh-room-option-icon-warn { background: #fef3c7; color: #d97706; }
+.dh-room-option:hover .dh-room-option-icon-warn { background: #d97706; color: #fff; }
+
+.dh-room-option-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dh-room-option-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: #1a1a1a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dh-room-option-meta {
+  font-size: 11px;
+  color: #9ca3af;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.dh-room-option-meta i { font-size: 9px; color: #cbd5e1; }
+
+.dh-room-option-meta-warn { color: #d97706; font-weight: 600; }
+.dh-room-option-meta-warn i { color: #f59e0b; }
+
+.dh-room-dot { color: #cbd5e1; font-size: 10px; margin: 0 2px; }
+
+.dh-room-option-check { color: #f57c00; font-size: 14px; flex-shrink: 0; }
+
+.dh-picker-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 24px 12px;
+  color: #9ca3af;
+  font-size: 12px;
+  text-align: center;
+}
+
+.dh-picker-empty i { font-size: 22px; color: #d1d5db; }
+
+.dh-picker-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 28px 12px;
+  color: #9ca3af;
+  font-size: 12.5px;
+}
+
+.dh-picker-loading i { font-size: 20px; color: #f57c00; }
+
+/* ═══════════════════════════════════════════════════════════════
+   CONFLICT STATUS
+   ═══════════════════════════════════════════════════════════════ */
+.dh-conflict-status {
+  margin-top: 14px;
+  padding: 11px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1.5px solid;
+}
+
+.dh-conflict-status.is-checking {
+  border-color: #e5e7eb;
+  background: #f9fafb;
+  color: #6b7280;
+  animation: dh-pulse 1.4s ease-in-out infinite;
+}
+
+.dh-conflict-status.is-ok {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.dh-conflict-status.is-error {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+@keyframes dh-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.65; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dh-conflict-status.is-checking { animation: none; }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   CONFLICT LIST
+   ═══════════════════════════════════════════════════════════════ */
+.dh-conflict-list {
+  list-style: none;
+  padding: 0;
+  margin: 10px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dh-conflict-item {
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid #fecaca;
+  border-left: 3px solid #dc2626;
+  border-radius: 9px;
+}
+
+.dh-conflict-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 999px;
+  margin-bottom: 6px;
+}
+
+.dh-conflict-label.type-event { background: #fee2e2; color: #b91c1c; }
+.dh-conflict-label.type-reassign { background: #ffedd5; color: #c2410c; }
+.dh-conflict-label.type-res { background: #dbeafe; color: #1d4ed8; }
+.dh-conflict-label.type-sched { background: #fef3c7; color: #b45309; }
+.dh-conflict-label.type-unavailable { background: #fee2e2; color: #7f1d1d; }
+
+.dh-conflict-label i { font-size: 9px; }
+
+.dh-conflict-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #16181d;
+}
+
+.dh-conflict-meta {
+  font-size: 12px;
+  color: #6b7280;
+  margin-top: 3px;
+}
+
+.dh-conflict-item:has(.type-unavailable) {
+  border-left-color: #7f1d1d;
+  background: #fff5f5;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   ANIMATION
+   ═══════════════════════════════════════════════════════════════ */
+@keyframes dh-pop-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   RESPONSIVE
+   ═══════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  .dh-edit-fields-grid { grid-template-columns: 1fr; }
+  .dh-edit-time-pair { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 500px) {
+  .dh-date-popover,
+  .dh-time-popover,
+  .dh-room-popover-edit {
+    left: 0;
+    right: 0;
+    width: auto;
+  }
+  .dh-time-list { max-height: 130px; }
+  .dh-room-list { max-height: 200px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dh-date-popover,
+  .dh-time-popover,
+  .dh-room-popover-edit {
+    animation: none;
+  }
+}
+
+/* Save button disabled state */
+.dh-edit-save-btn:disabled {
+  background-color: #9CA3AF !important;
+  border-color: #9CA3AF !important;
+  color: #fff !important;
+  cursor: not-allowed !important;
+  opacity: 0.9;
+  box-shadow: none;
+}

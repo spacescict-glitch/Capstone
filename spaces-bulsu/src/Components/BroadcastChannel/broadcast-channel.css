@@ -1956,3 +1956,60 @@
     justify-content: flex-start;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   CLICKABLE FILE ATTACHMENT
+   ═══════════════════════════════════════════════════════════════ */
+.bc-file-attachment-clickable {
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  transition: border-color 0.15s, background 0.15s, transform 0.12s;
+}
+
+.bc-file-attachment-clickable:hover {
+  border-color: var(--bc-accent, #f57c00);
+  background: #fff7ed;
+}
+
+.bc-file-attachment-clickable:active {
+  transform: scale(0.99);
+}
+
+.bc-file-attachment-clickable:focus-visible {
+  outline: none;
+  border-color: var(--bc-accent, #f57c00);
+  box-shadow: 0 0 0 3px rgba(245, 124, 0, 0.15);
+}
+
+.bc-file-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #94a3b8;
+  margin-top: 3px;
+  transition: color 0.15s;
+}
+
+.bc-file-hint i {
+  font-size: 9.5px;
+}
+
+.bc-file-attachment-clickable:hover .bc-file-hint {
+  color: var(--bc-accent, #f57c00);
+}
+
+.bc-file-chevron {
+  color: #cbd5e1;
+  font-size: 12px;
+  flex-shrink: 0;
+  transition: color 0.15s, transform 0.15s;
+}
+
+.bc-file-attachment-clickable:hover .bc-file-chevron {
+  color: var(--bc-accent, #f57c00);
+  transform: translateX(2px);
+}

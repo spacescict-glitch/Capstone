@@ -871,65 +871,49 @@ export default function BroadcastChannel() {
     return "Announcement";
   };
 
-  // ─── File display component ─────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════
+  // ✅ FILE DISPLAY — direct-open (clickable, no View/Download buttons)
+  // ═══════════════════════════════════════════════════════════════════
   const FileAttachment = ({ fileUrl, fileName }) => {
     if (!fileUrl) return null;
 
     const icon = getFileIcon(fileName);
     const color = getFileColor(fileName);
 
-    const ext = (fileName || "").split(".").pop()?.toLowerCase() || "";
-    const isPdf = ext === "pdf";
-    const isImg = ["jpg", "jpeg", "png", "gif", "webp"].includes(ext);
-    const isTxt = ext === "txt";
-    const isViewableInBrowser = isPdf || isImg || isTxt;
-
     const isImageResource = fileUrl.includes("/image/upload/");
     const sep = fileUrl.includes("?") ? "&" : "?";
 
-    // For image-type resources, fl_attachment=0 forces inline preview.
-    // For raw resources, we can't force it — URL works as-is.
+    // For image-type resources, fl_attachment=0 forces inline preview
+    // (browser opens PDF/image in a new tab instead of downloading).
+    // For raw resources (docx, xlsx, zip), browser handles automatically.
     const viewUrl = isImageResource
       ? `${fileUrl}${sep}fl_attachment=0`
       : fileUrl;
 
-    // Force-download URL for image resource
-    const downloadUrl = isImageResource
-      ? `${fileUrl}${sep}fl_attachment=${encodeURIComponent(fileName || "file")}`
-      : fileUrl;
-
     return (
-      <div className="bc-file-attachment">
+      <button
+        type="button"
+        className="bc-file-attachment bc-file-attachment-clickable"
+        onClick={(e) => {
+          e.stopPropagation();
+          window.open(viewUrl, "_blank", "noopener,noreferrer");
+        }}
+        title={`Open ${fileName || "file"}`}
+      >
         <div className="bc-file-icon-wrapper" style={{ color }}>
           <i className={icon}></i>
         </div>
+
         <div className="bc-file-info">
           <span className="bc-file-name">{fileName || "File"}</span>
-          <div className="bc-file-actions">
-            {isViewableInBrowser && (
-              <a
-                href={viewUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="bc-file-action-btn view"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <i className="fa-solid fa-eye"></i> View
-              </a>
-            )}
-            <a
-              href={downloadUrl}
-              {...(!isImageResource ? { download: fileName || "file" } : {})}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="bc-file-action-btn download"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <i className="fa-solid fa-download"></i> Download
-            </a>
-          </div>
+          <span className="bc-file-hint">
+            <i className="fa-solid fa-arrow-up-right-from-square"></i>
+            Click to open
+          </span>
         </div>
-      </div>
+
+        <i className="fa-solid fa-chevron-right bc-file-chevron"></i>
+      </button>
     );
   };
 

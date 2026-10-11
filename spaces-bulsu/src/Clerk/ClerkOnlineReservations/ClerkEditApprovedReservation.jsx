@@ -1,25 +1,19 @@
 import "./clerk-edit-approved-reservation.css";
 import { useNavigate, useLocation } from "react-router-dom";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
-  doc,
-  updateDoc,
-  collection,
-  getDocs,
-  query,
-  where,
-  addDoc,
-  serverTimestamp,
-  getDoc,
+  doc, updateDoc, collection, getDocs, query, where,
+  addDoc, serverTimestamp, getDoc, onSnapshot,
 } from "firebase/firestore";
-import { db } from "../../firebase";
-import { auth } from "../../firebase";
+import { db, auth } from "../../firebase";
 import { logActivity } from "../../utils/logActivity";
 import { isRoomUnderMaintenance } from "../../utils/Roommaintenance";
 import SavePopup from "../../Popup/SavePopup/SavePopup";
 import Toast from "../../Popup/Toast/Toast";
 
-// ─── Helpers ──────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════
+// HELPERS
+// ══════════════════════════════════════════════════════════════
 const convertToMinutes = (time) => {
   if (!time) return 0;
   const [h, m] = time.split(":").map(Number);
@@ -33,23 +27,41 @@ const getDayAbbrev = (dateStr) => {
   return days[new Date(dateStr).getDay()];
 };
 
-const overlap = (aStart, aEnd, bStart, bEnd) => {
-  return convertToMinutes(aStart) < convertToMinutes(bEnd) &&
-         convertToMinutes(aEnd) > convertToMinutes(bStart);
+const overlap = (aStart, aEnd, bStart, bEnd) =>
+  convertToMinutes(aStart) < convertToMinutes(bEnd) &&
+  convertToMinutes(aEnd) > convertToMinutes(bStart);
+
+const parseTimeToMin = (t) => {
+  if (!t) return null;
+  const [h, m] = t.split(":").map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return null;
+  return h * 60 + m;
 };
 
-// ─── Today + Past-date helpers ──────────────────────────────────────
+const format12Hour = (time) => {
+  if (!time) return "—";
+  const [h, m] = time.split(":").map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return time;
+  const suffix = h >= 12 ? "PM" : "AM";
+  const hh = h % 12 || 12;
+  return `${hh}:${String(m).padStart(2, "0")} ${suffix}`;
+};
+
 const getTodayLocal = () => {
   const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, "0");
-  const d = String(now.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 };
 
-const isPastDate = (dateStr) => {
-  if (!dateStr) return false;
-  return dateStr < getTodayLocal();
+const getNowTimeLocal = () => {
+  const now = new Date();
+  return `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+};
+
+const isPastDate = (dateStr) => !!dateStr && dateStr < getTodayLocal();
+
+const isPastDateTime = (dateStr, timeStr) => {
+  if (!dateStr || !timeStr) return false;
+  return `${dateStr}T${timeStr}` < `${getTodayLocal()}T${getNowTimeLocal()}`;
 };
 
 const formatDateLong = (dateStr) => {
@@ -57,81 +69,541 @@ const formatDateLong = (dateStr) => {
   const d = new Date(`${dateStr}T00:00:00`);
   if (Number.isNaN(d.getTime())) return dateStr;
   return d.toLocaleDateString("en-US", {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-    year: "numeric",
+    weekday: "short", month: "short", day: "numeric", year: "numeric",
   });
 };
 
-// ─── Find user by name ──────────────────────────────────────────────
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+const WEEKDAY_LABELS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+
+const toDateInputValue = (date) => {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+};
+
+const buildCalendarGrid = (year, month) => {
+  const firstOfMonth = new Date(year, month, 1);
+  const startOffset = firstOfMonth.getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const daysInPrevMonth = new Date(year, month, 0).getDate();
+
+  const cells = [];
+  for (let i = 0; i < startOffset; i++) {
+    cells.push({
+      day: daysInPrevMonth - startOffset + 1 + i,
+      inMonth: false,
+      date: new Date(year, month - 1, daysInPrevMonth - startOffset + 1 + i),
+    });
+  }
+  for (let d = 1; d <= daysInMonth; d++) {
+    cells.push({ day: d, inMonth: true, date: new Date(year, month, d) });
+  }
+  let nextDay = 1;
+  while (cells.length < 42) {
+    cells.push({
+      day: nextDay, inMonth: false, date: new Date(year, month + 1, nextDay),
+    });
+    nextDay++;
+  }
+  return cells;
+};
+
+const parseTime12 = (t) => {
+  if (!t) return { hour: 12, minute: 0, period: "AM" };
+  const [h, m] = t.split(":").map(Number);
+  const period = h >= 12 ? "PM" : "AM";
+  const h12 = h % 12 || 12;
+  return { hour: h12, minute: m || 0, period };
+};
+
+const toTime24 = (hour12, minute, period) => {
+  let h = hour12 % 12;
+  if (period === "PM") h += 12;
+  return `${String(h).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+};
+
 const findUserByName = async (name) => {
   if (!name) return null;
   const usersSnap = await getDocs(collection(db, "users"));
   const normalized = name.trim().toLowerCase();
-  for (const doc of usersSnap.docs) {
-    const data = doc.data();
+  for (const docu of usersSnap.docs) {
+    const data = docu.data();
     const fullName = `${data.firstName || ""} ${data.lastName || ""}`.trim().toLowerCase();
-    if (fullName === normalized) return { id: doc.id, ...data };
+    if (fullName === normalized) return { id: docu.id, ...data };
   }
   return null;
 };
 
-// ─── Send notification ──────────────────────────────────────────────
 const sendNotification = async (userId, ownerType, title, message, type, badge = "INFO") => {
   if (!userId) return;
   await addDoc(collection(db, "notifications"), {
-    userId,
-    ownerType,
-    title,
-    message,
-    type,
-    unread: true,
-    archived: false,
-    badge,
+    userId, ownerType, title, message, type,
+    unread: true, archived: false, badge,
     createdAt: serverTimestamp(),
   });
 };
 
+// ══════════════════════════════════════════════════════════════
+// CONFLICT CHECK
+// ══════════════════════════════════════════════════════════════
+const checkReservationConflicts = async (reservation, skipReservationId) => {
+  if (!reservation) return [];
+  const roomId = reservation.roomId;
+  const roomName = reservation.roomName;
+  if (!roomId && !roomName) return [];
+  if (!reservation.date || !reservation.startTime || !reservation.endTime) return [];
+
+  const reqStart = parseTimeToMin(reservation.startTime);
+  const reqEnd = parseTimeToMin(reservation.endTime);
+  if (reqStart == null || reqEnd == null) return [];
+
+  const matchesRoom = (r) =>
+    (roomId && r.roomId === roomId) || (roomName && r.roomName === roomName);
+
+  const conflicts = [];
+
+  try {
+    const [evSnap, reSnap, resSnap, schedSnap] = await Promise.all([
+      getDocs(query(collection(db, "events"), where("date", "==", reservation.date))),
+      getDocs(collection(db, "roomReassignments")),
+      getDocs(query(collection(db, "reservationRequests"), where("date", "==", reservation.date))),
+      roomId
+        ? getDocs(collection(db, "rooms", roomId, "schedules"))
+        : Promise.resolve({ docs: [] }),
+    ]);
+
+    evSnap.docs.forEach((d) => {
+      const e = { id: d.id, ...d.data() };
+      if (String(e.status || "").toLowerCase() === "cancelled") return;
+      if (!matchesRoom(e)) return;
+      if (skipReservationId && e.reservationId === skipReservationId) return;
+      if (e.reservationId && e.reservationId === reservation.id) return;
+      const s = parseTimeToMin(e.startTime);
+      const en = parseTimeToMin(e.endTime);
+      if (s == null || en == null) return;
+      if (!overlap(reqStart, reqEnd, s, en)) return;
+      conflicts.push({
+        id: e.id, kind: "event", label: "Room Activity",
+        title: e.title || e.purpose || "Room Activity",
+        faculty: e.faculty || e.requestedByName || "Admin",
+        startTime: e.startTime, endTime: e.endTime,
+      });
+    });
+
+    reSnap.docs.forEach((d) => {
+      const r = { id: d.id, ...d.data() };
+      if (r.date !== reservation.date) return;
+      const status = String(r.status || "").toLowerCase();
+      if (status !== "accepted" && status !== "approved") return;
+      const into = (roomId && r.newRoomId === roomId) || (roomName && r.newRoomName === roomName);
+      if (!into) return;
+      const s = parseTimeToMin(r.startTime);
+      const en = parseTimeToMin(r.endTime);
+      if (s == null || en == null) return;
+      if (!overlap(reqStart, reqEnd, s, en)) return;
+      conflicts.push({
+        id: r.id, kind: "reassignment", label: "Reassigned Class",
+        title: r.courseTitle || r.eventTitle || "Reassigned Class",
+        faculty: r.facultyName || "-",
+        startTime: r.startTime, endTime: r.endTime,
+      });
+    });
+
+    resSnap.docs.forEach((d) => {
+      const r = { id: d.id, ...d.data() };
+      if (skipReservationId && r.id === skipReservationId) return;
+      if (r.id === reservation.id) return;
+      if (String(r.status || "").toLowerCase() !== "approved") return;
+      if (!matchesRoom(r)) return;
+      const s = parseTimeToMin(r.startTime);
+      const en = parseTimeToMin(r.endTime);
+      if (s == null || en == null) return;
+      if (!overlap(reqStart, reqEnd, s, en)) return;
+      const isWalkIn = String(r.reservationType || "").toLowerCase() === "walk-in";
+      conflicts.push({
+        id: r.id, kind: "reservation",
+        label: isWalkIn ? "Walk-in Reservation" : "Faculty Reservation",
+        title: r.customPurpose || r.courseTitle || r.purpose || "Reservation",
+        faculty: r.requesterName || r.facultyName || "-",
+        startTime: r.startTime, endTime: r.endTime,
+      });
+    });
+
+    if (schedSnap.docs?.length) {
+      const day = new Date(`${reservation.date}T00:00:00`)
+        .toLocaleDateString("en-US", { weekday: "short" }).toUpperCase();
+      schedSnap.docs.forEach((d) => {
+        const s = { id: d.id, ...d.data() };
+        if (s.cancelled || s.initialized) return;
+        if (s.day !== day) return;
+        const sT = parseTimeToMin(s.startTime);
+        const eT = parseTimeToMin(s.endTime);
+        if (sT == null || eT == null) return;
+        if (!overlap(reqStart, reqEnd, sT, eT)) return;
+        conflicts.push({
+          id: s.id, kind: "schedule", label: "Class Schedule",
+          title: s.subject || s.courseTitle || s.title || "Class",
+          faculty: s.facultyName || s.faculty || "-",
+          startTime: s.startTime, endTime: s.endTime,
+        });
+      });
+    }
+  } catch (err) {
+    console.error("Conflict check failed:", err);
+  }
+
+  return conflicts;
+};
+
+// ══════════════════════════════════════════════════════════════
+// TIME PICKER POPOVER
+// ══════════════════════════════════════════════════════════════
+function TimePickerPopover({ value, onChange, onClose, minTime }) {
+  const parsed = parseTime12(value || "");
+  const [hour, setHour] = useState(parsed.hour);
+  const [minute, setMinute] = useState(parsed.minute);
+  const [period, setPeriod] = useState(parsed.period);
+
+  const hours = Array.from({ length: 12 }, (_, i) => i + 1);
+  const minutes = Array.from({ length: 12 }, (_, i) => i * 5);
+
+  const hourListRef = useRef(null);
+  const minuteListRef = useRef(null);
+
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      hourListRef.current?.querySelector(".cr-time-item.is-active")
+        ?.scrollIntoView({ block: "center", behavior: "instant" });
+      minuteListRef.current?.querySelector(".cr-time-item.is-active")
+        ?.scrollIntoView({ block: "center", behavior: "instant" });
+    });
+  }, []);
+
+  const isDisabled = (h12, m, per) => {
+    if (!minTime) return false;
+    return toTime24(h12, m, per) < minTime;
+  };
+
+  const commit = (h = hour, m = minute, p = period) => onChange(toTime24(h, m, p));
+  const handleHour = (h) => { if (!isDisabled(h, minute, period)) { setHour(h); commit(h, minute, period); } };
+  const handleMinute = (m) => { if (!isDisabled(hour, m, period)) { setMinute(m); commit(hour, m, period); } };
+  const handlePeriod = (p) => { if (!isDisabled(hour, minute, p)) { setPeriod(p); commit(hour, minute, p); } };
+
+  return (
+    <>
+      <div className="cr-picker-clickaway" onClick={onClose} />
+      <div className="cr-time-popover">
+        <span className="cr-popover-arrow" />
+
+        <div className="cr-time-period-row">
+          <button type="button" className={`cr-time-period-btn ${period === "AM" ? "is-active" : ""}`} onClick={() => handlePeriod("AM")}>AM</button>
+          <button type="button" className={`cr-time-period-btn ${period === "PM" ? "is-active" : ""}`} onClick={() => handlePeriod("PM")}>PM</button>
+        </div>
+
+        <div className="cr-time-columns">
+          <div className="cr-time-col">
+            <span className="cr-time-col-title">Hour</span>
+            <div className="cr-time-list" ref={hourListRef}>
+              {hours.map((h) => {
+                const dis = isDisabled(h, minute, period);
+                return (
+                  <button key={h} type="button" disabled={dis}
+                    className={`cr-time-item ${hour === h ? "is-active" : ""} ${dis ? "is-disabled" : ""}`}
+                    onClick={() => handleHour(h)}>
+                    {String(h).padStart(2, "0")}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="cr-time-col">
+            <span className="cr-time-col-title">Minute</span>
+            <div className="cr-time-list" ref={minuteListRef}>
+              {minutes.map((m) => {
+                const dis = isDisabled(hour, m, period);
+                return (
+                  <button key={m} type="button" disabled={dis}
+                    className={`cr-time-item ${minute === m ? "is-active" : ""} ${dis ? "is-disabled" : ""}`}
+                    onClick={() => handleMinute(m)}>
+                    {String(m).padStart(2, "0")}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        <div className="cr-time-footer">
+          <button type="button" className="cr-time-done-btn" onClick={onClose}>Done</button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════
+// DATE PICKER POPOVER
+// ══════════════════════════════════════════════════════════════
+function DatePickerPopover({ value, onChange, onClose, minDate }) {
+  const base = value ? new Date(`${value}T00:00:00`) : new Date();
+  const [cursor, setCursor] = useState({
+    year: base.getFullYear(),
+    month: base.getMonth(),
+  });
+
+  const min = minDate || getTodayLocal();
+
+  return (
+    <>
+      <div className="cr-picker-clickaway" onClick={onClose} />
+      <div className="cr-date-popover">
+        <span className="cr-popover-arrow" />
+
+        <div className="cr-date-quick-row">
+          <button type="button" className={value === getTodayLocal() ? "active" : ""}
+            onClick={() => { onChange(getTodayLocal()); onClose(); }}>
+            Today
+          </button>
+          <button type="button" className={value === "" ? "active" : ""}
+            onClick={() => { onChange(""); onClose(); }}>
+            Clear
+          </button>
+        </div>
+
+        <div className="cr-cal-header">
+          <button type="button" className="cr-cal-nav"
+            onClick={() => setCursor((c) => {
+              const m = c.month - 1;
+              return m < 0 ? { year: c.year - 1, month: 11 } : { year: c.year, month: m };
+            })}>
+            <i className="fa-solid fa-chevron-left"></i>
+          </button>
+          <span className="cr-cal-title">{MONTH_NAMES[cursor.month]} {cursor.year}</span>
+          <button type="button" className="cr-cal-nav"
+            onClick={() => setCursor((c) => {
+              const m = c.month + 1;
+              return m > 11 ? { year: c.year + 1, month: 0 } : { year: c.year, month: m };
+            })}>
+            <i className="fa-solid fa-chevron-right"></i>
+          </button>
+        </div>
+
+        <div className="cr-cal-weekdays">
+          {WEEKDAY_LABELS.map((w) => <span key={w}>{w}</span>)}
+        </div>
+
+        <div className="cr-cal-grid">
+          {buildCalendarGrid(cursor.year, cursor.month).map((cell, i) => {
+            const cellStr = toDateInputValue(cell.date);
+            const isSelected = cellStr === value;
+            const dis = minDate && cellStr < min;
+            return (
+              <button type="button" key={i} disabled={dis}
+                className={[
+                  "cr-cal-day",
+                  !cell.inMonth && "is-outside",
+                  isSelected && "is-selected",
+                  dis && "is-disabled",
+                ].filter(Boolean).join(" ")}
+                onClick={() => { onChange(cellStr); onClose(); }}>
+                {cell.day}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════
+// ROOM PICKER POPOVER
+// ══════════════════════════════════════════════════════════════
+function RoomPickerPopover({
+  value,
+  rooms,
+  onChange,
+  onClose,
+  currentRoomName,
+  currentRoomMissing,
+  loadingRooms,
+}) {
+  const [search, setSearch] = useState("");
+
+  const sorted = useMemo(() => {
+    return [...rooms].sort((a, b) =>
+      (a.roomName || "").localeCompare(b.roomName || "", undefined, {
+        numeric: true,
+        sensitivity: "base",
+      })
+    );
+  }, [rooms]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return sorted;
+    return sorted.filter((r) => {
+      const name = (r.roomName || "").toLowerCase();
+      const floor = String(r.floor || "").toLowerCase();
+      return name.includes(q) || floor.includes(q);
+    });
+  }, [sorted, search]);
+
+  return (
+    <>
+      <div className="cr-picker-clickaway" onClick={onClose} />
+      <div className="cr-room-popover-edit">
+        <span className="cr-popover-arrow" />
+
+        <div className="cr-search-wrap">
+          <i className="fa-solid fa-magnifying-glass"></i>
+          <input
+            type="text"
+            className="cr-search"
+            placeholder="Search room or floor..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            autoFocus
+          />
+          {search && (
+            <button type="button" className="cr-search-clear" onClick={() => setSearch("")}>
+              <i className="fa-solid fa-xmark"></i>
+            </button>
+          )}
+        </div>
+
+        <div className="cr-room-list">
+          {loadingRooms ? (
+            <div className="cr-picker-loading">
+              <i className="fa-solid fa-circle-notch fa-spin"></i>
+              <span>Loading rooms…</span>
+            </div>
+          ) : (
+            <>
+              {currentRoomMissing && currentRoomName && !search && (
+                <button
+                  type="button"
+                  className={`cr-room-option cr-room-option-warn ${value === currentRoomName ? "is-active" : ""}`}
+                  onClick={() => { onChange(currentRoomName); onClose(); }}
+                >
+                  <div className="cr-room-option-icon cr-room-option-icon-warn">
+                    <i className="fa-solid fa-triangle-exclamation"></i>
+                  </div>
+                  <div className="cr-room-option-body">
+                    <span className="cr-room-option-name">{currentRoomName}</span>
+                    <span className="cr-room-option-meta cr-room-option-meta-warn">
+                      Current — not available for this slot
+                    </span>
+                  </div>
+                  {value === currentRoomName && (
+                    <i className="fa-solid fa-circle-check cr-room-option-check"></i>
+                  )}
+                </button>
+              )}
+
+              {filtered.length === 0 ? (
+                <div className="cr-picker-empty">
+                  <i className="fa-regular fa-face-frown"></i>
+                  <span>No rooms match your search.</span>
+                </div>
+              ) : (
+                filtered.map((r) => {
+                  const isActive = r.roomName === value;
+                  const isMaintenance = r.roomStatus === "maintenance";
+                  return (
+                    <button
+                      type="button"
+                      key={r.id}
+                      className={`cr-room-option ${isActive ? "is-active" : ""}`}
+                      onClick={() => { onChange(r.roomName); onClose(); }}
+                    >
+                      <div className="cr-room-option-icon">
+                        <i className="fa-solid fa-door-open"></i>
+                      </div>
+                      <div className="cr-room-option-body">
+                        <span className="cr-room-option-name">{r.roomName}</span>
+                        <span className="cr-room-option-meta">
+                          {r.floor && (<><i className="fa-solid fa-building"></i>{r.floor}</>)}
+                          {r.capacity && (
+                            <>
+                              <span className="cr-room-dot">•</span>
+                              <i className="fa-solid fa-users"></i>{r.capacity}
+                            </>
+                          )}
+                          {isMaintenance && (
+                            <>
+                              <span className="cr-room-dot">•</span>
+                              <i className="fa-solid fa-wrench"></i>Maintenance
+                            </>
+                          )}
+                        </span>
+                      </div>
+                      {isActive && (
+                        <i className="fa-solid fa-circle-check cr-room-option-check"></i>
+                      )}
+                    </button>
+                  );
+                })
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════
+// MAIN COMPONENT
+// ══════════════════════════════════════════════════════════════
 function ClerkEditApprovedReservation() {
   const navigate = useNavigate();
   const location = useLocation();
-  const reservation = location.state?.reservation;
+  const initialReservation = location.state?.reservation;
 
-  // ─── Toast state ──────────────────────────────────────────────────
+  const [reservation, setReservation] = useState(initialReservation);
+
   const [toast, setToast] = useState({
-    show: false,
-    type: "success",
-    title: "",
-    message: "",
+    show: false, type: "success", title: "", message: "",
   });
-
   const showToast = (type, title, message) => {
     setToast({ show: true, type, title, message });
     if (type !== "loading") {
-      setTimeout(() => {
-        setToast((prev) => ({ ...prev, show: false }));
-      }, 4000);
+      setTimeout(() => setToast((p) => ({ ...p, show: false })), 4000);
     }
   };
 
-  // ─── State ─────────────────────────────────────────────────────────
   const [editableFields, setEditableFields] = useState({
-    roomName: "",
-    date: "",
-    startTime: "",
-    endTime: "",
+    roomName: "", date: "", startTime: "", endTime: "",
+  });
+  const [originalFields, setOriginalFields] = useState({
+    roomName: "", date: "", startTime: "", endTime: "",
   });
 
   const [allRooms, setAllRooms] = useState([]);
   const [availableRooms, setAvailableRooms] = useState([]);
   const [loadingRooms, setLoadingRooms] = useState(false);
   const [loadingAvailable, setLoadingAvailable] = useState(false);
+
+  const [conflicts, setConflicts] = useState([]);
+  const [checkingConflicts, setCheckingConflicts] = useState(false);
+
+  const [fieldError, setFieldError] = useState({ field: "", message: "" });
   const [conflictError, setConflictError] = useState("");
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // ─── Read‑only purpose and other fields ──────────────────────────
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showStartTimePicker, setShowStartTimePicker] = useState(false);
+  const [showEndTimePicker, setShowEndTimePicker] = useState(false);
+  const [showRoomPicker, setShowRoomPicker] = useState(false);
+
   const purpose = reservation?.purpose || "";
   const isOtherActivity = purpose === "Other Activity";
   const customPurpose = reservation?.attendees?.customPurpose || "";
@@ -141,29 +613,61 @@ function ClerkEditApprovedReservation() {
   const courseTitle = reservation?.courseTitle || "";
   const facultyName = reservation?.facultyName || reservation?.requesterName || "";
 
-  // ✅ Check if the reservation's date is already in the past
   const reservationIsPast = isPastDate(reservation?.date);
-  const editLocked = reservationIsPast || saving;
 
-  // ─── Load initial data ─────────────────────────────────────────────
+  const hasChanges = useMemo(
+    () =>
+      editableFields.roomName !== originalFields.roomName ||
+      editableFields.date !== originalFields.date ||
+      editableFields.startTime !== originalFields.startTime ||
+      editableFields.endTime !== originalFields.endTime,
+    [editableFields, originalFields]
+  );
+
+  // Room availability check
+  const availabilityReady =
+    !loadingRooms &&
+    !loadingAvailable &&
+    !!editableFields.date &&
+    !!editableFields.startTime &&
+    !!editableFields.endTime;
+
+  const currentRoomUnavailable =
+    availabilityReady &&
+    !!editableFields.roomName &&
+    !availableRooms.some((r) => r.roomName === editableFields.roomName);
+
+  // Live listener
+  useEffect(() => {
+    if (!initialReservation?.id) return;
+    const unsub = onSnapshot(
+      doc(db, "reservationRequests", initialReservation.id),
+      (snap) => {
+        if (snap.exists()) setReservation({ id: snap.id, ...snap.data() });
+      },
+      (err) => console.warn("Live reservation listener failed:", err)
+    );
+    return () => unsub();
+  }, [initialReservation?.id]);
+
+  // Initial load
   useEffect(() => {
     if (!reservation) {
       navigate("/clerk/online-reservations");
       return;
     }
-
-    setEditableFields({
+    const initial = {
       roomName: reservation.roomName || "",
       date: reservation.date || "",
       startTime: reservation.startTime || "",
       endTime: reservation.endTime || "",
-    });
-
+    };
+    setEditableFields(initial);
+    setOriginalFields(initial);
     loadAllRooms();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reservation]);
+  }, [reservation?.id]);
 
-  // ─── Load all rooms ────────────────────────────────────────────────
   const loadAllRooms = async () => {
     setLoadingRooms(true);
     try {
@@ -178,7 +682,6 @@ function ClerkEditApprovedReservation() {
     }
   };
 
-  // ─── Fetch available rooms based on purpose, date, time ───────────
   const fetchAvailableRooms = async (roomsList = allRooms, date, startTime, endTime) => {
     if (!date || !startTime || !endTime || roomsList.length === 0) {
       setAvailableRooms([]);
@@ -193,33 +696,25 @@ function ClerkEditApprovedReservation() {
         getDocs(collection(db, "roomReleases")),
         getDocs(collection(db, "roomReassignments")),
         getDocs(query(collection(db, "events"), where("date", "==", date))),
-        getDocs(
-          query(
-            collection(db, "reservationRequests"),
-            where("date", "==", date),
-            where("status", "==", "approved")
-          )
-        ),
+        getDocs(query(
+          collection(db, "reservationRequests"),
+          where("date", "==", date),
+          where("status", "==", "approved")
+        )),
       ]);
 
       const releases = releaseSnap.docs.map((d) => d.data());
-      const reassignments = reassignSnap.docs
-        .map((d) => d.data())
+      const reassignments = reassignSnap.docs.map((d) => d.data())
         .filter((r) => normalize(r.status) === "approved");
       const events = eventSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      const reservations = reservationSnap.docs
-        .map((d) => ({ id: d.id, ...d.data() }))
+      const reservations = reservationSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
         .filter((r) => r.id !== reservation.id);
 
       const releaseKeys = new Set(
-        releases
-          .filter((r) => r.date === date)
-          .map((r) => `${r.scheduleId}_${r.date}`)
+        releases.filter((r) => r.date === date).map((r) => `${r.scheduleId}_${r.date}`)
       );
-
       const reassignAwayKeys = new Set(
-        reassignments
-          .filter((r) => r.date === date && r.oldRoomId)
+        reassignments.filter((r) => r.date === date && r.oldRoomId)
           .map((r) => `${r.scheduleId}_${r.date}`)
       );
 
@@ -236,11 +731,8 @@ function ClerkEditApprovedReservation() {
       for (const room of roomsList) {
         if (isRoomUnderMaintenance(room, date, startTime, endTime)) continue;
 
-        const scheduleSnap = await getDocs(
-          collection(db, "rooms", room.id, "schedules")
-        );
-        const schedules = scheduleSnap.docs
-          .map((d) => ({ id: d.id, ...d.data() }))
+        const scheduleSnap = await getDocs(collection(db, "rooms", room.id, "schedules"));
+        const schedules = scheduleSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
           .filter((s) => !s.initialized && s.day === dayAbbrev);
 
         const hasScheduleConflict = schedules.some((sched) => {
@@ -252,7 +744,9 @@ function ClerkEditApprovedReservation() {
         if (hasScheduleConflict) continue;
 
         const hasEventConflict = events.some(
-          (e) => e.roomId === room.id && overlap(startTime, endTime, e.startTime, e.endTime)
+          (e) => e.roomId === room.id &&
+            e.reservationId !== reservation.id &&
+            overlap(startTime, endTime, e.startTime, e.endTime)
         );
         if (hasEventConflict) continue;
 
@@ -267,12 +761,10 @@ function ClerkEditApprovedReservation() {
         );
         if (hasReassignConflict) continue;
 
-        // Purpose-based filters
         if (purpose === "Hands-on" && requiredEquipment.length > 0) {
           const roomEquipment = Object.entries(room.equipment || {})
-            .filter(([key, value]) => value === true)
+            .filter(([, value]) => value === true)
             .map(([key]) => key.toLowerCase());
-
           const hasAllEquipment = requiredEquipment.every((eq) =>
             roomEquipment.includes(eq.toLowerCase())
           );
@@ -281,10 +773,7 @@ function ClerkEditApprovedReservation() {
 
         if ((purpose === "Lecture" || purpose === "Examination") && studentRange) {
           const minCapacity = {
-            "30-50": 30,
-            "50-60": 50,
-            "60-80": 60,
-            "80-100": 80,
+            "30-50": 30, "50-60": 50, "60-80": 60, "80-100": 80,
           }[studentRange] || 0;
           if (Number(room.capacity || 0) < minCapacity) continue;
         }
@@ -293,10 +782,6 @@ function ClerkEditApprovedReservation() {
       }
 
       setAvailableRooms(available);
-      if (editableFields.roomName && !available.some((r) => r.roomName === editableFields.roomName)) {
-        setEditableFields((prev) => ({ ...prev, roomName: "" }));
-        setConflictError("The previously selected room is no longer available for the chosen date/time.");
-      }
     } catch (err) {
       console.error(err);
     } finally {
@@ -311,43 +796,98 @@ function ClerkEditApprovedReservation() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editableFields.date, editableFields.startTime, editableFields.endTime, allRooms]);
 
-  const handleChange = (field) => (e) => {
-    if (reservationIsPast) return; // hard block
-    const value = e.target.value;
-    setEditableFields((prev) => ({ ...prev, [field]: value }));
+  // ══════════════════════════════════════════════════════════
+  // LIVE CONFLICT CHECK — with sync loading flag
+  // ══════════════════════════════════════════════════════════
+  useEffect(() => {
+    if (!editableFields.roomName || !editableFields.date ||
+        !editableFields.startTime || !editableFields.endTime) {
+      setConflicts([]);
+      setCheckingConflicts(false);
+      return;
+    }
+
+    // ✅ Sync agad — walang stale "No conflicts" flash
+    setCheckingConflicts(true);
+
+    const timer = setTimeout(async () => {
+      const roomObj = allRooms.find((r) => r.roomName === editableFields.roomName);
+      const found = await checkReservationConflicts(
+        {
+          ...reservation,
+          roomId: roomObj?.id || reservation.roomId,
+          roomName: editableFields.roomName,
+          date: editableFields.date,
+          startTime: editableFields.startTime,
+          endTime: editableFields.endTime,
+        },
+        reservation.id
+      );
+      setConflicts(found);
+      setCheckingConflicts(false);
+    }, 350);
+
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editableFields, allRooms, reservation?.id]);
+
+  const commitField = (field, value) => {
+    setFieldError({ field: "", message: "" });
     setConflictError("");
+
+    if (field === "date" && value && isPastDate(value)) {
+      setFieldError({
+        field: "date",
+        message: "You cannot select a past date. Please choose today or a future date.",
+      });
+      return;
+    }
+
+    if (field === "startTime" && value && editableFields.date === getTodayLocal() &&
+        isPastDateTime(editableFields.date, value)) {
+      setFieldError({
+        field: "startTime",
+        message: "Start time cannot be in the past for today's date.",
+      });
+      return;
+    }
+
+    if (field === "endTime" && value && editableFields.startTime &&
+        convertToMinutes(value) <= convertToMinutes(editableFields.startTime)) {
+      setFieldError({
+        field: "endTime",
+        message: "End time must be after the start time.",
+      });
+      return;
+    }
+
+    setEditableFields((prev) => ({ ...prev, [field]: value }));
   };
 
   const checkConflicts = async () => {
     const { roomName, date, startTime, endTime } = editableFields;
     if (!roomName || !date || !startTime || !endTime) return "Please select a room, date, and time.";
+    if (isPastDate(date)) return "Cannot schedule a past date.";
+    if (date === getTodayLocal() && isPastDateTime(date, startTime)) return "Start time cannot be in the past.";
+    if (convertToMinutes(endTime) <= convertToMinutes(startTime)) return "End time must be after the start time.";
 
     const room = allRooms.find((r) => r.roomName === roomName);
     if (!room) return "Selected room not found.";
-
-    if (isRoomUnderMaintenance(room, date, startTime, endTime)) {
+    if (isRoomUnderMaintenance(room, date, startTime, endTime))
       return "This room is under maintenance during the selected time.";
-    }
-
-    if (!availableRooms.some((r) => r.roomName === roomName)) {
+    if (!availableRooms.some((r) => r.roomName === roomName))
       return "This room is not available for the selected date/time and purpose.";
-    }
+
+    const live = await checkReservationConflicts(
+      { ...reservation, roomId: room.id, roomName, date, startTime, endTime },
+      reservation.id
+    );
+    if (live.length > 0) return `Conflicts detected (${live.length}). Resolve before saving.`;
 
     return null;
   };
 
   const handleSave = async () => {
-    // ✅ Hard block: cannot edit past reservations
-    if (reservationIsPast) {
-      showToast(
-        "error",
-        "Edit Not Allowed",
-        "This reservation's date has already passed and can no longer be edited."
-      );
-      setShowSaveModal(false);
-      return;
-    }
-
     setSaving(true);
     showToast("loading", "Saving", "Updating reservation...");
 
@@ -371,22 +911,37 @@ function ClerkEditApprovedReservation() {
         }
       }
 
+      const room = allRooms.find((r) => r.roomName === editableFields.roomName);
+
       await updateDoc(doc(db, "reservationRequests", reservation.id), {
         roomName: editableFields.roomName,
+        roomId: room?.id || reservation.roomId,
         date: editableFields.date,
         startTime: editableFields.startTime,
         endTime: editableFields.endTime,
         updatedAt: serverTimestamp(),
+        updatedBy: clerkName,
       });
 
-      const room = allRooms.find((r) => r.roomName === editableFields.roomName);
-      if (room) {
-        await updateDoc(doc(db, "reservationRequests", reservation.id), {
-          roomId: room.id,
-        });
+      try {
+        const evSnap = await getDocs(query(
+          collection(db, "events"),
+          where("reservationId", "==", reservation.id)
+        ));
+        for (const ev of evSnap.docs) {
+          await updateDoc(doc(db, "events", ev.id), {
+            roomName: editableFields.roomName,
+            roomId: room?.id || reservation.roomId,
+            date: editableFields.date,
+            startTime: editableFields.startTime,
+            endTime: editableFields.endTime,
+            updatedAt: serverTimestamp(),
+          });
+        }
+      } catch (err) {
+        console.warn("Event sync failed:", err);
       }
 
-      // Activity log
       await logActivity({
         userId: firebaseUser?.uid || "",
         user: clerkName,
@@ -395,80 +950,49 @@ function ClerkEditApprovedReservation() {
         actionType: "edit",
         target: `${editableFields.roomName} - ${courseTitle}`,
         status: "SUCCESS",
-        details: {
-          reservationId: reservation.id,
-          previous: {
-            room: reservation.roomName,
-            date: reservation.date,
-            startTime: reservation.startTime,
-            endTime: reservation.endTime,
-          },
-          updated: {
-            room: editableFields.roomName,
-            date: editableFields.date,
-            startTime: editableFields.startTime,
-            endTime: editableFields.endTime,
-          },
-        },
+        details: { reservationId: reservation.id, previous: originalFields, updated: editableFields },
       });
 
-      // ─── Notifications ────────────────────────────────────────────
-
-      // 1. Faculty
       let facultyUserId = reservation.userId;
       if (!facultyUserId && facultyName) {
-        const user = await findUserByName(facultyName);
-        if (user) facultyUserId = user.id;
+        const u = await findUserByName(facultyName);
+        if (u) facultyUserId = u.id;
       }
       if (facultyUserId) {
         await sendNotification(
-          facultyUserId,
-          "faculty",
-          "Reservation Updated",
-          `Your reservation for ${editableFields.roomName} on ${editableFields.date} (${editableFields.startTime} - ${editableFields.endTime}) has been updated by Clerk.`,
-          "reservation-updated",
-          "INFO"
+          facultyUserId, "faculty", "Reservation Updated",
+          `Your reservation for ${editableFields.roomName} on ${editableFields.date} ` +
+            `(${format12Hour(editableFields.startTime)} - ${format12Hour(editableFields.endTime)}) ` +
+            `has been updated by Clerk.`,
+          "reservation-updated", "INFO"
         );
       }
 
-      // 2. Clerk (self)
       if (firebaseUser?.uid) {
         await sendNotification(
-          firebaseUser.uid,
-          "clerk",
-          "Reservation Updated",
+          firebaseUser.uid, "clerk", "Reservation Updated",
           `You updated ${facultyName}'s reservation for ${editableFields.roomName}.`,
-          "reservation-updated",
-          "INFO"
+          "reservation-updated", "INFO"
         );
       }
 
-      // 3. All admins
       const usersSnap = await getDocs(collection(db, "users"));
-      const adminNotifications = [];
-      usersSnap.forEach((doc) => {
-        const role = normalize(doc.data().role);
-        if (role === "admin") {
-          adminNotifications.push(
-            sendNotification(
-              doc.id,
-              "admin",
-              "Reservation Updated",
-              `${facultyName}'s reservation for ${editableFields.roomName} was updated by Clerk.`,
-              "reservation-updated",
-              "INFO"
-            )
-          );
+      const adminJobs = [];
+      usersSnap.forEach((d) => {
+        if (normalize(d.data().role) === "admin") {
+          adminJobs.push(sendNotification(
+            d.id, "admin", "Reservation Updated",
+            `${facultyName}'s reservation for ${editableFields.roomName} was updated by Clerk.`,
+            "reservation-updated", "INFO"
+          ));
         }
       });
-      await Promise.all(adminNotifications);
+      await Promise.all(adminJobs);
 
       setShowSaveModal(false);
       showToast("success", "Success", "Reservation updated successfully!");
 
-      setTimeout(() => {
-        navigate("/clerk/online-reservations");
-      }, 1500);
+      setTimeout(() => navigate("/clerk/online-reservations"), 1500);
     } catch (err) {
       console.error(err);
       showToast("error", "Error", err.message || "Failed to update reservation.");
@@ -480,47 +1004,84 @@ function ClerkEditApprovedReservation() {
   if (!reservation) {
     return (
       <div className="clerk-edit-approved-room">
-        <h2>Reservation not found.</h2>
-        <button onClick={() => navigate("/clerk/online-reservations")}>Back</button>
+        <div className="clerk-white-box-edit-approved">
+          <h2>Reservation not found.</h2>
+          <button onClick={() => navigate("/clerk/online-reservations")}>Back</button>
+        </div>
       </div>
     );
   }
 
+  // Synthetic conflict — unavailable room
+  const effectiveConflicts = currentRoomUnavailable
+    ? [
+        {
+          id: "unavailable-room",
+          kind: "unavailable",
+          label: "Room Unavailable",
+          title: editableFields.roomName,
+          faculty: "",
+          startTime: editableFields.startTime,
+          endTime: editableFields.endTime,
+        },
+        ...conflicts,
+      ]
+    : conflicts;
+
+  const hasConflicts = effectiveConflicts.length > 0;
+
+  // ✅ Isang "busy" flag — pinagsama ang availability fetch + conflict check
+  const isChecking = loadingAvailable || checkingConflicts;
+
+  const canSave = hasChanges && !hasConflicts && !isChecking && !saving;
+  const startTimeMin = editableFields.date === getTodayLocal() ? getNowTimeLocal() : null;
+
   return (
     <div className="clerk-edit-approved-room">
-      <i
-        className="fa-solid fa-arrow-left clerk-edit-approved-back-arrow"
-        onClick={() => navigate(-1)}
-        style={{ cursor: "pointer", fontSize: "20px", marginBottom: "12px" }}
-      ></i>
-
       <div className="clerk-white-box-edit-approved">
-        <h2 className="clerk-edit-approved-title">Edit Approved Reservation</h2>
 
-        {/* ✅ Past-date lock banner */}
+        {/* ─── Header ─────────────────────────────────── */}
+        <div className="cear-header">
+          <div className="cear-header-text">
+            <h2 className="clerk-edit-approved-title">Edit Approved Reservation</h2>
+            <p className="cear-subtitle">
+              Update the room, date, or time. Conflicts are checked in real time.
+            </p>
+          </div>
+        </div>
+
+        {/* ─── Banners ────────────────────────────────── */}
         {reservationIsPast && (
           <div className="clerk-edit-locked-banner">
-            <i className="fa-solid fa-lock"></i>
+            <i className="fa-solid fa-triangle-exclamation"></i>
             <div className="clerk-edit-locked-text">
-              <strong>Editing Locked</strong>
+              <strong>Past-dated Reservation</strong>
               <span>
-                This reservation was scheduled on{" "}
-                <b>{formatDateLong(reservation.date)}</b> — its date has already
-                passed and can no longer be edited.
+                This reservation was scheduled on <b>{formatDateLong(reservation.date)}</b>.
+                You can review the details, but you cannot change them to a past date/time.
               </span>
             </div>
           </div>
         )}
 
-        {conflictError && !reservationIsPast && (
+        {fieldError.message && (
+          <div className="clerk-edit-conflict-banner">
+            <i className="fa-solid fa-circle-exclamation"></i>
+            <span>{fieldError.message}</span>
+          </div>
+        )}
+
+        {conflictError && !fieldError.message && (
           <div className="clerk-edit-conflict-banner">
             <i className="fa-solid fa-triangle-exclamation"></i>
             <span>{conflictError}</span>
           </div>
         )}
 
+        {/* ─── Info Grid ──────────────────────────────── */}
         <div className="clerk-edit-approved-info-grid">
-          {/* ─── Read‑only ──────────────────────────────────────────── */}
+
+          {/* Requester */}
           <div className="clerk-edit-approved-info-box">
             <h3 className="clerk-edit-approved-info-box-title">
               <i className="fa-solid fa-user"></i> Requester
@@ -533,6 +1094,7 @@ function ClerkEditApprovedReservation() {
             </div>
           </div>
 
+          {/* Course & Audience */}
           <div className="clerk-edit-approved-info-box">
             <h3 className="clerk-edit-approved-info-box-title">
               <i className="fa-solid fa-book"></i> Course & Audience
@@ -549,82 +1111,261 @@ function ClerkEditApprovedReservation() {
             </div>
           </div>
 
-          {/* ─── Editable: Room & Schedule ────────────────────────── */}
+          {/* Editable: Room & Schedule (full width) */}
           <div className="clerk-edit-approved-info-box editable">
-            <h3 className="clerk-edit-approved-info-box-title">
-              <i className="fa-solid fa-calendar-days"></i> Room & Schedule
+            <h3 className="clerk-edit-approved-info-box-title editable-title">
+              <i className="fa-solid fa-pen-to-square"></i> Room & Schedule
+              <span className="editable-pill">Editable</span>
             </h3>
+
             <div className="clerk-edit-approved-info-box-content">
-              <div className="clerk-edit-approved-form-group">
-                <label>Room</label>
-                <select
-                  className="clerk-edit-approved-form-input"
-                  value={editableFields.roomName}
-                  onChange={handleChange("roomName")}
-                  disabled={loadingRooms || loadingAvailable || editLocked}
-                >
-                  <option value="">
-                    {reservationIsPast
-                      ? "Editing disabled (past date)"
-                      : loadingAvailable
-                      ? "Checking availability..."
-                      : "Select a room"}
-                  </option>
-                  {availableRooms.map((r) => (
-                    <option key={r.id} value={r.roomName}>
-                      {r.roomName} {r.roomStatus === "maintenance" ? "(Under Maintenance)" : ""}
-                    </option>
+              <div className="cear-fields-grid">
+                {/* ROOM */}
+                <div className="clerk-edit-approved-form-group cear-span-2">
+                  <label>Room</label>
+                  <div className="cr-picker-inline">
+                    <div className="cr-roompicker">
+                      <button
+                        type="button"
+                        className={`cr-trigger ${showRoomPicker ? "open" : ""} ${
+                          currentRoomUnavailable ? "is-warn" : ""
+                        }`}
+                        onClick={() => {
+                          setShowRoomPicker((v) => !v);
+                          setShowDatePicker(false);
+                          setShowStartTimePicker(false);
+                          setShowEndTimePicker(false);
+                        }}
+                        disabled={loadingRooms || saving}
+                      >
+                        {currentRoomUnavailable ? (
+                          <i className="fa-solid fa-triangle-exclamation trigger-warn-icon"></i>
+                        ) : (
+                          <i className="fa-solid fa-door-open"></i>
+                        )}
+                        <span>
+                          {loadingRooms
+                            ? "Loading rooms..."
+                            : loadingAvailable
+                            ? `${editableFields.roomName || "Room"} — checking…`
+                            : editableFields.roomName || "Select a room"}
+                        </span>
+                        {loadingAvailable && (
+                          <span className="cr-trigger-loading">
+                            <i className="fa-solid fa-circle-notch fa-spin"></i>
+                          </span>
+                        )}
+                        <i className={`fa-solid fa-chevron-down cr-caret ${showRoomPicker ? "open" : ""}`}></i>
+                      </button>
+
+                      {showRoomPicker && (
+                        <RoomPickerPopover
+                          value={editableFields.roomName}
+                          rooms={availableRooms}
+                          currentRoomName={editableFields.roomName}
+                          currentRoomMissing={currentRoomUnavailable}
+                          loadingRooms={loadingRooms || loadingAvailable}
+                          onChange={(v) => commitField("roomName", v)}
+                          onClose={() => setShowRoomPicker(false)}
+                        />
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* DATE */}
+                <div className="clerk-edit-approved-form-group">
+                  <label>Date</label>
+                  <div className="cr-picker-inline">
+                    <div className="cr-datepicker">
+                      <button
+                        type="button"
+                        className={`cr-trigger ${showDatePicker ? "open" : ""}`}
+                        onClick={() => {
+                          setShowDatePicker((v) => !v);
+                          setShowStartTimePicker(false);
+                          setShowEndTimePicker(false);
+                          setShowRoomPicker(false);
+                        }}
+                        disabled={saving}
+                      >
+                        <i className="fa-regular fa-calendar"></i>
+                        <span>
+                          {editableFields.date
+                            ? formatDateLong(editableFields.date)
+                            : "Select date"}
+                        </span>
+                        <i className={`fa-solid fa-chevron-down cr-caret ${showDatePicker ? "open" : ""}`}></i>
+                      </button>
+
+                      {showDatePicker && (
+                        <DatePickerPopover
+                          value={editableFields.date}
+                          minDate={getTodayLocal()}
+                          onChange={(v) => commitField("date", v)}
+                          onClose={() => setShowDatePicker(false)}
+                        />
+                      )}
+                    </div>
+                  </div>
+                  {fieldError.field === "date" && (
+                    <small style={{ color: "#dc2626", marginTop: "4px" }}>
+                      {fieldError.message}
+                    </small>
+                  )}
+                </div>
+
+                {/* TIME ROW */}
+                <div className="cear-time-pair">
+                  <div className="clerk-edit-approved-form-group">
+                    <label>Start Time</label>
+                    <div className="cr-picker-inline">
+                      <div className="cr-timepicker">
+                        <button
+                          type="button"
+                          className={`cr-trigger ${showStartTimePicker ? "open" : ""}`}
+                          onClick={() => {
+                            setShowStartTimePicker((v) => !v);
+                            setShowDatePicker(false);
+                            setShowEndTimePicker(false);
+                            setShowRoomPicker(false);
+                          }}
+                          disabled={saving}
+                        >
+                          <i className="fa-regular fa-clock"></i>
+                          <span>
+                            {editableFields.startTime
+                              ? format12Hour(editableFields.startTime)
+                              : "Select time"}
+                          </span>
+                          <i className={`fa-solid fa-chevron-down cr-caret ${showStartTimePicker ? "open" : ""}`}></i>
+                        </button>
+
+                        {showStartTimePicker && (
+                          <TimePickerPopover
+                            value={editableFields.startTime}
+                            minTime={startTimeMin}
+                            onChange={(v) => commitField("startTime", v)}
+                            onClose={() => setShowStartTimePicker(false)}
+                          />
+                        )}
+                      </div>
+                    </div>
+                    {fieldError.field === "startTime" && (
+                      <small style={{ color: "#dc2626", marginTop: "4px" }}>
+                        {fieldError.message}
+                      </small>
+                    )}
+                  </div>
+
+                  <div className="clerk-edit-approved-form-group">
+                    <label>End Time</label>
+                    <div className="cr-picker-inline">
+                      <div className="cr-timepicker">
+                        <button
+                          type="button"
+                          className={`cr-trigger ${showEndTimePicker ? "open" : ""}`}
+                          onClick={() => {
+                            setShowEndTimePicker((v) => !v);
+                            setShowDatePicker(false);
+                            setShowStartTimePicker(false);
+                            setShowRoomPicker(false);
+                          }}
+                          disabled={saving}
+                        >
+                          <i className="fa-regular fa-clock"></i>
+                          <span>
+                            {editableFields.endTime
+                              ? format12Hour(editableFields.endTime)
+                              : "Select time"}
+                          </span>
+                          <i className={`fa-solid fa-chevron-down cr-caret ${showEndTimePicker ? "open" : ""}`}></i>
+                        </button>
+
+                        {showEndTimePicker && (
+                          <TimePickerPopover
+                            value={editableFields.endTime}
+                            minTime={editableFields.startTime || startTimeMin}
+                            onChange={(v) => commitField("endTime", v)}
+                            onClose={() => setShowEndTimePicker(false)}
+                          />
+                        )}
+                      </div>
+                    </div>
+                    {fieldError.field === "endTime" && (
+                      <small style={{ color: "#dc2626", marginTop: "4px" }}>
+                        {fieldError.message}
+                      </small>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Live conflict indicator — uses isChecking (combined) */}
+              <div
+                className={`cear-conflict-status ${
+                  isChecking ? "is-checking" : hasConflicts ? "is-error" : "is-ok"
+                }`}
+              >
+                {isChecking ? (
+                  <>
+                    <i className="fa-solid fa-circle-notch fa-spin"></i>
+                    {loadingAvailable ? "Checking room availability…" : "Checking conflicts…"}
+                  </>
+                ) : hasConflicts ? (
+                  <>
+                    <i className="fa-solid fa-triangle-exclamation"></i>
+                    {effectiveConflicts.length} conflict{effectiveConflicts.length > 1 ? "s" : ""} detected — cannot save
+                  </>
+                ) : (
+                  <><i className="fa-solid fa-circle-check"></i> No conflicts detected</>
+                )}
+              </div>
+
+              {/* Conflict details — only after isChecking is done */}
+              {hasConflicts && !isChecking && (
+                <ul className="cear-conflict-list">
+                  {effectiveConflicts.map((c) => (
+                    <li key={`${c.kind}-${c.id}`} className="cear-conflict-item">
+                      <span
+                        className={`cear-conflict-label ${
+                          c.kind === "event" ? "type-event"
+                          : c.kind === "reassignment" ? "type-reassign"
+                          : c.kind === "reservation" ? "type-res"
+                          : c.kind === "unavailable" ? "type-unavailable"
+                          : "type-sched"
+                        }`}
+                      >
+                        <i
+                          className={
+                            c.kind === "event" ? "fa-solid fa-calendar-star"
+                            : c.kind === "reassignment" ? "fa-solid fa-right-left"
+                            : c.kind === "reservation" ? "fa-solid fa-book-bookmark"
+                            : c.kind === "unavailable" ? "fa-solid fa-door-closed"
+                            : "fa-solid fa-chalkboard-user"
+                          }
+                        ></i>
+                        {c.label}
+                      </span>
+                      <div className="cear-conflict-title">
+                        {c.kind === "unavailable"
+                          ? `${c.title} is not available for this date/time`
+                          : c.title}
+                      </div>
+                      <div className="cear-conflict-meta">
+                        {c.startTime && c.endTime
+                          ? `${format12Hour(c.startTime)} – ${format12Hour(c.endTime)}`
+                          : "Please select another room or change the schedule."}
+                        {c.faculty ? ` · ${c.faculty}` : ""}
+                      </div>
+                    </li>
                   ))}
-                </select>
-                {loadingAvailable && !reservationIsPast && (
-                  <small style={{ color: "#6b7280", marginTop: "4px" }}>
-                    <i className="fa-solid fa-spinner fa-spin"></i> Checking availability...
-                  </small>
-                )}
-                {availableRooms.length === 0 && !loadingAvailable && !reservationIsPast && editableFields.date && editableFields.startTime && editableFields.endTime && (
-                  <small style={{ color: "#dc2626", marginTop: "4px" }}>
-                    No rooms available for the selected date, time, and purpose.
-                  </small>
-                )}
-              </div>
-
-              <div className="clerk-edit-approved-form-group">
-                <label>Date</label>
-                <input
-                  type="date"
-                  className="clerk-edit-approved-form-input"
-                  value={editableFields.date}
-                  onChange={handleChange("date")}
-                  disabled={editLocked}
-                />
-              </div>
-
-              <div className="clerk-edit-approved-time-row">
-                <div className="clerk-edit-approved-form-group half">
-                  <label>Start Time</label>
-                  <input
-                    type="time"
-                    className="clerk-edit-approved-form-input"
-                    value={editableFields.startTime}
-                    onChange={handleChange("startTime")}
-                    disabled={editLocked}
-                  />
-                </div>
-                <div className="clerk-edit-approved-form-group half">
-                  <label>End Time</label>
-                  <input
-                    type="time"
-                    className="clerk-edit-approved-form-input"
-                    value={editableFields.endTime}
-                    onChange={handleChange("endTime")}
-                    disabled={editLocked}
-                  />
-                </div>
-              </div>
+                </ul>
+              )}
             </div>
           </div>
 
-          {/* ─── Purpose (read‑only) ────────────────────────────────── */}
+          {/* Purpose */}
           <div className="clerk-edit-approved-info-box">
             <h3 className="clerk-edit-approved-info-box-title">
               <i className="fa-solid fa-pen"></i> Purpose
@@ -637,27 +1378,40 @@ function ClerkEditApprovedReservation() {
               {requiredEquipment.length > 0 && (
                 <p>
                   <strong>Required Equipment:</strong>{" "}
-                  {requiredEquipment.map((eq) => ({
-                    projector: "Projector",
-                    tvDisplay: "TV Display",
-                    ac: "AC",
-                    computer: "Computer",
-                    smartBoard: "Smart Board",
-                  }[eq] || eq)).join(", ")}
+                  {requiredEquipment.map(
+                    (eq) => ({
+                      projector: "Projector", tvDisplay: "TV Display",
+                      ac: "AC", computer: "Computer", smartBoard: "Smart Board",
+                    }[eq] || eq)
+                  ).join(", ")}
                 </p>
               )}
-              {studentRange && <p><strong>Estimated Attendees:</strong> {studentRange}</p>}
+              {studentRange && (
+                <p><strong>Estimated Attendees:</strong> {studentRange}</p>
+              )}
             </div>
           </div>
 
-          {/* ─── Metadata ───────────────────────────────────────────── */}
+          {/* Metadata */}
           <div className="clerk-edit-approved-info-box">
             <h3 className="clerk-edit-approved-info-box-title">
               <i className="fa-solid fa-circle-info"></i> Metadata
             </h3>
             <div className="clerk-edit-approved-info-box-content">
-              <p><strong>Status:</strong> <span className="clerk-edit-approved-status-badge approved">Approved</span></p>
-              <p><strong>Requested On:</strong> {new Date(reservation.createdAt?.seconds * 1000 || Date.now()).toLocaleDateString()}</p>
+              <p>
+                <strong>Status:</strong>{" "}
+                <span className="clerk-edit-approved-status-badge approved">Approved</span>
+              </p>
+              <p>
+                <strong>Requested On:</strong>{" "}
+                {new Date(reservation.createdAt?.seconds * 1000 || Date.now()).toLocaleDateString()}
+              </p>
+              {reservation.updatedAt && (
+                <p>
+                  <strong>Last Updated:</strong>{" "}
+                  {new Date(reservation.updatedAt?.seconds * 1000 || Date.now()).toLocaleString()}
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -674,46 +1428,58 @@ function ClerkEditApprovedReservation() {
         <button
           className="clerk-edit-save-btn"
           onClick={() => {
-            if (reservationIsPast) {
-              showToast(
-                "error",
-                "Edit Not Allowed",
-                "This reservation's date has already passed and can no longer be edited."
-              );
-              return;
-            }
             if (!editableFields.roomName) {
               setConflictError("Please select a room.");
               showToast("error", "Error", "Please select a room.");
               return;
             }
-            if (!availableRooms.some((r) => r.roomName === editableFields.roomName)) {
-              setConflictError("The selected room is not available for the chosen date/time and purpose.");
-              showToast("error", "Error", "Selected room is not available.");
+            if (isChecking) {
+              setConflictError("Please wait — still checking availability and conflicts.");
+              showToast("error", "Please Wait", "Still checking conflicts…");
+              return;
+            }
+            if (currentRoomUnavailable) {
+              const msg = `${editableFields.roomName} is not available for this date/time. Please select another room.`;
+              setConflictError(msg);
+              showToast("error", "Room Unavailable", msg);
+              return;
+            }
+            if (hasConflicts) {
+              setConflictError(
+                `Cannot save — ${effectiveConflicts.length} conflict${effectiveConflicts.length > 1 ? "s" : ""} detected.`
+              );
+              showToast("error", "Conflicts Detected", "Resolve conflicts before saving.");
+              return;
+            }
+            if (!hasChanges) {
+              showToast("error", "No Changes", "No changes to save.");
               return;
             }
             setShowSaveModal(true);
           }}
-          disabled={saving || loadingAvailable || reservationIsPast}
-          title={reservationIsPast ? "Cannot edit — this reservation's date has passed" : undefined}
+          disabled={!canSave}
+          title={
+            hasConflicts ? "Resolve conflicts before saving"
+            : !hasChanges ? "No changes to save"
+            : isChecking ? "Checking conflicts…"
+            : undefined
+          }
         >
-          {saving ? "Saving..." : reservationIsPast ? "Editing Locked" : "Save Changes"}
+          {saving ? "Saving..."
+            : isChecking ? "Checking…"
+            : hasConflicts ? "Conflicts Found"
+            : !hasChanges ? "No Changes"
+            : "Save Changes"}
         </button>
       </div>
 
       {showSaveModal && (
-        <SavePopup
-          onCancel={() => setShowSaveModal(false)}
-          onConfirm={handleSave}
-        />
+        <SavePopup onCancel={() => setShowSaveModal(false)} onConfirm={handleSave} />
       )}
 
       <Toast
-        show={toast.show}
-        type={toast.type}
-        title={toast.title}
-        message={toast.message}
-        onClose={() => setToast((prev) => ({ ...prev, show: false }))}
+        show={toast.show} type={toast.type} title={toast.title} message={toast.message}
+        onClose={() => setToast((p) => ({ ...p, show: false }))}
       />
     </div>
   );

@@ -1,7 +1,16 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import "./submit-issue-modal.css";
 import { auth, db } from "../../firebase";
-import { collection, addDoc, getDoc, getDocs, doc, serverTimestamp } from "firebase/firestore";
+import {
+  collection,
+  addDoc,
+  getDoc,
+  getDocs,
+  doc,
+  serverTimestamp,
+  query,
+  where,
+} from "firebase/firestore";
 import Toast from "../../Popup/Toast/Toast";
 
 const CLOUDINARY_CLOUD_NAME    = "dqn1s5ujs";
@@ -52,6 +61,86 @@ async function uploadToCloudinary(file) {
   const data = await res.json();
   return data.secure_url;
 }
+
+/* ══════════════════════════════════════════════════════════════
+   🔔 NOTIFY HELPERS
+   ══════════════════════════════════════════════════════════════ */
+
+// Notify all admins about a newly submitted room issue
+async function notifyAllAdmins({
+  issueId,
+  roomId,
+  reporterName,
+  roomName,
+  category,
+  severity,
+  description,
+}) {
+  try {
+    const usersSnap = await getDocs(collection(db, "users"));
+    const jobs = [];
+
+    usersSnap.forEach((u) => {
+      const role = (u.data().role || "").toLowerCase().trim();
+      if (role !== "admin") return;
+
+      jobs.push(
+        addDoc(collection(db, "notifications"), {
+          userId: u.id,
+          ownerType: "admin",
+          issueId,
+          roomId,
+          roomName,
+          title: `New ${severity} Room Issue`,
+          message:
+            `${reporterName} reported a ${severity} ${category} issue in ${roomName}. ` +
+            `"${(description || "").slice(0, 120)}${(description || "").length > 120 ? "…" : ""}"`,
+          type: severity === "Urgent" ? "urgent" : "issue-new",
+          unread: true,
+          archived: false,
+          badge: severity === "Urgent" ? "URGENT" : "NEW",
+          createdAt: serverTimestamp(),
+        })
+      );
+    });
+
+    if (jobs.length) await Promise.all(jobs);
+  } catch (err) {
+    console.warn("notifyAllAdmins failed:", err);
+  }
+}
+
+// Optional: send a confirmation notification back to the reporter (faculty)
+async function notifyReporterSubmitted({
+  reporterId,
+  issueId,
+  roomName,
+  category,
+  severity,
+}) {
+  if (!reporterId) return;
+  try {
+    await addDoc(collection(db, "notifications"), {
+      userId: reporterId,
+      ownerType: "faculty",
+      issueId,
+      roomName,
+      title: "Issue Submitted",
+      message:
+        `Your ${severity} ${category} issue in ${roomName} was sent to the Admin ` +
+        `for review. You'll be notified once it's acknowledged.`,
+      type: "issue-submitted",
+      unread: true,
+      archived: false,
+      badge: "SENT",
+      createdAt: serverTimestamp(),
+    });
+  } catch (err) {
+    console.warn("notifyReporterSubmitted failed:", err);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════ */
 
 export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoomId = "" }) {
   const [rooms, setRooms]               = useState([]);
@@ -243,7 +332,8 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
         setUploading(false);
       }
 
-      await addDoc(collection(db, "roomIssues"), {
+      // ── 1️⃣ Create the issue ──────────────────────────────
+      const issueRef = await addDoc(collection(db, "roomIssues"), {
         roomId:         form.roomId,
         roomName:       selectedRoom?.roomName || "",
         floor:          selectedRoom?.floor || "",
@@ -262,6 +352,26 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
         resolvedBy:     "",
         resolvedAt:     null,
         createdAt:      serverTimestamp(),
+      });
+
+      // ── 2️⃣ 🔔 Notify all ADMINS ──────────────────────────
+      await notifyAllAdmins({
+        issueId:      issueRef.id,
+        roomId:       form.roomId,
+        reporterName,
+        roomName:     selectedRoom?.roomName || "",
+        category:     form.category,
+        severity:     form.severity,
+        description:  form.description.trim(),
+      });
+
+      // ── 3️⃣ 🔔 Notify the reporter (faculty confirmation) ─
+      await notifyReporterSubmitted({
+        reporterId: user.uid,
+        issueId:    issueRef.id,
+        roomName:   selectedRoom?.roomName || "",
+        category:   form.category,
+        severity:   form.severity,
       });
 
       showToast(
@@ -703,7 +813,7 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
         </div>
       )}
 
-            {/* ═══ TOAST — wrapped para hindi matakpan ng modal overlay ═══ */}
+      {/* ═══ TOAST — wrapped para hindi matakpan ng modal overlay ═══ */}
       <div className="sim-toast-layer">
         <Toast
           show={toast.show} type={toast.type} title={toast.title} message={toast.message}

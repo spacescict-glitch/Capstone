@@ -190,10 +190,6 @@ function ScheduleDetailsModal({ target, onClose }) {
             </div>
           )}
         </div>
-
-        <button className="sdm-close-btn" onClick={onClose}>
-          Close
-        </button>
       </div>
     </div>
   );

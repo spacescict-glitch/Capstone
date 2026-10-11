@@ -154,3 +154,48 @@
   border-radius: 10px;
   display: block;
 }
+
+/* ── Footer ────────────────────────────────────────────────────── */
+.clerk-approved-footer {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+}
+
+.clerk-approved-back-arrow {
+  color: #5f6c80;
+  transition: color 0.2s;
+}
+
+.clerk-approved-back-arrow:hover {
+  color: #f57c00;
+}
+
+.clerk-approved-back-btn {
+  padding: 10px 30px;
+  color: #f57c00;
+  font-size: 14px;
+  font-weight: 700;
+  width: 150px;
+  border: 1.5px solid #f57c00;
+  cursor: pointer;
+  background-color: transparent;
+  border-radius: 10px;
+  transition: background-color 0.2s ease;
+}
+
+.clerk-approved-back-btn:hover {
+  background-color: #FEF0E7;
+}
+
+@media (max-width: 768px) {
+
+  .clerk-approved-footer {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .clerk-approved-back-btn {
+    width: 100%;
+  }
+}

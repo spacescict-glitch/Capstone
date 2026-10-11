@@ -11,6 +11,7 @@ import {
   where,
   addDoc,
   serverTimestamp,
+  onSnapshot,
 } from "firebase/firestore";
 import { auth, db } from "../firebase";
 import Toast from "../Popup/Toast/Toast";
@@ -26,6 +27,9 @@ const WARN_ATTEMPT = 3;                   // warn admin threshold
 const AUTO_UNBLOCK_MS = 30 * 60 * 1000;   // auto-unblock after 30 min
                                           // set to null para permanent
 
+// ─── Block info key (shared sa ProtectedRoute) ─────────────────
+const BLOCK_KEY = "spaces_block_info";
+
 export default function Login() {
   const [selectedRole, setSelectedRole] = useState("");
   const [email, setEmail] = useState("");
@@ -34,6 +38,9 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [redirecting, setRedirecting] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
+
+  // ─── Blocked banner (galing sa ProtectedRoute kapag na-block habang naka-login) ─
+  const [blockedBanner, setBlockedBanner] = useState(null);
 
   // ─── Role dropdown ─────────────────────────────────────────────
   const [roleDropdownOpen, setRoleDropdownOpen] = useState(false);
@@ -96,6 +103,87 @@ export default function Login() {
     if (savedRole) setSelectedRole(savedRole);
     if (savedEmail || savedRole) setRememberMe(true);
   }, []);
+
+  // ─── Read block info (galing sa ProtectedRoute auto sign-out) ──
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(BLOCK_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        setBlockedBanner(parsed);
+        // I-clear agad — para hindi na lumabas sa susunod na visit
+        sessionStorage.removeItem(BLOCK_KEY);
+      }
+    } catch (e) {
+      console.warn("Failed to read block info:", e);
+    }
+  }, []);
+
+  // ═════════════════════════════════════════════════════════════════
+  // 🔄 LIVE: Watch kung na-unblock na ng Admin
+  // ═════════════════════════════════════════════════════════════════
+  useEffect(() => {
+    // Walang naka-blocked banner? Wag mag-listen.
+    if (!blockedBanner) return;
+    // Na-unblock na — wag nang mag-listen ulit
+    if (blockedBanner.unblocked) return;
+
+    const emailToWatch = blockedBanner.email;
+    if (!emailToWatch) return;
+
+    let unsub = null;
+    let cancelled = false;
+
+    const startWatching = async () => {
+      try {
+        const q = query(
+          collection(db, "users"),
+          where("email", "==", emailToWatch)
+        );
+        const snap = await getDocs(q);
+        if (snap.empty || cancelled) return;
+
+        const userRef = doc(db, "users", snap.docs[0].id);
+
+        unsub = onSnapshot(userRef, (docSnap) => {
+          if (cancelled) return;
+          if (!docSnap.exists()) return;
+
+          const data = docSnap.data();
+          const newStatus = String(data.status || "").toLowerCase();
+
+          // ✅ Na-unblock na — palitan yung banner content
+          if (newStatus === "active") {
+            setBlockedBanner((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    reason:
+                      "Good news! Your account has been unblocked by the Admin. You may now sign in.",
+                    unblocked: true,
+                  }
+                : prev
+            );
+            // Stop listening — tapos na
+            if (unsub) {
+              unsub();
+              unsub = null;
+            }
+          }
+        });
+      } catch (err) {
+        console.warn("[login] unblock listener failed:", err);
+      }
+    };
+
+    startWatching();
+
+    return () => {
+      cancelled = true;
+      if (unsub) unsub();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blockedBanner?.email, blockedBanner?.unblocked]);
 
   useEffect(() => {
     const handleEsc = (e) => {
@@ -413,6 +501,18 @@ export default function Login() {
 
         // A) Manual block (no blockedUntil) OR auto-block still active → deny
         if (!blockedUntil || isTempBlockActive) {
+          // Show banner din dito (as extra feedback)
+          setBlockedBanner({
+            reason:
+              userData.blockReason ||
+              (blockedUntil
+                ? "Your account is temporarily blocked due to multiple failed login attempts. Please try again later or contact the Admin."
+                : "Your account has been blocked. Please contact the Admin for assistance."),
+            email: userData.email || email,
+            blockedAt: Date.now(),
+            unblocked: false,
+          });
+
           showToast(
             "error",
             "Account Blocked",
@@ -484,6 +584,9 @@ export default function Login() {
           console.warn("[login] reset counters failed:", e);
         }
       }
+
+      // ✅ Success — clear any leftover block banner
+      setBlockedBanner(null);
 
       setRedirecting(true);
       showToast("success", "Login Successful", `Welcome ${userData.role}!`);
@@ -592,10 +695,10 @@ export default function Login() {
 
   return (
     <>
-            <LoginNav
-              activePage="login"
-              onChangePage={(page) => navigate(page === 'home' ? '/' : `/${page}`)}
-            />
+      <LoginNav
+        activePage="login"
+        onChangePage={(page) => navigate(page === 'home' ? '/' : `/${page}`)}
+      />
       <Toast
         show={toast.show}
         type={toast.type}
@@ -648,6 +751,45 @@ export default function Login() {
               }
             }}
           >
+            {/* ═══════════ BLOCKED / UNBLOCKED BANNER ═══════════ */}
+            {blockedBanner && (
+              <div
+                className={`login-blocked-alert ${
+                  blockedBanner.unblocked ? "is-unblocked" : ""
+                }`}
+                role="alert"
+              >
+                <div className="login-blocked-icon">
+                  <i
+                    className={`fa-solid ${
+                      blockedBanner.unblocked
+                        ? "fa-circle-check"
+                        : "fa-ban"
+                    }`}
+                  />
+                </div>
+                <div className="login-blocked-text">
+                  <strong>
+                    {blockedBanner.unblocked
+                      ? "Account Unblocked"
+                      : "Account Blocked"}
+                  </strong>
+                  <span>{blockedBanner.reason}</span>
+                  {blockedBanner.email && (
+                    <small>Email: {blockedBanner.email}</small>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className="login-blocked-close"
+                  onClick={() => setBlockedBanner(null)}
+                  aria-label="Dismiss"
+                >
+                  <i className="fa-solid fa-xmark" />
+                </button>
+              </div>
+            )}
+
             <div className="login-card-header">
               <div className="card-icon logo-icon">
                 <img src={logo} alt="Logo" />

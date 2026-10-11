@@ -3,13 +3,13 @@ import { useParams, useNavigate } from "react-router-dom";
 import {
   doc,
   getDoc,
+  getDocs,
   updateDoc,
   serverTimestamp,
   addDoc,
   collection,
   query,
   where,
-  getDocs,
 } from "firebase/firestore";
 import { logActivity } from "../../utils/logActivity";
 import { auth } from "../../firebase";
@@ -54,6 +54,36 @@ export default function FacultyRoomReassignment() {
     return new Date() > scheduleDate;
   };
 
+  // ✅ Check kung pwede pa mag-decide
+  const isPending = () => {
+    if (!assignment) return false;
+    const s = String(assignment.status || "").toLowerCase();
+    return s === "pending_faculty" || s === "pending_admin" || s === "pending";
+  };
+
+  const isAlreadyAccepted = () => {
+    if (!assignment) return false;
+    return String(assignment.status || "").toLowerCase() === "accepted";
+  };
+
+  const isAlreadyDeclined = () => {
+    if (!assignment) return false;
+    return String(assignment.status || "").toLowerCase() === "declined";
+  };
+
+  const isCancelled = () => {
+    if (!assignment) return false;
+    return String(assignment.status || "").toLowerCase() === "cancelled";
+  };
+
+  const isNeedsReassign = () => {
+    if (!assignment) return false;
+    return String(assignment.status || "").toLowerCase() === "needs_reassign";
+  };
+
+  // ✅ Combined: pwedeng mag-decide?
+  const canDecide = () => isPending() && !isExpired();
+
   useEffect(() => {
     const loadAssignment = async () => {
       try {
@@ -71,7 +101,54 @@ export default function FacultyRoomReassignment() {
     loadAssignment();
   }, [assignmentId]);
 
-    // ─── Send notifications ───────────────────────────────────────
+  // ─── Mark the notification(s) as decided ─────────────────────
+  // Ito yung pang-block sa View button. Hinahanap lahat ng notifications
+  // na tumutugma sa assignmentId na ito at hindi pa naka-mark as decided,
+  // saka nila ina-update. Kapag bagong reassignment (fresh doc), wala
+  // itong maapektuhan.
+  const markRelatedNotifications = async (decision) => {
+    try {
+      const currentUser = auth.currentUser;
+      if (!currentUser) return;
+
+      const q = query(
+        collection(db, "notifications"),
+        where("assignmentId", "==", assignment.id),
+        where("type", "==", "room-reassignment")
+      );
+
+      const snap = await getDocs(q);
+      let markedCount = 0;
+
+      for (const notifDoc of snap.docs) {
+        const data = notifDoc.data();
+
+        // ✅ Skip kapag decided na
+        if (data.decided === true) continue;
+
+        // ✅ Skip kapag hindi para sa user na ito
+        if (data.userId !== currentUser.uid) continue;
+
+        await updateDoc(notifDoc.ref, {
+          decided: true,
+          decidedAt: serverTimestamp(),
+          badge: decision.toUpperCase(),
+        });
+        markedCount++;
+      }
+
+      console.log(
+        `[FacultyRoomReassignment] Marked ${markedCount} notification(s) as decided.`
+      );
+    } catch (err) {
+      console.warn(
+        "[FacultyRoomReassignment] Failed to mark notifications:",
+        err
+      );
+    }
+  };
+
+  // ─── Send notifications ───────────────────────────────────────
   const sendDecisionNotifications = async (decision) => {
     const currentUser = auth.currentUser;
     if (!currentUser) return;
@@ -97,11 +174,11 @@ export default function FacultyRoomReassignment() {
       badge: decision.toUpperCase(),
       unread: true,
       archived: false,
+      decided: true,
       createdAt: serverTimestamp(),
     });
 
-    // Notify Admins — role comparison is case-insensitive because roles
-    // can be stored as "Admin", "admin", or "ADMIN".
+    // Notify Admins
     const usersSnap = await getDocs(collection(db, "users"));
     for (const userDoc of usersSnap.docs) {
       const role = String(userDoc.data().role || "").toLowerCase();
@@ -145,6 +222,24 @@ export default function FacultyRoomReassignment() {
   // ─── Accept ───────────────────────────────────────────────────
   const approveAssignment = async () => {
     if (processing) return;
+
+    if (!canDecide()) {
+      showToast(
+        "error",
+        "Not Allowed",
+        isAlreadyAccepted()
+          ? "You already accepted this reassignment."
+          : isAlreadyDeclined()
+          ? "You already declined this reassignment."
+          : isCancelled()
+          ? "This reassignment has been cancelled."
+          : isNeedsReassign()
+          ? "This reassignment is being re-processed."
+          : "This reassignment is no longer active."
+      );
+      return;
+    }
+
     if (isExpired()) {
       showToast(
         "error",
@@ -176,6 +271,9 @@ export default function FacultyRoomReassignment() {
 
       await sendDecisionNotifications("accepted");
 
+      // 🆕 Mark the original request notification as decided
+      await markRelatedNotifications("accepted");
+
       const userSnap = await getDoc(doc(db, "users", auth.currentUser.uid));
       const userData = userSnap.data();
 
@@ -188,6 +286,13 @@ export default function FacultyRoomReassignment() {
         status: "Success",
         details: { decision: "accepted" },
       });
+
+      // Update local state para reflective agad yung UI
+      setAssignment((prev) => ({
+        ...prev,
+        status: "accepted",
+        acceptedAt: new Date(),
+      }));
 
       showToast(
         "success",
@@ -210,6 +315,24 @@ export default function FacultyRoomReassignment() {
   // ─── Decline ──────────────────────────────────────────────────
   const rejectAssignment = async () => {
     if (processing) return;
+
+    if (!canDecide()) {
+      showToast(
+        "error",
+        "Not Allowed",
+        isAlreadyAccepted()
+          ? "You already accepted this reassignment."
+          : isAlreadyDeclined()
+          ? "You already declined this reassignment."
+          : isCancelled()
+          ? "This reassignment has been cancelled."
+          : isNeedsReassign()
+          ? "This reassignment is being re-processed."
+          : "This reassignment is no longer active."
+      );
+      return;
+    }
+
     if (isExpired()) {
       showToast(
         "error",
@@ -234,14 +357,12 @@ export default function FacultyRoomReassignment() {
 
       // ✅ DO NOT resolve the event here.
       // The conflict stays unresolved until the Admin decides to
-      // cancel the class. This lets the Admin see the declined
-      // reassignment in the "Declined" tab and take final action.
-      //
-      // NOTE: We intentionally do NOT set `conflictResolved: true`
-      // on the event. That will be handled by the Admin's
-      // "Cancel Class" action later.
+      // cancel the class.
 
       await sendDecisionNotifications("declined");
+
+      // 🆕 Mark the original request notification as decided
+      await markRelatedNotifications("declined");
 
       const userSnap = await getDoc(doc(db, "users", auth.currentUser.uid));
       const userData = userSnap.data();
@@ -255,6 +376,14 @@ export default function FacultyRoomReassignment() {
         status: "Declined",
         details: { reason },
       });
+
+      // Update local state
+      setAssignment((prev) => ({
+        ...prev,
+        status: "declined",
+        declinedAt: new Date(),
+        denialReason: reason,
+      }));
 
       setShowRejectModal(false);
       showToast(
@@ -352,7 +481,87 @@ export default function FacultyRoomReassignment() {
           </span>
         </div>
 
-        {!isExpired() ? (
+        {/* ═══════════════════════════════════════════════════════
+            STATE RENDERING — buttons vs. locked states
+            ═══════════════════════════════════════════════════════ */}
+
+        {isAlreadyAccepted() && (
+          <div
+            className="faculty-room-note"
+            style={{
+              marginTop: 30,
+              background: "#ecfdf5",
+              border: "1px solid #bbf7d0",
+              color: "#065f46",
+            }}
+          >
+            <i className="fa-solid fa-circle-check"></i>
+            <span>
+              <strong>You already accepted this reassignment.</strong> The
+              class has been moved to <b>{assignment.newRoomName}</b>.
+            </span>
+          </div>
+        )}
+
+        {isAlreadyDeclined() && (
+          <div
+            className="faculty-room-note"
+            style={{
+              marginTop: 30,
+              background: "#fef2f2",
+              border: "1px solid #fecaca",
+              color: "#991b1b",
+            }}
+          >
+            <i className="fa-solid fa-circle-xmark"></i>
+            <span>
+              <strong>You already declined this reassignment.</strong>
+              {assignment.denialReason
+                ? ` Reason: ${assignment.denialReason}`
+                : ""}{" "}
+              The Admin will review this request.
+            </span>
+          </div>
+        )}
+
+        {isCancelled() && (
+          <div
+            className="faculty-room-note"
+            style={{
+              marginTop: 30,
+              background: "#fef2f2",
+              border: "1px solid #fecaca",
+              color: "#991b1b",
+            }}
+          >
+            <i className="fa-solid fa-ban"></i>
+            <span>
+              <strong>This reassignment was cancelled.</strong> No further
+              action is required.
+            </span>
+          </div>
+        )}
+
+        {isNeedsReassign() && (
+          <div
+            className="faculty-room-note"
+            style={{
+              marginTop: 30,
+              background: "#fef3c7",
+              border: "1px solid #fcd34d",
+              color: "#92400e",
+            }}
+          >
+            <i className="fa-solid fa-rotate-left"></i>
+            <span>
+              <strong>This reassignment is being re-processed.</strong> The
+              Clerk is finding a different room. You will receive a new
+              notification once ready.
+            </span>
+          </div>
+        )}
+
+        {canDecide() && (
           <div className="faculty-room-actions">
             <button
               className="reject-btn"
@@ -383,7 +592,10 @@ export default function FacultyRoomReassignment() {
               )}
             </button>
           </div>
-        ) : (
+        )}
+
+        {/* Fallback: pending pa rin pero expired na */}
+        {isPending() && isExpired() && (
           <div
             className="faculty-room-note"
             style={{

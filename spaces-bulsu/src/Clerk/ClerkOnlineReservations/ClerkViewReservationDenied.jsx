@@ -55,11 +55,6 @@ function ClerkViewReservationDenied() {
 
   return (
     <div className="clerk-denied-reservation-room">
-      <i
-        className="fa-solid fa-arrow-left clerk-denied-back-arrow"
-        onClick={() => navigate(-1)}
-        style={{ cursor: "pointer", fontSize: "20px", marginBottom: "12px" }}
-      ></i>
 
       <div className="clerk-denied-white-box">
         <h2 className="clerk-denied-title">Denied Reservation Details</h2>

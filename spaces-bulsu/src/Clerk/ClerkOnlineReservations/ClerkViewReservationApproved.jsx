@@ -55,11 +55,6 @@ function ClerkViewReservationApproved() {
 
   return (
     <div className="clerk-approved-reservation-room">
-      <i
-        className="fa-solid fa-arrow-left clerk-approved-back-arrow"
-        onClick={() => navigate(-1)}
-        style={{ cursor: "pointer", fontSize: "20px", marginBottom: "12px" }}
-      ></i>
 
       <div className="clerk-white-box-approved">
         <h2 className="clerk-approved-title">Approved Reservation Details</h2>

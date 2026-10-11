@@ -90,6 +90,47 @@ const flipName = (name) => {
   return normalizeName(`${parts[1]} ${parts[0]}`);
 };
 
+/* ══════════════════════════════════════════════════════════════
+   🔔 NOTIFY HELPERS
+   ══════════════════════════════════════════════════════════════ */
+async function notifyAllAdmins({
+  title,
+  message,
+  type = "room-maintenance",
+  badge = "NEW",
+  roomId,
+  roomName,
+  extra = {},
+}) {
+  try {
+    const usersSnap = await getDocs(collection(db, "users"));
+    const jobs = [];
+    usersSnap.forEach((u) => {
+      const role = (u.data().role || "").toLowerCase().trim();
+      if (role !== "admin") return;
+      jobs.push(
+        addDoc(collection(db, "notifications"), {
+          userId: u.id,
+          ownerType: "admin",
+          title,
+          message,
+          type,
+          roomId: roomId || null,
+          roomName: roomName || "",
+          unread: true,
+          archived: false,
+          badge,
+          ...extra,
+          createdAt: serverTimestamp(),
+        })
+      );
+    });
+    if (jobs.length) await Promise.all(jobs);
+  } catch (err) {
+    console.warn("notifyAllAdmins failed:", err);
+  }
+}
+
 function RoomManagementView({
   onOpenDetails,
   onAddRoom,
@@ -242,7 +283,7 @@ function RoomManagementView({
   }, []);
 
   // ══════════════════════════════════════════════════════════════
-  // DEACTIVATION — Notify ALL affected schedules
+  // DEACTIVATION — Notify ALL affected schedules + Admin
   // ══════════════════════════════════════════════════════════════
   const handleDeactivationConfirm = async () => {
     const room = rooms.find((r) => r.id === modals.roomName);
@@ -375,6 +416,25 @@ function RoomManagementView({
         archived: false,
         badge: "INFO",
         createdAt: serverTimestamp(),
+      });
+
+      // 🔔 NEW: Notify all ADMINS
+      await notifyAllAdmins({
+        title: "Room Under Maintenance",
+        message:
+          `${fullName} placed Room ${room.id} under maintenance. ` +
+          `${notifiedFacultyCount} faculty notified — ` +
+          `${totalSchedulesNotified} schedule${totalSchedulesNotified === 1 ? "" : "s"} affected.`,
+        type: "room-maintenance",
+        badge: "URGENT",
+        roomId: room.firestoreId,
+        roomName: room.id,
+        extra: {
+          maintenanceStartDate: startDate,
+          maintenanceStartTime: startTime,
+          notifiedFacultyCount,
+          totalSchedulesNotified,
+        },
       });
 
       showToast(

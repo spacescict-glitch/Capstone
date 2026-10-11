@@ -212,20 +212,22 @@ export default function FacultyLayout() {
 
   const closeNotificationDetail = () => setSelectedNotification(null);
 
-  /* ---------- Hide "View" button once reassignment is decided ---------- */
-  // A reassignment notification that has already been accepted or
-  // declined should no longer show the "View" button in the card.
-  const isDecidedNotification = (item) => {
-    const badge = String(item?.badge || "").toUpperCase();
-    const type = String(item?.type || "").toLowerCase();
-    return (
-      badge === "ACCEPTED" ||
-      badge === "DECLINED" ||
-      badge === "APPROVED" ||
-      badge === "REJECTED" ||
-      type === "room-reassignment-status"
-    );
-  };
+const isDecidedNotification = (item) => {
+  // 🆕 Priority: kung na-mark na as decided yung notification mismo,
+  // i-hide agad yung View button. Ito yung ina-update ng
+  // FacultyRoomReassignment pagkatapos mag-decide ng faculty.
+  if (item?.decided === true) return true;
+
+  const badge = String(item?.badge || "").toUpperCase();
+  const type = String(item?.type || "").toLowerCase();
+  return (
+    badge === "ACCEPTED" ||
+    badge === "DECLINED" ||
+    badge === "APPROVED" ||
+    badge === "REJECTED" ||
+    type === "room-reassignment-status"
+  );
+};
 
   const unreadCount = notifications.filter((n) => n.unread && !n.archived).length;
   const allCount = notifications.filter((n) => !n.archived).length;
