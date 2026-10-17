@@ -107,6 +107,9 @@ const PRESET_SLOTS = [
   { label: "5:30 – 7:00 PM",   start: "17:30", end: "19:00" },
 ];
 
+// ─── Course options ────────────────────────────────────────
+const COURSE_OPTIONS = ["BSIT", "BSIS", "BLIS", "Others"];
+
 // ─── Pagination ─────────────────────────────────────────────
 const ROOMS_PER_PAGE = 6;
 
@@ -147,8 +150,9 @@ function FacultySubmitReservation() {
 
   const [selectedEquipment, setSelectedEquipment] = useState([]);
   const [studentRange, setStudentRange] = useState("");
-  const [audienceType, setAudienceType] = useState("");
-  const [course, setCourse] = useState("");
+  const [audienceType, setAudienceType] = useState("Class"); // ✅ default Class
+  const [course, setCourse] = useState("BSIT");              // ✅ default BSIT
+  const [customCourse, setCustomCourse] = useState("");      // ✅ for "Others"
   const [yearSectionGroup, setYearSectionGroup] = useState("");
   const [organization, setOrganization] = useState("");
   const [customPurposeText, setCustomPurposeText] = useState("");
@@ -455,7 +459,10 @@ function FacultySubmitReservation() {
     if (!audienceType) errors.audienceType = "Select audience type.";
 
     if (audienceType === "Class") {
-      if (!course) errors.course = "Enter course.";
+      if (!course) errors.course = "Select a course.";
+      if (course === "Others" && !customCourse.trim()) {
+        errors.customCourse = "Please specify the course.";
+      }
       if (!yearSectionGroup) errors.yearSectionGroup = "Enter Year / Section Group.";
       if (!["Lecture", "Hands-on", "Examination"].includes(purpose)) {
         errors.purpose = "Select a valid purpose for Class (Lecture, Hands-on, Examination).";
@@ -583,6 +590,9 @@ function FacultySubmitReservation() {
       finalPurpose = customPurposeText.trim() || "Other Activity";
     }
 
+    // ✅ Resolve course value
+    const finalCourse = course === "Others" ? customCourse.trim() : course;
+
     try {
       const reservationRef = await addDoc(collection(db, "reservationRequests"), {
         userId: auth.currentUser.uid,
@@ -590,7 +600,12 @@ function FacultySubmitReservation() {
         roomId: selectedRoom.id,
         roomName: selectedRoom.roomName,
         audienceType,
-        attendees: { course, yearSectionGroup, organization, customPurpose: customPurposeText },
+        attendees: {
+          course: finalCourse,
+          yearSectionGroup,
+          organization,
+          customPurpose: customPurposeText,
+        },
         courseTitle,
         purpose: finalPurpose,
         requiredEquipment: selectedEquipment,
@@ -652,7 +667,7 @@ function FacultySubmitReservation() {
         endTime,
         purpose: finalPurpose,
         audienceType,
-        course,
+        course: finalCourse,
         yearSectionGroup,
         organization,
       });
@@ -660,10 +675,11 @@ function FacultySubmitReservation() {
       setToast((prev) => ({ ...prev, show: false }));
       setShowSuccessModal(true);
 
-      // Reset form
+      // ✅ Reset form (keep defaults)
       setCourseTitle("");
-      setAudienceType("");
-      setCourse("");
+      setAudienceType("Class");
+      setCourse("BSIT");
+      setCustomCourse("");
       setYearSectionGroup("");
       setOrganization("");
       setCustomPurposeText("");
@@ -744,7 +760,7 @@ function FacultySubmitReservation() {
   const previewData = {
     courseTitle,
     audienceType,
-    course,
+    course: course === "Others" ? customCourse.trim() : course,
     yearSectionGroup,
     organization,
     purpose:
@@ -808,14 +824,14 @@ function FacultySubmitReservation() {
                       setPurpose("");
                       setSelectedEquipment([]);
                       setStudentRange("");
-                      setCourse("");
+                      setCourse("BSIT");
+                      setCustomCourse("");
                       setYearSectionGroup("");
                       setOrganization("");
                       setCustomPurposeText("");
                       revalidate();
                     }}
                   >
-                    <option value="">Select Audience</option>
                     <option value="Class">Class</option>
                     <option value="Organization">Organization</option>
                   </select>
@@ -827,21 +843,47 @@ function FacultySubmitReservation() {
 
                 {audienceType === "Class" && (
                   <>
+                    {/* ✅ COURSE DROPDOWN (BSIT default, Others → custom input) */}
                     <div className="faculty-submit-form-group">
                       <label>Course</label>
-                      <input
-                        className={`faculty-submit-input ${validationAttempted && fieldErrors.course ? "error" : ""}`}
-                        placeholder="BSIT"
-                        value={course}
-                        onChange={(e) => {
-                          setCourse(e.target.value);
-                          revalidate();
-                        }}
-                      />
+                      <div className="faculty-submit-dropdown-wrapper">
+                        <select
+                          className={`faculty-submit-input faculty-submit-dropdown ${validationAttempted && fieldErrors.course ? "error" : ""}`}
+                          value={course}
+                          onChange={(e) => {
+                            setCourse(e.target.value);
+                            if (e.target.value !== "Others") setCustomCourse("");
+                            revalidate();
+                          }}
+                        >
+                          {COURSE_OPTIONS.map((c) => (
+                            <option key={c} value={c}>
+                              {c}
+                            </option>
+                          ))}
+                        </select>
+                        <i className="fa-solid fa-angle-down faculty-submit-dropdown-icon"></i>
+                      </div>
                       {validationAttempted && fieldErrors.course && (
                         <span className="field-error-message">{fieldErrors.course}</span>
                       )}
+
+                      {course === "Others" && (
+                        <input
+                          className={`faculty-submit-input faculty-submit-custom-course ${validationAttempted && fieldErrors.customCourse ? "error" : ""}`}
+                          placeholder="Specify course..."
+                          value={customCourse}
+                          onChange={(e) => {
+                            setCustomCourse(e.target.value);
+                            revalidate();
+                          }}
+                        />
+                      )}
+                      {course === "Others" && validationAttempted && fieldErrors.customCourse && (
+                        <span className="field-error-message">{fieldErrors.customCourse}</span>
+                      )}
                     </div>
+
                     <div className="faculty-submit-form-group">
                       <label>Year / Section Group</label>
                       <input
@@ -1322,7 +1364,6 @@ function FacultySubmitReservation() {
               <div className="faculty-submit-venue-header">
                 <span className="faculty-submit-venue-title">Available Rooms</span>
 
-                {/* ✅ Floor filter only (status filter removed) */}
                 <div className="faculty-submit-venue-filters">
                   <div className="faculty-submit-venue-dropdown-wrapper">
                     <select
@@ -1397,7 +1438,6 @@ function FacultySubmitReservation() {
                     })}
                   </div>
 
-                  {/* ✅ Pagination controls */}
                   {totalRoomPages > 1 && (
                     <div className="room-pagination">
                       <button

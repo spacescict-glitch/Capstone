@@ -9,7 +9,6 @@ import { auth, db } from "../../firebase";
 import { logActivity } from "../../utils/logActivity";
 import { isRoomUnderMaintenance } from "../../utils/Roommaintenance";
 import { findFacultyUser, findFacultyUserByName } from "../../utils/findFacultyUser";
-// ✅ NEW: used to exclude drafts / inactive terms from conflict detection
 import { isActiveOnDate } from "../../utils/scheduleActivePeriod";
 
 // ═══════════════════════════════════════════════════════════════════
@@ -206,6 +205,10 @@ export default function RoomActivity() {
     (c) => !BLOCKING_CONFLICT_KINDS.has(c.kind)
   );
 
+  // ✅ NEW: how many classes will be affected (schedules + reassignments)
+  const affectedClassCount = warningConflicts.length;
+  const hasManyAffectedClasses = affectedClassCount > 1;
+
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "rooms"), (snap) => {
       setRooms(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
@@ -216,10 +219,6 @@ export default function RoomActivity() {
 
   // ═════════════════════════════════════════════════════════════
   // CONFLICT DETECTION
-  //
-  // ⚠️ Only schedules that are ACTIVE on the target date are
-  //    considered. Draft / not-yet-activated / already-ended terms
-  //    are skipped so they never show up as conflicts.
   // ═════════════════════════════════════════════════════════════
   useEffect(() => {
     const checkConflict = async () => {
@@ -286,18 +285,10 @@ export default function RoomActivity() {
             e.date === form.date
         );
 
-        // ── 1) Class schedules (this room only, ACTIVE on target date) ──
         allSchedules
           .filter((s) => {
             if (s.cancelled || s.initialized) return false;
-
-            // ✅ Only include schedules that are active on the target date.
-            //    This automatically skips drafts (no activeFrom set),
-            //    inactive terms, and terms that already ended before
-            //    form.date.
             if (!isActiveOnDate(s, form.date)) return false;
-
-            // ✅ Normalize both sides — handles "MON" vs "Mon" vs "MON " etc.
             const normalizeDay = (d) => String(d || "").trim().toUpperCase();
             if (normalizeDay(s.day) !== normalizeDay(day)) return false;
             if (reassignedAwayIds.has(s.id)) return false;
@@ -349,7 +340,6 @@ export default function RoomActivity() {
             });
           });
 
-        // ── 2) Events happening in this room on this date ──
         roomEventsForDate
           .filter((e) =>
             overlap(reqStart, reqEnd, parseTime(e.startTime), parseTime(e.endTime))
@@ -368,7 +358,6 @@ export default function RoomActivity() {
             });
           });
 
-        // ── 3) Approved reservations for this room on this date ──
         allReservations
           .filter(
             (r) =>
@@ -396,7 +385,6 @@ export default function RoomActivity() {
             });
           });
 
-        // ── 4) Accepted reassignments INTO this room on this date ──
         allReassignments
           .filter(
             (r) =>
@@ -1019,6 +1007,21 @@ export default function RoomActivity() {
             </div>
           </div>
 
+          {/* ✅ Inline warning above the submit button when >1 class affected */}
+          {hasManyAffectedClasses && !hasBlockingConflict && (
+            <div className="ra-submit-warning">
+              <i className="fa-solid fa-triangle-exclamation"></i>
+              <div>
+                <strong>{affectedClassCount} classes will be affected</strong>
+                <span>
+                  Submitting this activity will notify {affectedClassCount}{" "}
+                  faculty/classes. Please review the conflicts panel on the
+                  right before proceeding.
+                </span>
+              </div>
+            </div>
+          )}
+
           <div className="ra-footer">
             <button className="ra-confirm-btn" onClick={() => setShowModal(true)}
               disabled={submitDisabled}
@@ -1162,27 +1165,99 @@ export default function RoomActivity() {
         </div>
       </div>
 
+      {/* ✅ Enhanced modal with warning state when >1 class affected */}
       {showModal && (
         <div className="ra-modal-overlay">
-          <div className="ra-modal">
-            <div className="ra-modal-icon"><i className="fa-solid fa-paper-plane"></i></div>
-            <h3 className="ra-modal-title">Submit for Approval?</h3>
-            <p className="ra-modal-text">
-              Your request will be sent to the Admin for review
-              {warningConflicts.length > 0
-                ? ` — ${warningConflicts.length} schedule conflict${warningConflicts.length > 1 ? "s" : ""} will be reported.`
-                : "."}
-            </p>
+          <div className={`ra-modal ${hasManyAffectedClasses ? "ra-modal--warning" : ""}`}>
+            <div className={`ra-modal-icon ${hasManyAffectedClasses ? "is-warning" : ""}`}>
+              <i className={`fa-solid ${hasManyAffectedClasses ? "fa-triangle-exclamation" : "fa-paper-plane"}`}></i>
+            </div>
+
+            <h3 className="ra-modal-title">
+              {hasManyAffectedClasses
+                ? `${affectedClassCount} Classes Will Be Affected`
+                : "Submit for Approval?"}
+            </h3>
+
+            {hasManyAffectedClasses ? (
+              <>
+                <p className="ra-modal-text">
+                  This activity conflicts with{" "}
+                  <strong>{affectedClassCount} existing classes</strong>.
+                  All {affectedClassCount} faculty will be notified and their
+                  classes may need to be moved. Please review carefully.
+                </p>
+
+                <div className="ra-multi-warning">
+                  <div className="ra-multi-warning-banner">
+                    <i className="fa-solid fa-circle-exclamation"></i>
+                    <span>
+                      <strong>Multiple faculty affected.</strong> Make sure
+                      this activity is truly urgent before submitting — this
+                      will trigger{" "}
+                      <strong>{affectedClassCount} separate notifications</strong>{" "}
+                      once approved.
+                    </span>
+                  </div>
+
+                  <div className="ra-multi-warning-list">
+                    {warningConflicts.map((c) => (
+                      <div key={`${c.kind}-${c.id}`} className="ra-multi-warning-item">
+                        <span className={`ra-multi-warning-kind ra-multi-warning-kind--${c.kind}`}>
+                          <i className={CONFLICT_KIND_ICON[c.kind] || "fa-solid fa-circle-info"}></i>
+                          {c.sourceLabel}
+                        </span>
+                        <div className="ra-multi-warning-subject">
+                          {c.subject || c.title || "Untitled"}
+                          {c.section ? ` (${c.section})` : ""}
+                        </div>
+                        <div className="ra-multi-warning-meta">
+                          <i className="fa-regular fa-clock"></i>{" "}
+                          {formatTime12(c.startTime)} – {formatTime12(c.endTime)}
+                          {c.faculty && (
+                            <>
+                              {" · "}
+                              <i className="fa-solid fa-user"></i> {c.faculty}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <p className="ra-modal-text">
+                Your request will be sent to the Admin for review
+                {warningConflicts.length > 0
+                  ? ` — ${warningConflicts.length} schedule conflict${warningConflicts.length > 1 ? "s" : ""} will be reported.`
+                  : "."}
+              </p>
+            )}
+
             <div className="ra-modal-summary">
               <div className="ra-modal-summary-row"><i className="fa-solid fa-bookmark"></i><span>{form.title || "Untitled"}</span></div>
               <div className="ra-modal-summary-row"><i className="fa-solid fa-door-open"></i><span>{form.room}</span></div>
               <div className="ra-modal-summary-row"><i className="fa-solid fa-calendar-days"></i><span>{formatDateLong(form.date)}</span></div>
               <div className="ra-modal-summary-row"><i className="fa-solid fa-clock"></i><span>{formatTime12(form.startTime)} – {formatTime12(form.endTime)}{duration ? ` (${duration})` : ""}</span></div>
             </div>
+
             <div className="ra-modal-actions">
-              <button className="ra-modal-cancel" onClick={() => setShowModal(false)} disabled={submitting}>Cancel</button>
-              <button className="ra-modal-confirm" onClick={handleConfirm} disabled={submitting}>
-                {submitting ? (<><span className="ra-spinner ra-spinner-light" />Submitting…</>) : "Submit"}
+              <button className="ra-modal-cancel" onClick={() => setShowModal(false)} disabled={submitting}>
+                {hasManyAffectedClasses ? "Review Again" : "Cancel"}
+              </button>
+              <button
+                className={`ra-modal-confirm ${hasManyAffectedClasses ? "ra-modal-confirm--warning" : ""}`}
+                onClick={handleConfirm}
+                disabled={submitting}
+              >
+                {submitting ? (
+                  <><span className="ra-spinner ra-spinner-light" />Submitting…</>
+                ) : hasManyAffectedClasses ? (
+                  <>Proceed Anyway</>
+                ) : (
+                  "Submit"
+                )}
               </button>
             </div>
           </div>

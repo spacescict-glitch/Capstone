@@ -2,8 +2,17 @@ import { useState, useEffect, useRef } from "react";
 import "./clerk-profile.css";
 
 import { auth, db } from "../../firebase";
-import { doc, getDoc, updateDoc } from "firebase/firestore";
+import {
+  doc,
+  getDoc,
+  updateDoc,
+  collection,
+  query,
+  where,
+  onSnapshot,
+} from "firebase/firestore";
 import { sendPasswordResetEmail, onAuthStateChanged } from "firebase/auth";
+import { logActivity } from "../../utils/logActivity";
 
 // ── Cloudinary config ─────────────────────────────────────────────────────────
 const CLOUDINARY_CLOUD_NAME    = "dqn1s5ujs";
@@ -25,14 +34,49 @@ async function uploadToCloudinary(file) {
   return data.secure_url;
 }
 
+// Icon + accent color per actionType
+const ACTIVITY_ICON = {
+  edit:    "fa-solid fa-pen",
+  create:  "fa-solid fa-plus",
+  delete:  "fa-solid fa-trash",
+  login:   "fa-solid fa-right-to-bracket",
+  logout:  "fa-solid fa-right-from-bracket",
+  reserve: "fa-solid fa-bookmark",
+  cancel:  "fa-solid fa-ban",
+  default: "fa-solid fa-circle-info",
+};
+
+function formatLogTime(log) {
+  const ts = log?.timestamp || log?.createdAt;
+  if (!ts) return "";
+  const date = ts.toDate ? ts.toDate() : new Date(ts);
+  const now  = new Date();
+  const diff = Math.floor((now - date) / 1000);
+  if (diff < 60)    return `${diff}s ago`;
+  if (diff < 3600)  return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
+  return date.toLocaleDateString();
+}
+
+function getLogMillis(log) {
+  const ts = log?.timestamp || log?.createdAt;
+  if (!ts) return 0;
+  if (ts.toMillis) return ts.toMillis();
+  if (ts.toDate)   return ts.toDate().getTime();
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime()) ? 0 : d.getTime();
+}
+
 export default function ClerkProfile() {
-  const [editing, setEditing]       = useState(false);
-  const [loading, setLoading]       = useState(true);
-  const [saving, setSaving]         = useState(false);
-  const [uploading, setUploading]   = useState(false);
-  const [previewUrl, setPreviewUrl] = useState(null);
-  const [photoFile, setPhotoFile]   = useState(null);
-  const fileInputRef                = useRef(null);
+  const [activeTab, setActiveTab]       = useState("details");
+  const [editing, setEditing]           = useState(false);
+  const [loading, setLoading]           = useState(true);
+  const [saving, setSaving]             = useState(false);
+  const [uploading, setUploading]       = useState(false);
+  const [previewUrl, setPreviewUrl]     = useState(null);
+  const [photoFile, setPhotoFile]       = useState(null);
+  const fileInputRef                    = useRef(null);
 
   const [form, setForm] = useState({
     firstName: "",
@@ -45,11 +89,15 @@ export default function ClerkProfile() {
   const [originalData, setOriginalData] = useState(null);
   const [toast, setToast]               = useState(null);
 
+  const [activityLogs, setActivityLogs]     = useState([]);
+  const [activityLoading, setActivityLoading] = useState(true);
+
   const showToast = (type, message) => {
     setToast({ type, message });
     setTimeout(() => setToast(null), 3000);
   };
 
+  // ── Load profile ────────────────────────────────────────────────────────────
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (!currentUser) {
@@ -83,6 +131,39 @@ export default function ClerkProfile() {
 
     return () => unsubscribe();
   }, []);
+
+  // ── Load activity log ───────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!form.firstName && !form.lastName) return;
+
+    const fullName = `${form.firstName} ${form.lastName}`
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!fullName) return;
+
+    setActivityLoading(true);
+
+    const q = query(
+      collection(db, "activityLogs"),
+      where("user", "==", fullName)
+    );
+
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const logs = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+        logs.sort((a, b) => getLogMillis(b) - getLogMillis(a));
+        setActivityLogs(logs.slice(0, 50));
+        setActivityLoading(false);
+      },
+      (err) => {
+        console.error("Activity log query failed:", err);
+        setActivityLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [form.firstName, form.lastName]);
 
   const handlePhotoChange = (e) => {
     const file = e.target.files?.[0];
@@ -131,6 +212,15 @@ export default function ClerkProfile() {
         photoUrl,
       });
 
+      await logActivity({
+        user: `${form.firstName.trim()} ${form.lastName.trim()}`,
+        role: form.role,
+        action: "Updated profile",
+        actionType: "edit",
+        target: "Clerk Profile",
+        status: "Success",
+      });
+
       const updatedData = { ...form, photoUrl };
       setForm(updatedData);
       setOriginalData(updatedData);
@@ -177,12 +267,8 @@ export default function ClerkProfile() {
   if (loading) {
     return (
       <div className="cp-page">
-        <div className="cp-page-header">
-          <h1>My Profile</h1>
-          <p>View and manage your personal information and account details.</p>
-        </div>
         <div className="cp-card">
-          <p style={{ color: "#6b7280" }}>Loading profile...</p>
+          <h3>Loading profile...</h3>
         </div>
       </div>
     );
@@ -190,131 +276,185 @@ export default function ClerkProfile() {
 
   return (
     <div className="cp-page">
-
-      {/* ── PAGE HEADER ── */}
-      <div className="cp-page-header">
-        <h1>My Profile</h1>
-        <p>View and manage your personal information and account details.</p>
+      {/* TABS */}
+      <div className="cp-tabs">
+        <button
+          className={activeTab === "details" ? "active" : ""}
+          onClick={() => setActiveTab("details")}
+        >
+          <i className="fa-regular fa-id-card"></i> Details
+        </button>
+        <button
+          className={activeTab === "activity" ? "active" : ""}
+          onClick={() => setActiveTab("activity")}
+        >
+          <i className="fa-solid fa-clock-rotate-left"></i> Activity Log
+        </button>
       </div>
 
-      {/* ── Toast ── */}
-      {toast && (
-        <div className={`cp-toast ${toast.type}`}>
-          <i className={`fa-solid ${toast.type === "success" ? "fa-circle-check" : "fa-circle-exclamation"}`} />
-          {toast.message}
+      {activeTab === "details" && (
+        <div className="cp-card">
+          <div className="cp-header">
+            <h2>My Profile</h2>
+            <p>View and manage your personal information and account details.</p>
+          </div>
+
+          {!editing && (
+            <button className="cp-edit-btn" onClick={() => setEditing(true)}>
+              <i className="fa-solid fa-pen" />
+            </button>
+          )}
+
+          {/* Avatar */}
+          <div className="cp-avatar-wrap">
+            <div className="cp-avatar">
+              {displayPhoto ? (
+                <img src={displayPhoto} alt="Profile" className="cp-avatar-img" />
+              ) : (
+                <span className="cp-avatar-initials">{initials || <i className="fa-solid fa-user" />}</span>
+              )}
+            </div>
+
+            {editing && (
+              <button
+                className="cp-avatar-camera"
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                title="Change photo"
+              >
+                {uploading ? (
+                  <i className="fa-solid fa-circle-notch fa-spin" />
+                ) : (
+                  <i className="fa-solid fa-camera" />
+                )}
+              </button>
+            )}
+          </div>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            hidden
+            onChange={handlePhotoChange}
+          />
+
+          {editing && photoFile && !uploading && (
+            <p className="cp-photo-name">
+              <i className="fa-solid fa-circle-check" /> {photoFile.name}
+            </p>
+          )}
+          {editing && uploading && (
+            <p className="cp-upload-progress">
+              <i className="fa-solid fa-circle-notch fa-spin" /> Uploading photo…
+            </p>
+          )}
+          {editing && form.photoUrl && !uploading && (
+            <button
+              className="cp-remove-photo-btn"
+              type="button"
+              onClick={() => {
+                setPhotoFile(null);
+                if (previewUrl) {
+                  URL.revokeObjectURL(previewUrl);
+                  setPreviewUrl(null);
+                }
+                setForm(prev => ({ ...prev, photoUrl: "" }));
+              }}
+            >
+              <i className="fa-solid fa-trash" /> Remove Photo
+            </button>
+          )}
+          {editing && !form.photoUrl && !photoFile && !uploading && (
+            <button
+              className="cp-upload-btn"
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <i className="fa-solid fa-arrow-up-from-bracket" /> Upload Picture
+            </button>
+          )}
+
+          {/* Fields */}
+          <div className="cp-fields">
+            <div className="cp-field">
+              <label>First Name</label>
+              <input
+                className="cp-input"
+                value={form.firstName}
+                onChange={handleChange("firstName")}
+                readOnly={!editing}
+              />
+            </div>
+
+            <div className="cp-field">
+              <label>Last Name</label>
+              <input
+                className="cp-input"
+                value={form.lastName}
+                onChange={handleChange("lastName")}
+                readOnly={!editing}
+              />
+            </div>
+
+            <div className="cp-field">
+              <label>Role</label>
+              <input className="cp-input" value={form.role} readOnly />
+            </div>
+          </div>
         </div>
       )}
 
-      <div className="cp-card">
-
-        {!editing && (
-          <button className="cp-edit-btn" onClick={() => setEditing(true)}>
-            <i className="fa-solid fa-pen" />
-          </button>
-        )}
-
-        {/* ── Avatar ── */}
-        <div className="cp-avatar-wrap">
-          <div className="cp-avatar">
-            {displayPhoto
-              ? <img src={displayPhoto} alt="Profile" className="cp-avatar-img" />
-              : <span className="cp-avatar-initials">{initials || <i className="fa-solid fa-user" />}</span>
-            }
+      {activeTab === "activity" && (
+        <div className="cp-card cp-card-activity">
+          <div className="cp-header">
+            <h2>Activity Log</h2>
+            <p>Everything you've done in SpaceS, most recent first.</p>
           </div>
 
-          {editing && (
-            <button
-              className="cp-avatar-camera"
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploading}
-              title="Change photo"
-            >
-              {uploading
-                ? <i className="fa-solid fa-circle-notch fa-spin" />
-                : <i className="fa-solid fa-camera" />
-              }
-            </button>
+          {activityLoading ? (
+            <p className="cp-activity-loading">Loading activity…</p>
+          ) : activityLogs.length === 0 ? (
+            <div className="cp-activity-empty">
+              <div className="cp-activity-empty-icon">
+                <i className="fa-solid fa-clock-rotate-left"></i>
+              </div>
+              <h4>No activity yet</h4>
+              <p>Actions you take will show up here.</p>
+            </div>
+          ) : (
+            <div className="cp-activity-list">
+              {activityLogs.map((log) => (
+                <div key={log.id} className="cp-activity-item">
+                  <div className={`cp-activity-icon ${log.status === "Failed" ? "is-failed" : ""}`}>
+                    <i className={ACTIVITY_ICON[log.actionType] || ACTIVITY_ICON.default}></i>
+                  </div>
+                  <div className="cp-activity-body">
+                    <div className="cp-activity-top">
+                      <span className="cp-activity-action">{log.action}</span>
+                      {log.status && (
+                        <span className={`cp-activity-status ${log.status === "Failed" ? "is-failed" : "is-success"}`}>
+                          {log.status}
+                        </span>
+                      )}
+                    </div>
+                    {log.target && <p className="cp-activity-target">{log.target}</p>}
+                    <span className="cp-activity-time">{formatLogTime(log)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
         </div>
+      )}
 
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          hidden
-          onChange={handlePhotoChange}
-        />
-
-        {editing && photoFile && !uploading && (
-          <p className="cp-photo-name">
-            <i className="fa-solid fa-circle-check" /> {photoFile.name}
-          </p>
-        )}
-        {editing && uploading && (
-          <p className="cp-upload-progress">
-            <i className="fa-solid fa-circle-notch fa-spin" /> Uploading photo…
-          </p>
-        )}
-        {editing && form.photoUrl && !uploading && (
-          <button
-            className="cp-remove-photo-btn"
-            type="button"
-            onClick={() => {
-              setPhotoFile(null);
-              if (previewUrl) {
-                URL.revokeObjectURL(previewUrl);
-                setPreviewUrl(null);
-              }
-              setForm(prev => ({ ...prev, photoUrl: "" }));
-            }}
-          >
-            <i className="fa-solid fa-trash" /> Remove Photo
-          </button>
-        )}
-        {editing && !form.photoUrl && !photoFile && !uploading && (
-          <button
-            className="cp-upload-btn"
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <i className="fa-solid fa-arrow-up-from-bracket" /> Upload Picture
-          </button>
-        )}
-
-        {/* ── Fields ── */}
-        <div className="cp-fields">
-          <div className="cp-field">
-            <label>First Name</label>
-            <input
-              className="cp-input"
-              value={form.firstName}
-              onChange={handleChange("firstName")}
-              readOnly={!editing}
-            />
-          </div>
-
-          <div className="cp-field">
-            <label>Last Name</label>
-            <input
-              className="cp-input"
-              value={form.lastName}
-              onChange={handleChange("lastName")}
-              readOnly={!editing}
-            />
-          </div>
-
-          <div className="cp-field">
-            <label>Role</label>
-            <input className="cp-input" value={form.role} readOnly />
-          </div>
-        </div>
-
-      </div>
-
-      {editing && (
+      {/* Footer for details tab only */}
+      {activeTab === "details" && editing && (
         <div className="cp-footer">
-          <button className="cp-cancel-btn" onClick={handleCancel}>Cancel</button>
+          <button className="cp-cancel-btn" onClick={handleCancel}>
+            Cancel
+          </button>
           <button
             className="cp-save-btn"
             onClick={handleSave}
@@ -325,6 +465,13 @@ export default function ClerkProfile() {
         </div>
       )}
 
+      {/* Toast */}
+      {toast && (
+        <div className={`cp-toast ${toast.type}`}>
+          <i className={`fa-solid ${toast.type === "success" ? "fa-circle-check" : "fa-circle-exclamation"}`} />
+          {toast.message}
+        </div>
+      )}
     </div>
   );
 }

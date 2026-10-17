@@ -138,8 +138,7 @@ const timeAgo = (timestamp, now) => {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 };
 
-// ✅ Text-only preview — never renders images/attachments, so the card
-//    stays the same height regardless of what was attached.
+// ✅ Text-only preview — never renders images/attachments
 const announcementPreview = (a) => {
   if (a.content && a.content.trim()) return a.content.trim();
   const imgCount = (a.imageUrls || (a.imageUrl ? [a.imageUrl] : [])).length;
@@ -168,6 +167,15 @@ const getKindMeta = (item) => {
   return { key: "schedule", label: "Class", icon: "fa-solid fa-chalkboard-user" };
 };
 
+// ═════════════════════════════════════════════════════════════════
+// ✅ NEW: Stable release-key builder (same as FacultySchedule.jsx)
+// ═════════════════════════════════════════════════════════════════
+const makeReleaseKey = (kind, id, date) => {
+  if (kind === "reassignment") return `reassign_${id}_${date}`;
+  if (kind === "reservation") return `resv_${id}_${date}`;
+  return `${id}_${date}`; // schedule
+};
+
 export default function FacultyDashboard({ onLogout }) {
   const navigate = useNavigate();
 
@@ -179,7 +187,8 @@ export default function FacultyDashboard({ onLogout }) {
   const [myRoomIds, setMyRoomIds] = useState([]);
 
   const [onlineSchedules, setOnlineSchedules] = useState([]);
-  const [releasedKeys, setReleasedKeys] = useState(new Set());
+  // ✅ CHANGED: Set<string> → Map<string, releaseDoc>
+  const [releasedMap, setReleasedMap] = useState(new Map());
   const [reassignedAwayKeys, setReassignedAwayKeys] = useState(new Set());
   const [reassignedInto, setReassignedInto] = useState([]);
   const [approvedReservations, setApprovedReservations] = useState([]);
@@ -310,21 +319,34 @@ export default function FacultyDashboard({ onLogout }) {
         );
         unsubsRef.current.push(unsubOnline);
 
+        // ✅ CHANGED: kind-aware release map (matches FacultySchedule)
         const unsubReleases = onSnapshot(
           query(
             collection(db, "roomReleases"),
             where("releasedBy", "==", user.uid)
           ),
           (snap) => {
-            const keys = new Set(
-              snap.docs.map((d) => {
-                const r = d.data();
-                return `${r.scheduleId}_${r.date}`;
-              })
-            );
-            setReleasedKeys(keys);
+            const map = new Map();
+            snap.docs.forEach((d) => {
+              const r = d.data();
+              let key;
+              if (r.releaseType === "reassignment" && r.reassignmentId) {
+                key = `reassign_${r.reassignmentId}_${r.date}`;
+              } else if (r.releaseType === "reservation" && r.reservationId) {
+                key = `resv_${r.reservationId}_${r.date}`;
+              } else if (r.scheduleId) {
+                key = `${r.scheduleId}_${r.date}`;
+              } else {
+                return; // unknown release kind — skip
+              }
+              map.set(key, r);
+            });
+            setReleasedMap(map);
           },
-          (err) => console.warn("Releases listener:", err)
+          (err) => {
+            console.warn("Releases listener:", err);
+            setReleasedMap(new Map());
+          }
         );
         unsubsRef.current.push(unsubReleases);
 
@@ -477,6 +499,9 @@ export default function FacultyDashboard({ onLogout }) {
   const todayAbbrev = DAY_LABELS[now.getDay()];
   const todayStr = toDateStr(now);
 
+  // ═════════════════════════════════════════════════════════════════
+  // ✅ UPDATED allItems — kind-aware release filtering & trimming
+  // ═════════════════════════════════════════════════════════════════
   const allItems = useMemo(() => {
     const items = [];
 
@@ -493,15 +518,59 @@ export default function FacultyDashboard({ onLogout }) {
       });
     };
 
+    // ─── Helper: apply release info → returns {hide, endTime, isReleased, releasedAtTime}
+    const applyRelease = (releaseInfo, originalStart, originalEnd) => {
+      // No release record → show as-is
+      if (!releaseInfo) {
+        return {
+          hide: false,
+          endTime: originalEnd,
+          isReleased: false,
+          releasedAtTime: null,
+        };
+      }
+
+      // Fully released (no effectiveEndTime) → hide entirely
+      if (!releaseInfo.effectiveEndTime) {
+        return { hide: true };
+      }
+
+      // Mid-class release → trim to effectiveEndTime
+      const effMin = toMinutes(releaseInfo.effectiveEndTime);
+      const startMin = toMinutes(originalStart);
+
+      // Edge case: release happened before/at start → treat as fully released
+      if (effMin <= startMin) {
+        return { hide: true };
+      }
+
+      return {
+        hide: false,
+        endTime: releaseInfo.effectiveEndTime,
+        isReleased: true,
+        releasedAtTime: releaseInfo.effectiveEndTime,
+      };
+    };
+
+    // ─── 1) SCHEDULES ───
     latestSchedules.forEach((s) => {
       const occurrenceDate = getNextOccurrenceDate(s.day, s.startTime, now);
       if (!occurrenceDate) return;
       const dateStr = toDateStr(occurrenceDate);
-      const key = `${s.id}_${dateStr}`;
+      const reassignKey = `${s.id}_${dateStr}`;
 
-      if (releasedKeys.has(key)) return;
-      if (reassignedAwayKeys.has(key)) return;
+      // Reassigned to another room → hide from original slot
+      if (reassignedAwayKeys.has(reassignKey)) return;
+
+      // Overridden by a room activity → hide
       if (isOverridden(s, dateStr)) return;
+
+      // ✅ Release handling (full → hide, partial → trim)
+      const releaseInfo = releasedMap.get(
+        makeReleaseKey("schedule", s.id, dateStr)
+      );
+      const release = applyRelease(releaseInfo, s.startTime, s.endTime);
+      if (release.hide) return;
 
       items.push({
         id: s.id,
@@ -510,7 +579,7 @@ export default function FacultyDashboard({ onLogout }) {
         roomName: s.roomName,
         section: s.section,
         startTime: s.startTime,
-        endTime: s.endTime,
+        endTime: release.endTime,
         day: s.day,
         date: dateStr,
         occurrence: occurrenceDate,
@@ -518,9 +587,12 @@ export default function FacultyDashboard({ onLogout }) {
         isRecurring: true,
         faculty: s.faculty,
         isOnline: false,
+        isReleased: release.isReleased,
+        releasedAtTime: release.releasedAtTime,
       });
     });
 
+    // ─── 2) ONLINE SCHEDULES ─── (not released — matches schedule page)
     onlineSchedules.forEach((s) => {
       const occurrenceDate = getNextOccurrenceDate(s.day, s.startTime, now);
       if (!occurrenceDate) return;
@@ -541,19 +613,29 @@ export default function FacultyDashboard({ onLogout }) {
         isRecurring: true,
         faculty: s.facultyName || "Faculty",
         isOnline: true,
+        isReleased: false,
+        releasedAtTime: null,
       });
     });
 
+    // ─── 3) REASSIGNMENTS ─── ✅ now release-aware
     reassignedInto.forEach((r) => {
       const occurrence = new Date(`${r.date}T${r.startTime}:00`);
       if (occurrence < now) return;
+
+      const releaseInfo = releasedMap.get(
+        makeReleaseKey("reassignment", r.id, r.date)
+      );
+      const release = applyRelease(releaseInfo, r.startTime, r.endTime);
+      if (release.hide) return;
+
       items.push({
         id: r.id,
         kind: "reassignment",
         subject: `${r.courseTitle || "Class"}`,
         roomName: r.newRoomName,
         startTime: r.startTime,
-        endTime: r.endTime,
+        endTime: release.endTime,
         date: r.date,
         occurrence,
         isToday: r.date === todayStr,
@@ -561,25 +643,37 @@ export default function FacultyDashboard({ onLogout }) {
         faculty: r.facultyName || "Faculty",
         originalRoom: r.oldRoomName,
         isOnline: false,
+        isReleased: release.isReleased,
+        releasedAtTime: release.releasedAtTime,
       });
     });
 
+    // ─── 4) RESERVATIONS ─── ✅ now release-aware
     approvedReservations.forEach((r) => {
       const occurrence = new Date(`${r.date}T${r.startTime}:00`);
       if (occurrence < now) return;
+
+      const releaseInfo = releasedMap.get(
+        makeReleaseKey("reservation", r.id, r.date)
+      );
+      const release = applyRelease(releaseInfo, r.startTime, r.endTime);
+      if (release.hide) return;
+
       items.push({
         id: r.id,
         kind: "reservation",
         subject: r.courseTitle || r.purpose || "Reservation",
         roomName: r.roomName,
         startTime: r.startTime,
-        endTime: r.endTime,
+        endTime: release.endTime,
         date: r.date,
         occurrence,
         isToday: r.date === todayStr,
         isRecurring: false,
         faculty: r.facultyName || "Faculty",
         isOnline: false,
+        isReleased: release.isReleased,
+        releasedAtTime: release.releasedAtTime,
       });
     });
 
@@ -588,7 +682,7 @@ export default function FacultyDashboard({ onLogout }) {
   }, [
     latestSchedules,
     onlineSchedules,
-    releasedKeys,
+    releasedMap,        // ✅ was releasedKeys
     reassignedAwayKeys,
     reassignedInto,
     approvedReservations,
@@ -730,8 +824,6 @@ export default function FacultyDashboard({ onLogout }) {
                 )}
               </div>
 
-              {/* ✅ Text-only preview — no image / attachment rendering.
-                  Layout stays identical no matter what was attached. */}
               <p className="announce-text">
                 {announcementPreview(latestAnnouncement)}
               </p>
@@ -889,7 +981,15 @@ export default function FacultyDashboard({ onLogout }) {
                           {activeBanner.section ? ` • ${activeBanner.section}` : ""}
                         </p>
 
-                        {activeBanner.status === "UPCOMING" && (
+                        {/* ✅ NEW: partial-release indicator */}
+                        {activeBanner.isReleased && (
+                          <span className="banner-countdown banner-released-pill">
+                            <i className="fa-solid fa-lock-open"></i>
+                            Released at {formatTime(activeBanner.releasedAtTime)}
+                          </span>
+                        )}
+
+                        {!activeBanner.isReleased && activeBanner.status === "UPCOMING" && (
                           <span className="banner-countdown">
                             <i className="fa-regular fa-clock"></i>
                             Starts {formatCountdown(
@@ -905,7 +1005,7 @@ export default function FacultyDashboard({ onLogout }) {
                           </span>
                         )}
 
-                        {ongoingProgress !== null && (
+                        {!activeBanner.isReleased && ongoingProgress !== null && (
                           <div className="banner-progress-track">
                             <div
                               className="banner-progress-fill"
@@ -961,6 +1061,13 @@ export default function FacultyDashboard({ onLogout }) {
                             {formatTime(item.startTime)}
                           </span>
                           <span className="today-pill-subject">{item.subject}</span>
+                          {/* ✅ NEW: tiny release indicator on pill */}
+                          {item.isReleased && (
+                            <i
+                              className="fa-solid fa-lock-open today-pill-released"
+                              title={`Released at ${formatTime(item.releasedAtTime)}`}
+                            ></i>
+                          )}
                         </button>
                       ))}
                     </div>
@@ -1019,6 +1126,11 @@ export default function FacultyDashboard({ onLogout }) {
                               <h4>{item.subject}</h4>
                               {item.isToday && (
                                 <span className="today-chip-mini">Today</span>
+                              )}
+                              {item.isReleased && (
+                                <span className="today-chip-mini mini-released-chip">
+                                  Released
+                                </span>
                               )}
                             </div>
 

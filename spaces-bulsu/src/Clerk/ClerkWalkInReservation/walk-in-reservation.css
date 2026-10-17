@@ -1515,3 +1515,31 @@ font-size:13px;
   font-size: 15px;
   color: #15803d;
 }
+
+/* ══════════════ INPUT FORMAT ERROR STATE ══════════════ */
+
+.wir-input.error {
+  border-color: #dc2626;
+  background: #fef2f2;
+}
+
+.wir-input.error:focus {
+  border-color: #dc2626;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.15);
+}
+
+.wir-field-error {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #dc2626;
+}
+
+.wir-field-error i {
+  font-size: 12px;
+  flex-shrink: 0;
+}

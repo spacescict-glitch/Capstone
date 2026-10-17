@@ -19,7 +19,6 @@ import RoomManagementModals from "./Modals/RoomManagementModals";
 import { useDeactivationModals } from "./hooks/useDeactivationModals";
 import "./room-management-view.css";
 import Toast from "../../Popup/Toast/Toast";
-import DeleteRoomPopup from "../../Popup/DeleteRoomPopup/DeleteRoomPopup";
 import { isActiveOnDate } from "../../utils/scheduleActivePeriod";
 
 function getActiveRoomStyle(room) {
@@ -141,7 +140,12 @@ function RoomManagementView({
   const [loading, setLoading] = useState(true);
   const modals = useDeactivationModals();
   const [currentPage, setCurrentPage] = useState(1);
+
+  // ✅ Delete confirmation state
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [deleteAcknowledged, setDeleteAcknowledged] = useState(false);
+
   const itemsPerPage = 10;
   const DAYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 
@@ -320,14 +324,12 @@ function RoomManagementView({
         status: "SUCCESS",
       });
 
-      // ─── Identify all affected schedules ─────────────────────
       const activeSchedules = (room.schedules || []).filter((s) => {
         if (s.initialized) return false;
         if (!isActiveOnDate(s, startDate)) return false;
         return true;
       });
 
-      // Group by faculty
       const usersSnap = await getDocs(collection(db, "users"));
       const facultySchedulesMap = new Map();
 
@@ -349,7 +351,6 @@ function RoomManagementView({
         facultySchedulesMap.get(facultyDoc.id).schedules.push(schedule);
       }
 
-      // Send ONE notification per faculty
       let notifiedFacultyCount = 0;
       let totalSchedulesNotified = 0;
 
@@ -396,7 +397,6 @@ function RoomManagementView({
         totalSchedulesNotified += schedules.length;
       }
 
-      // Clerk summary
       await addDoc(collection(db, "notifications"), {
         userId: firebaseUser.uid,
         ownerType: "clerk",
@@ -418,7 +418,6 @@ function RoomManagementView({
         createdAt: serverTimestamp(),
       });
 
-      // 🔔 NEW: Notify all ADMINS
       await notifyAllAdmins({
         title: "Room Under Maintenance",
         message:
@@ -458,12 +457,19 @@ function RoomManagementView({
     }
   };
 
+  // ✅ Delete flow
+  const closeDeleteModal = () => {
+    setDeleteTarget(null);
+    setDeleteConfirmText("");
+    setDeleteAcknowledged(false);
+  };
+
   const handleDeleteConfirm = async () => {
     if (!deleteTarget) return;
     const room = rooms.find((r) => r.id === deleteTarget);
     if (!room) {
       showToast("error", "Not Found", "Room not found.");
-      setDeleteTarget(null);
+      closeDeleteModal();
       return;
     }
 
@@ -501,7 +507,7 @@ function RoomManagementView({
       console.error("Delete failed:", error);
       showToast("error", "Delete Failed", `Delete failed: ${error.message}`);
     } finally {
-      setDeleteTarget(null);
+      closeDeleteModal();
     }
   };
 
@@ -524,7 +530,6 @@ function RoomManagementView({
       const restoredDate = now.toISOString().split("T")[0];
       const restoredTime = now.toTimeString().slice(0, 5);
 
-      // ─── 1. Set room back to active ──────────────────────────
       await updateDoc(doc(db, "rooms", room.firestoreId), {
         roomStatus: "active",
         maintenanceStartDate: null,
@@ -544,14 +549,12 @@ function RoomManagementView({
         status: "SUCCESS",
       });
 
-      // ─── 2. Identify affected schedules (same logic as deactivation) ─
       const activeSchedules = (room.schedules || []).filter((s) => {
         if (s.initialized) return false;
         if (!isActiveOnDate(s, restoredDate)) return false;
         return true;
       });
 
-      // ─── 3. Match schedules → faculty user accounts ──────────
       const usersSnap = await getDocs(collection(db, "users"));
       const facultySchedulesMap = new Map();
 
@@ -573,7 +576,6 @@ function RoomManagementView({
         facultySchedulesMap.get(facultyDoc.id).schedules.push(schedule);
       }
 
-      // ─── 4. Send ONE notification per faculty (room restored) ─
       let notifiedFacultyCount = 0;
       let totalSchedulesNotified = 0;
 
@@ -620,7 +622,6 @@ function RoomManagementView({
         totalSchedulesNotified += schedules.length;
       }
 
-      // ─── 5. Clerk summary ─────────────────────────────────────
       await addDoc(collection(db, "notifications"), {
         userId: firebaseUser.uid,
         ownerType: "clerk",
@@ -681,6 +682,20 @@ function RoomManagementView({
   const endIndex = startIndex + itemsPerPage;
   const paginatedRooms = sortedRooms.slice(startIndex, endIndex);
 
+  // ✅ Compute details for delete modal
+  const deleteTargetRoom = deleteTarget
+    ? rooms.find((r) => r.id === deleteTarget)
+    : null;
+
+  const affectedSchedules = (deleteTargetRoom?.schedules || []).filter(
+    (s) => !s.initialized
+  );
+
+  const currentlyOccupied = !!deleteTargetRoom?.occupied;
+
+  const canConfirmDelete =
+    deleteAcknowledged && deleteConfirmText.trim().toUpperCase() === "DELETE";
+
   const renderPages = () => {
     const pages = [];
     const startPage = Math.max(1, currentPage - 1);
@@ -706,11 +721,144 @@ function RoomManagementView({
         onDeleteConfirm={handleDeleteConfirm}
       />
 
-      {deleteTarget && (
-        <DeleteRoomPopup
-          onCancel={() => setDeleteTarget(null)}
-          onConfirm={handleDeleteConfirm}
-        />
+      {/* ✅ Custom delete modal with extra warning + double confirmation */}
+      {deleteTargetRoom && (
+        <div
+          className="rm-delete-overlay"
+          onClick={() => !deleteAcknowledged && closeDeleteModal()}
+        >
+          <div
+            className="rm-delete-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="rm-delete-icon">
+              <i className="fa-solid fa-triangle-exclamation"></i>
+            </div>
+
+            <h3 className="rm-delete-title">
+              Delete Room "{deleteTargetRoom.id}"?
+            </h3>
+
+            <p className="rm-delete-subtitle">
+              This action <strong>cannot be undone</strong>. The room and all
+              its schedules will be <strong>permanently removed</strong> from
+              the system.
+            </p>
+
+            {/* Big red warning box */}
+            <div className="rm-delete-warning">
+              <i className="fa-solid fa-circle-exclamation"></i>
+              <div>
+                <strong>What will be deleted:</strong>
+                <ul>
+                  <li>
+                    The room <b>{deleteTargetRoom.id}</b> (
+                    {deleteTargetRoom.typeLabel} • {deleteTargetRoom.floor} Floor
+                    • {deleteTargetRoom.capacity} seats)
+                  </li>
+                  <li>
+                    <b>{affectedSchedules.length}</b> schedule
+                    {affectedSchedules.length === 1 ? "" : "s"} assigned to this
+                    room
+                  </li>
+                  {currentlyOccupied && (
+                    <li className="rm-delete-occupied">
+                      <i className="fa-solid fa-clock"></i>
+                      <b>Room is currently occupied</b> — an active class may be
+                      interrupted.
+                    </li>
+                  )}
+                </ul>
+              </div>
+            </div>
+
+            {/* List of schedules that will be lost */}
+            {affectedSchedules.length > 0 && (
+              <div className="rm-delete-schedule-list">
+                <div className="rm-delete-schedule-head">
+                  <i className="fa-solid fa-calendar-xmark"></i>
+                  Schedules that will be deleted
+                </div>
+                <ul>
+                  {affectedSchedules.slice(0, 5).map((s) => (
+                    <li key={s.id}>
+                      <span className="rm-dsl-time">
+                        {s.day} {fmt12(s.startTime)}–{fmt12(s.endTime)}
+                      </span>
+                      <span className="rm-dsl-subject">
+                        {s.subject || s.courseTitle || "Class"}
+                        {s.section ? ` (${s.section})` : ""}
+                      </span>
+                      {s.faculty && (
+                        <span className="rm-dsl-faculty">{s.faculty}</span>
+                      )}
+                    </li>
+                  ))}
+                  {affectedSchedules.length > 5 && (
+                    <li className="rm-dsl-more">
+                      +{affectedSchedules.length - 5} more schedule
+                      {affectedSchedules.length - 5 === 1 ? "" : "s"}...
+                    </li>
+                  )}
+                </ul>
+              </div>
+            )}
+
+            {/* Checkbox acknowledgment */}
+            <label className="rm-delete-ack">
+              <input
+                type="checkbox"
+                checked={deleteAcknowledged}
+                onChange={(e) => setDeleteAcknowledged(e.target.checked)}
+              />
+              <span>
+                I understand that this room and all its schedules will be{" "}
+                <b>permanently deleted</b> and cannot be recovered.
+              </span>
+            </label>
+
+            {/* Type-to-confirm */}
+            <div className="rm-delete-type-confirm">
+              <label htmlFor="rm-delete-confirm-input">
+                Type <b>DELETE</b> to confirm:
+              </label>
+              <input
+                id="rm-delete-confirm-input"
+                type="text"
+                className="rm-delete-input"
+                value={deleteConfirmText}
+                onChange={(e) => setDeleteConfirmText(e.target.value)}
+                placeholder="DELETE"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </div>
+
+            <div className="rm-delete-actions">
+              <button
+                type="button"
+                className="rm-delete-cancel"
+                onClick={closeDeleteModal}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="rm-delete-confirm"
+                disabled={!canConfirmDelete}
+                onClick={handleDeleteConfirm}
+                title={
+                  canConfirmDelete
+                    ? "Permanently delete this room"
+                    : "Check the box and type DELETE to enable"
+                }
+              >
+                <i className="fa-solid fa-trash"></i>
+                Delete Permanently
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       <main className="dashboard-main rooms-page">
@@ -875,6 +1023,8 @@ function RoomManagementView({
                           className="action-icon-btn danger"
                           onClick={(e) => {
                             e.stopPropagation();
+                            setDeleteConfirmText("");
+                            setDeleteAcknowledged(false);
                             setDeleteTarget(room.id);
                           }}
                         >

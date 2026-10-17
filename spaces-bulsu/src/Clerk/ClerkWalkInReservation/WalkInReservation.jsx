@@ -21,8 +21,8 @@ import { useNavigate } from "react-router-dom";
 // ─── Constants ───────────────────────────────────────────────────────
 const MIN_HOUR = 7;
 const MAX_HOUR = 20;
-const MIN_MINUTES = MIN_HOUR * 60; // 420
-const MAX_MINUTES = MAX_HOUR * 60; // 1200
+const MIN_MINUTES = MIN_HOUR * 60;
+const MAX_MINUTES = MAX_HOUR * 60;
 const ITEMS_PER_PAGE = 6;
 const LIVE_ITEMS_PER_PAGE = 4;
 
@@ -68,13 +68,6 @@ const formatDateLong = (dateStr) => {
 };
 
 const roundUpTo30 = (mins) => Math.ceil(mins / 30) * 30;
-
-const overlap = (aStart, aEnd, bStart, bEnd) => {
-  return (
-    convertToMinutes(aStart) < convertToMinutes(bEnd) &&
-    convertToMinutes(aEnd) > convertToMinutes(bStart)
-  );
-};
 
 const getTodayLocal = () => {
   const now = new Date();
@@ -134,7 +127,6 @@ const buildCalendarGrid = (year, month) => {
 
 const normalize = (value) => value?.toString().trim().toLowerCase();
 
-// Sort rooms alphabetically by roomName (numeric-aware: "Room 2" < "Room 10")
 const sortRoomsByName = (list) =>
   [...list].sort((a, b) =>
     (a.roomName || "").localeCompare(b.roomName || "", undefined, {
@@ -142,6 +134,33 @@ const sortRoomsByName = (list) =>
       sensitivity: "base",
     }),
   );
+
+// ✅ Course options
+const COURSE_OPTIONS = ["BSIT", "BSIS", "BLIS", "Others"];
+
+// ✅ Fields with format restrictions
+const VALIDATED_FIELDS = ["requesterId", "requesterName", "organizationName"];
+
+const validateFieldFormat = (field, value) => {
+  const trimmed = (value || "").trim();
+  if (!trimmed) return "";
+
+  switch (field) {
+    case "requesterId":
+      return /^[0-9]+$/.test(trimmed)
+        ? ""
+        : "Numbers only — letters and symbols are not allowed.";
+
+    case "requesterName":
+    case "organizationName":
+      return /^[a-zA-Z ]+$/.test(trimmed)
+        ? ""
+        : "Letters only — numbers and symbols are not allowed.";
+
+    default:
+      return "";
+  }
+};
 
 // ─── Main Component ──────────────────────────────────────────────────
 export default function WalkInReservation() {
@@ -207,13 +226,20 @@ export default function WalkInReservation() {
     organizationName: "",
     purpose: "",
     customPurpose: "",
-    course: "",
+    course: "BSIT",         // ✅ default course
+    customCourse: "",       // ✅ for "Others"
     yearSectionGroup: "",
     studentRange: "",
     date: getTodayLocal(),
     duration: "",
     endTime: "",
     startTime: "",
+  });
+
+  const [fieldErrors, setFieldErrors] = useState({
+    requesterId: "",
+    requesterName: "",
+    organizationName: "",
   });
 
   const now = new Date();
@@ -267,12 +293,10 @@ export default function WalkInReservation() {
       setReleases(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     });
 
-      const unsubReassign = onSnapshot(collection(db, "roomReassignments"), (snap) => {
+    const unsubReassign = onSnapshot(collection(db, "roomReassignments"), (snap) => {
       const data = snap.docs
         .map((d) => ({ id: d.id, ...d.data() }))
         .filter((r) => {
-          // ✅ FIX: an accepted reassignment has status "accepted"
-          //    (not "approved"). Include both for safety.
           const s = normalize(r.status);
           return s === "accepted" || s === "approved";
         });
@@ -292,9 +316,6 @@ export default function WalkInReservation() {
     return days[new Date(dateStr).getDay()];
   };
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  BUSY ITEMS — clipped to 7:00 AM – 8:00 PM
-  // ═══════════════════════════════════════════════════════════════════
   const getBusyItemsForRoom = (roomId, date, dayAbbrev) => {
     const raw = [];
 
@@ -402,9 +423,6 @@ export default function WalkInReservation() {
     return windows;
   };
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  AVAILABLE ROOMS (sorted alphabetically)
-  // ═══════════════════════════════════════════════════════════════════
   const availableRooms = useMemo(() => {
     const dayAbbrev = getDayAbbrev(selectedDate);
     const isToday = selectedDate === getTodayLocal();
@@ -458,9 +476,6 @@ export default function WalkInReservation() {
     currentMinutes,
   ]);
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  BUILDING + FLOOR OPTIONS
-  // ═══════════════════════════════════════════════════════════════════
   const buildingOptions = useMemo(() => {
     const set = new Set();
     rooms.forEach((r) => {
@@ -487,9 +502,6 @@ export default function WalkInReservation() {
     }
   }, [floorOptions, selectedFloor]);
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  FILTERED + PAGINATED ROOMS (kept alphabetical after filtering)
-  // ═══════════════════════════════════════════════════════════════════
   const filteredAvailableRooms = useMemo(() => {
     let list = availableRooms;
 
@@ -525,9 +537,6 @@ export default function WalkInReservation() {
     }
   }, [currentPage, totalPages]);
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  LIVE AVAILABILITY (sorted alphabetically)
-  // ═══════════════════════════════════════════════════════════════════
   const liveAvailability = useMemo(() => {
     const dayAbbrev = getDayAbbrev(selectedDate);
     const isToday = selectedDate === getTodayLocal();
@@ -602,9 +611,6 @@ export default function WalkInReservation() {
     }
   }, [liveCurrentPage, totalLivePages]);
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  AVAILABLE DURATIONS (based on selected room)
-  // ═══════════════════════════════════════════════════════════════════
   const availableDurations = useMemo(() => {
     if (!selectedRoom) return [];
 
@@ -640,9 +646,6 @@ export default function WalkInReservation() {
     currentMinutes,
   ]);
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  AVAILABLE START TIMES (based on selected duration)
-  // ═══════════════════════════════════════════════════════════════════
   const availableStartTimes = useMemo(() => {
     if (!selectedRoom || !form.duration) return [];
 
@@ -687,7 +690,6 @@ export default function WalkInReservation() {
     currentMinutes,
   ]);
 
-  // ─── Select Room ──────────────────────────────────────────────────
   const selectRoom = (room) => {
     setSelectedRoom(room);
 
@@ -730,8 +732,21 @@ export default function WalkInReservation() {
 
   const handleChange = (field) => (e) => {
     const value = e.target.value;
+
+    if (VALIDATED_FIELDS.includes(field)) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        [field]: validateFieldFormat(field, value),
+      }));
+    }
+
     setForm((prev) => {
       const updated = { ...prev, [field]: value };
+
+      // ✅ Clear custom course kapag hindi na "Others" ang pinili
+      if (field === "course" && value !== "Others") {
+        updated.customCourse = "";
+      }
 
       if (field === "duration" && selectedRoom) {
         const dur = parseInt(value, 10);
@@ -780,7 +795,14 @@ export default function WalkInReservation() {
     });
   };
 
-  // ─── Validate ─────────────────────────────────────────────────────
+  const handleBlur = (field) => (e) => {
+    if (!VALIDATED_FIELDS.includes(field)) return;
+    setFieldErrors((prev) => ({
+      ...prev,
+      [field]: validateFieldFormat(field, e.target.value),
+    }));
+  };
+
   const validate = () => {
     if (!selectedRoom) return "Please select a room.";
     if (
@@ -788,8 +810,33 @@ export default function WalkInReservation() {
     ) {
       return "This room is under maintenance and cannot be reserved.";
     }
+
     if (!form.requesterId.trim()) return "Requester ID is required.";
+    if (!/^[0-9]+$/.test(form.requesterId.trim())) {
+      return "Requester ID must contain only numbers.";
+    }
+
     if (!form.requesterName.trim()) return "Requester Name is required.";
+    if (!/^[a-zA-Z ]+$/.test(form.requesterName.trim())) {
+      return "Requester Name must contain only letters.";
+    }
+
+    if (
+      form.requesterType === "organization" &&
+      form.organizationName.trim() &&
+      !/^[a-zA-Z ]+$/.test(form.organizationName.trim())
+    ) {
+      return "Organization name must contain only letters.";
+    }
+
+    // ✅ Course required when purpose is "Class"
+    if (form.requesterType === "faculty" && form.purpose === "Class") {
+      if (!form.course) return "Please select a course.";
+      if (form.course === "Others" && !form.customCourse.trim()) {
+        return "Please specify the course.";
+      }
+    }
+
     if (!form.duration) return "Select a duration.";
     if (!form.startTime) return "Select a start time.";
     if (!form.purpose.trim()) return "Purpose is required.";
@@ -826,6 +873,15 @@ export default function WalkInReservation() {
   };
 
   const openReview = () => {
+    const liveError =
+      fieldErrors.requesterId ||
+      fieldErrors.requesterName ||
+      (form.requesterType === "organization" ? fieldErrors.organizationName : "");
+    if (liveError) {
+      showToast("error", "Validation Error", liveError);
+      return;
+    }
+
     const error = validate();
     if (error) {
       showToast("error", "Validation Error", error);
@@ -834,7 +890,6 @@ export default function WalkInReservation() {
     setShowModal(true);
   };
 
-  // ─── Notifications ────────────────────────────────────────────────
   const notifyClerkAndAdmin = async (title, message, reservationId) => {
     const usersSnap = await getDocs(collection(db, "users"));
     const notifications = [];
@@ -861,7 +916,6 @@ export default function WalkInReservation() {
     if (notifications.length > 0) await Promise.all(notifications);
   };
 
-  // ─── Confirm ──────────────────────────────────────────────────────
   const handleConfirm = async () => {
     const error = validate();
     if (error) {
@@ -874,6 +928,14 @@ export default function WalkInReservation() {
     showToast("loading", "Processing", "Creating walk-in reservation...");
 
     let clerkName = "Clerk";
+
+    // ✅ Resolve final course value
+    const finalCourse =
+      form.requesterType === "faculty" && form.purpose === "Class"
+        ? form.course === "Others"
+          ? form.customCourse.trim()
+          : form.course
+        : "";
 
     try {
       const firebaseUser = auth.currentUser;
@@ -893,7 +955,7 @@ export default function WalkInReservation() {
           requesterId: form.requesterId,
           requesterName: form.requesterName,
           organizationName: form.organizationName,
-          course: form.course,
+          course: finalCourse, // ✅ resolved value
           yearSectionGroup: form.yearSectionGroup,
           estimatedAttendees: form.studentRange,
           roomId: selectedRoom.id,
@@ -967,7 +1029,8 @@ export default function WalkInReservation() {
         requesterId: "",
         requesterName: "",
         organizationName: "",
-        course: "",
+        course: "BSIT",       // ✅ reset to default
+        customCourse: "",
         yearSectionGroup: "",
         studentRange: "",
         customPurpose: "",
@@ -977,6 +1040,11 @@ export default function WalkInReservation() {
         duration: "",
         endTime: "",
         startTime: "",
+      });
+      setFieldErrors({
+        requesterId: "",
+        requesterName: "",
+        organizationName: "",
       });
     } catch (err) {
       console.error(err);
@@ -1011,9 +1079,6 @@ export default function WalkInReservation() {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  RENDER
-  // ═══════════════════════════════════════════════════════════════════
   return (
     <div className="wir-container">
       <div className="wir-page">
@@ -1056,10 +1121,18 @@ export default function WalkInReservation() {
                     : "Organization / Student ID"}
                 </label>
                 <input
-                  className="wir-input"
+                  className={`wir-input ${fieldErrors.requesterId ? "error" : ""}`}
+                  inputMode="numeric"
                   value={form.requesterId}
                   onChange={handleChange("requesterId")}
+                  onBlur={handleBlur("requesterId")}
                 />
+                {fieldErrors.requesterId && (
+                  <span className="wir-field-error">
+                    <i className="fa-solid fa-circle-exclamation"></i>
+                    {fieldErrors.requesterId}
+                  </span>
+                )}
               </div>
               <div className="wir-field">
                 <label>
@@ -1068,10 +1141,17 @@ export default function WalkInReservation() {
                     : "Requester Name"}
                 </label>
                 <input
-                  className="wir-input"
+                  className={`wir-input ${fieldErrors.requesterName ? "error" : ""}`}
                   value={form.requesterName}
                   onChange={handleChange("requesterName")}
+                  onBlur={handleBlur("requesterName")}
                 />
+                {fieldErrors.requesterName && (
+                  <span className="wir-field-error">
+                    <i className="fa-solid fa-circle-exclamation"></i>
+                    {fieldErrors.requesterName}
+                  </span>
+                )}
               </div>
             </div>
 
@@ -1079,11 +1159,18 @@ export default function WalkInReservation() {
               <div className="wir-field">
                 <label>Organization Name</label>
                 <input
-                  className="wir-input"
+                  className={`wir-input ${fieldErrors.organizationName ? "error" : ""}`}
                   placeholder="Computer Society"
                   value={form.organizationName}
                   onChange={handleChange("organizationName")}
+                  onBlur={handleBlur("organizationName")}
                 />
+                {fieldErrors.organizationName && (
+                  <span className="wir-field-error">
+                    <i className="fa-solid fa-circle-exclamation"></i>
+                    {fieldErrors.organizationName}
+                  </span>
+                )}
               </div>
             )}
 
@@ -1111,16 +1198,20 @@ export default function WalkInReservation() {
               </select>
             </div>
 
+            {/* ✅ Course dropdown + Year/Section (Class only) */}
             {form.requesterType === "faculty" && form.purpose === "Class" && (
               <div className="wir-row">
                 <div className="wir-field">
                   <label>Course</label>
-                  <input
+                  <select
                     className="wir-input"
-                    placeholder="BSIT"
                     value={form.course}
                     onChange={handleChange("course")}
-                  />
+                  >
+                    {COURSE_OPTIONS.map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
                 </div>
                 <div className="wir-field">
                   <label>Year / Section / Group</label>
@@ -1133,6 +1224,21 @@ export default function WalkInReservation() {
                 </div>
               </div>
             )}
+
+            {/* ✅ Custom course input kapag "Others" */}
+            {form.requesterType === "faculty" &&
+              form.purpose === "Class" &&
+              form.course === "Others" && (
+                <div className="wir-field">
+                  <label>Specify Course</label>
+                  <input
+                    className="wir-input"
+                    placeholder="e.g., BSECE"
+                    value={form.customCourse}
+                    onChange={handleChange("customCourse")}
+                  />
+                </div>
+              )}
 
             {((form.requesterType === "faculty" && form.purpose === "Meeting") ||
               form.requesterType === "organization") && (
@@ -1304,7 +1410,6 @@ export default function WalkInReservation() {
               </div>
             </div>
 
-            {/* SLOTS HEADER — label + building + floor filters */}
             <div className="wir-slots-header">
               <span className="wir-slots-label">Available Room Slots</span>
 
@@ -1354,7 +1459,6 @@ export default function WalkInReservation() {
               </div>
             </div>
 
-            {/* Room grid */}
             <div className="wir-slots">
               {loadingRooms ? (
                 <div className="wir-inline-loading">
@@ -1450,7 +1554,6 @@ export default function WalkInReservation() {
               )}
             </div>
 
-            {/* PAGINATION */}
             {!loadingRooms && filteredAvailableRooms.length > 0 && totalPages > 1 && (
               <div className="wir-pagination">
                 <span className="wir-page-info">
@@ -1490,7 +1593,6 @@ export default function WalkInReservation() {
               </div>
             )}
 
-            {/* Duration + From + To — one line */}
             {selectedRoom && availableDurations.length > 0 && (
               <div className="wir-row wir-row-3" style={{ marginTop: 20 }}>
                 <div className="wir-field">
@@ -1669,7 +1771,6 @@ export default function WalkInReservation() {
                 ))}
               </div>
 
-              {/* PAGINATION — live availability sidebar */}
               {totalLivePages > 1 && (
                 <div className="wir-live-pagination">
                   <button
@@ -1773,7 +1874,12 @@ export default function WalkInReservation() {
                     <>
                       <div className="wir-review-row">
                         <span>Course</span>
-                        <strong>{form.course || "—"}</strong>
+                        <strong>
+                          {/* ✅ Show resolved course value */}
+                          {form.course === "Others"
+                            ? form.customCourse || "—"
+                            : form.course || "—"}
+                        </strong>
                       </div>
                       <div className="wir-review-row">
                         <span>Year / Section / Group</span>

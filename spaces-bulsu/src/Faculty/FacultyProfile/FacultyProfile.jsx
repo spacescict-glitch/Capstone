@@ -38,7 +38,6 @@ const ACTIVITY_ICON = {
   default: "fa-solid fa-circle-info",
 };
 
-// ✅ Accepts the whole log object (works with timestamp OR createdAt fallback)
 function formatLogTime(log) {
   const ts = log?.timestamp || log?.createdAt;
   if (!ts) return "";
@@ -52,7 +51,6 @@ function formatLogTime(log) {
   return date.toLocaleDateString();
 }
 
-// ✅ Helper: get millis from either timestamp or createdAt
 function getLogMillis(log) {
   const ts = log?.timestamp || log?.createdAt;
   if (!ts) return 0;
@@ -71,6 +69,9 @@ export default function FacultyProfile() {
   const [previewUrl, setPreviewUrl] = useState(null);
   const [photoFile, setPhotoFile]   = useState(null);
   const fileInputRef                = useRef(null);
+
+  // ✅ NEW: name change confirmation modal
+  const [showNameConfirm, setShowNameConfirm] = useState(false);
 
   const [form, setForm] = useState({
     firstName: "",
@@ -140,11 +141,6 @@ export default function FacultyProfile() {
 
     setActivityLoading(true);
 
-    // ✅ FIX:
-    // - Removed orderBy("timestamp") para hindi mag-drop ng docs
-    //   na walang `timestamp` field (mga gumagamit ng `createdAt`).
-    // - Removed orderBy din para hindi na kailangan ng composite index.
-    // - Client-side sorting na lang below.
     const q = query(
       collection(db, "activityLogs"),
       where("user", "==", fullName)
@@ -154,10 +150,7 @@ export default function FacultyProfile() {
       q,
       (snapshot) => {
         const logs = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
-
-        // Sort client-side (newest first) — supports timestamp OR createdAt
         logs.sort((a, b) => getLogMillis(b) - getLogMillis(a));
-
         setActivityLogs(logs.slice(0, 50));
         setActivityLoading(false);
       },
@@ -188,8 +181,15 @@ export default function FacultyProfile() {
     setPreviewUrl(URL.createObjectURL(file));
   };
 
-  // ── Save ────────────────────────────────────────────────────────────────────
-  const handleSave = async () => {
+  // ✅ Detect name change (used for inline warning + save gate)
+  const nameChanged =
+    editing &&
+    originalData &&
+    (form.firstName.trim() !== originalData.firstName ||
+     form.lastName.trim()  !== originalData.lastName);
+
+  // ✅ NEW: gate that shows confirmation if name changed
+  const handleSave = () => {
     const nameUnchanged =
       form.firstName === originalData.firstName &&
       form.lastName  === originalData.lastName;
@@ -200,6 +200,17 @@ export default function FacultyProfile() {
       return;
     }
 
+    // ⚠️ If name changed — ask for confirmation first
+    if (!nameUnchanged) {
+      setShowNameConfirm(true);
+      return;
+    }
+
+    performSave();
+  };
+
+  // ✅ NEW: actual save logic (extracted from old handleSave)
+  const performSave = async () => {
     setSaving(true);
     try {
       const currentUser = auth.currentUser;
@@ -242,7 +253,14 @@ export default function FacultyProfile() {
       showToast("error", "Update Failed", err.message);
     } finally {
       setSaving(false);
+      setShowNameConfirm(false);
     }
+  };
+
+  // ✅ NEW: confirm handler
+  const confirmNameSave = () => {
+    setShowNameConfirm(false);
+    performSave();
   };
 
   // ── Cancel ──────────────────────────────────────────────────────────────────
@@ -405,6 +423,20 @@ export default function FacultyProfile() {
                 />
               </div>
 
+              {/* ✅ Inline warning when editing changes the name */}
+              {nameChanged && (
+                <div className="up-name-warning">
+                  <i className="fa-solid fa-triangle-exclamation"></i>
+                  <div>
+                    <strong>Name change detected</strong>
+                    <span>
+                      Your name is used in your <b>schedules</b>, <b>reservations</b>, and <b>activity logs</b>.
+                      Make sure this is the correct name before saving.
+                    </span>
+                  </div>
+                </div>
+              )}
+
               <div className="up-field">
                 <label>Role</label>
                 <input className="up-input" value={form.role} readOnly />
@@ -473,6 +505,60 @@ export default function FacultyProfile() {
         )}
 
       </div>
+
+      {/* ✅ NEW: Name change confirmation modal */}
+      {showNameConfirm && (
+        <div
+          className="up-confirm-overlay"
+          onClick={() => !saving && !uploading && setShowNameConfirm(false)}
+        >
+          <div
+            className="up-confirm-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="up-confirm-icon">
+              <i className="fa-solid fa-triangle-exclamation"></i>
+            </div>
+
+            <h3 className="up-confirm-title">Confirm name change</h3>
+
+            <p className="up-confirm-message">
+              You are about to change your name from{" "}
+              <b>{originalData.firstName} {originalData.lastName}</b> to{" "}
+              <b>{form.firstName.trim()} {form.lastName.trim()}</b>.
+            </p>
+
+            <div className="up-confirm-note">
+              <i className="fa-solid fa-circle-info"></i>
+              <span>
+                Your name is displayed on your <b>schedules</b>, <b>reservations</b>,
+                and <b>activity logs</b>. Changing it will update how your name
+                appears on those records.
+              </span>
+            </div>
+
+            <div className="up-confirm-actions">
+              <button
+                className="up-confirm-cancel"
+                onClick={() => setShowNameConfirm(false)}
+                disabled={saving || uploading}
+              >
+                Go Back
+              </button>
+              <button
+                className="up-confirm-save"
+                onClick={confirmNameSave}
+                disabled={saving || uploading}
+              >
+                {saving || uploading
+                  ? <><i className="fa-solid fa-circle-notch fa-spin" /> Saving…</>
+                  : <><i className="fa-solid fa-check" /> Yes, Save Changes</>
+                }
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <Toast
         show={toast.show}

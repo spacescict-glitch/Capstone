@@ -86,6 +86,12 @@ body {
   border-color: #F2690D;
 }
 
+/* ✅ Custom course input (appears when "Others" is selected) */
+.faculty-submit-custom-course {
+  margin-top: 8px;
+  animation: slideDown 0.2s ease;
+}
+
 .faculty-submit-icon-wrapper {
   position: relative;
   width: 100%;
@@ -151,6 +157,7 @@ body {
   display: none;
 }
 
+/* ─── Dropdown ─── */
 .faculty-submit-dropdown-wrapper {
   position: relative;
   width: 100%;
@@ -160,6 +167,17 @@ body {
   width: 100%;
   appearance: none;
   cursor: pointer;
+  padding-right: 34px; /* space for icon */
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.faculty-submit-dropdown:hover {
+  border-color: #F2690D;
+}
+
+.faculty-submit-dropdown:focus {
+  border-color: #F2690D;
+  box-shadow: 0 0 0 3px rgba(242, 105, 13, 0.15);
 }
 
 .faculty-submit-dropdown-icon {

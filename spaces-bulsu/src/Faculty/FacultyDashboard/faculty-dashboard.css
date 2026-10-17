@@ -1317,3 +1317,26 @@ html, body {
   .announce-card { animation: none; }
   .announce-live-dot { animation: none; }
 }
+
+/* ✅ NEW: released indicators */
+.banner-released-pill {
+  background: rgba(255, 255, 255, 0.28) !important;
+  color: #fff !important;
+  font-weight: 800;
+}
+
+.today-pill-released {
+  color: #ef4444;
+  font-size: 11px;
+  margin-left: 4px;
+  flex-shrink: 0;
+}
+
+.today-pill.active .today-pill-released {
+  color: #b91c1c;
+}
+
+.mini-released-chip {
+  background: #fee2e2 !important;
+  color: #b91c1c !important;
+}

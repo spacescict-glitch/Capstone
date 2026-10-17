@@ -510,3 +510,205 @@ html, body {
   border: solid 1px #f57c00;
   color: #f57c00;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   INLINE NAME-CHANGE WARNING
+   ═══════════════════════════════════════════════════════════ */
+
+.up-name-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  background: #FFFBEB;
+  border: 1px solid #FDE68A;
+  border-left: 4px solid #F59E0B;
+  border-radius: 10px;
+  animation: upFadeIn 0.18s ease;
+}
+
+.up-name-warning i {
+  color: #F59E0B;
+  font-size: 15px;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.up-name-warning div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.up-name-warning strong {
+  font-size: 13px;
+  font-weight: 700;
+  color: #92400E;
+}
+
+.up-name-warning span {
+  font-size: 12.5px;
+  color: #78350F;
+  line-height: 1.5;
+}
+
+.up-name-warning b {
+  color: #92400E;
+  font-weight: 700;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   NAME CHANGE CONFIRMATION MODAL
+   ═══════════════════════════════════════════════════════════ */
+
+.up-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.5);
+  backdrop-filter: blur(2px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+  padding: 20px;
+  animation: upFadeIn 0.15s ease-out;
+}
+
+@keyframes upFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.up-confirm-modal {
+  background: #ffffff;
+  width: 460px;
+  max-width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+  border-radius: 20px;
+  padding: 30px 28px 24px;
+  text-align: center;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.25);
+  animation: upPopIn 0.2s cubic-bezier(.22,1,.36,1);
+  font-family: 'Lexend', sans-serif;
+}
+
+@keyframes upPopIn {
+  from { opacity: 0; transform: scale(0.95) translateY(8px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.up-confirm-icon {
+  width: 60px;
+  height: 60px;
+  margin: 0 auto 16px;
+  border-radius: 50%;
+  background: #FEF3C7;
+  color: #F59E0B;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+}
+
+.up-confirm-title {
+  font-size: 20px;
+  font-weight: 800;
+  color: #1a1a1a;
+  margin-bottom: 10px;
+}
+
+.up-confirm-message {
+  font-size: 13.5px;
+  color: #4b5563;
+  line-height: 1.6;
+  margin-bottom: 16px;
+}
+
+.up-confirm-message b {
+  color: #1a1a1a;
+  font-weight: 700;
+}
+
+.up-confirm-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 11px 13px;
+  background: #FEF0E7;
+  border-left: 3px solid var(--fs-accent, #F97316);
+  border-radius: 8px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #7A4A1F;
+  text-align: left;
+  margin-bottom: 22px;
+}
+
+.up-confirm-note i {
+  color: var(--fs-accent, #F97316);
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.up-confirm-note b {
+  color: #B45309;
+  font-weight: 800;
+}
+
+.up-confirm-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.up-confirm-cancel,
+.up-confirm-save {
+  flex: 1;
+  height: 46px;
+  border-radius: 10px;
+  font-size: 13.5px;
+  font-weight: 700;
+  font-family: 'Lexend', sans-serif;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  transition: 0.15s;
+}
+
+.up-confirm-cancel {
+  background: #ffffff;
+  border: 1.5px solid #e5e7eb;
+  color: #475569;
+}
+
+.up-confirm-cancel:hover:not(:disabled) {
+  border-color: var(--fs-accent, #F97316);
+  color: var(--fs-accent, #F97316);
+  background: #FFF9F3;
+}
+
+.up-confirm-save {
+  background: var(--fs-accent, #F97316);
+  border: none;
+  color: #ffffff;
+  box-shadow: 0 4px 12px rgba(249, 115, 22, 0.28);
+}
+
+.up-confirm-save:hover:not(:disabled) {
+  background: var(--fs-accent-hover, #ea6c0a);
+  transform: translateY(-1px);
+}
+
+.up-confirm-cancel:disabled,
+.up-confirm-save:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+@media (max-width: 480px) {
+  .up-confirm-modal { padding: 24px 20px 20px; border-radius: 16px; }
+  .up-confirm-actions { flex-direction: column; }
+}
