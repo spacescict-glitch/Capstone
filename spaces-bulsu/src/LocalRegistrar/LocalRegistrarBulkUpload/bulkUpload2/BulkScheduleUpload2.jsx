@@ -52,53 +52,11 @@ async function extractRawText(file) {
     const arrayBuffer = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
     let fullText = "";
-
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);
       const content = await page.getTextContent();
-
-      // ────────────────────────────────────────────────────────────
-      // Group text items into VISUAL ROWS by their Y coordinate,
-      // then sort each row's items by X and join cells with a TAB.
-      //
-      // Why this matters: pdf.js returns text as a flat stream in
-      // PDF-content order. A tabular schedule like
-      //
-      //        MON   TUE   WED   THU   FRI
-      //  8:00  Math  Sci   Eng   Math  Sci
-      //
-      // becomes "MON TUE WED THU FRI 8:00 Math Sci Eng Math Sci",
-      // and the AI cannot tell which subject belongs to which day
-      // — so everything silently defaults to MON. Grouping by Y
-      // restores rows; sorting by X + using \t restores columns.
-      // ────────────────────────────────────────────────────────────
-      const Y_TOLERANCE = 4; // points; bump to 5–6 if rows still split
-      const rowBuckets = new Map();
-
-      for (const item of content.items) {
-        if (!item.str || !item.str.trim()) continue;
-        const x = item.transform[4];
-        const y = item.transform[5];
-        const bucketKey = Math.round(y / Y_TOLERANCE);
-        if (!rowBuckets.has(bucketKey)) {
-          rowBuckets.set(bucketKey, { y, items: [] });
-        }
-        rowBuckets.get(bucketKey).items.push({ x, str: item.str.trim() });
-      }
-
-      const rows = [...rowBuckets.values()].sort((a, b) => b.y - a.y);
-      const pageText = rows
-        .map((row) =>
-          row.items
-            .sort((a, b) => a.x - b.x)
-            .map((cell) => cell.str)
-            .join("\t")
-        )
-        .join("\n");
-
-      fullText += pageText + "\n\n";
+      fullText += content.items.map((item) => item.str).join(" ") + "\n";
     }
-
     return fullText;
   } else if (file.name.endsWith(".xlsx") || file.name.endsWith(".xls")) {
     const arrayBuffer = await file.arrayBuffer();
@@ -106,8 +64,7 @@ async function extractRawText(file) {
     let allText = "";
     workbook.SheetNames.forEach((sheetName) => {
       const sheet = workbook.Sheets[sheetName];
-      // Tabs preserve column boundaries so the AI can map days correctly
-      allText += XLSX.utils.sheet_to_csv(sheet, { FS: "\t" }) + "\n\n";
+      allText += XLSX.utils.sheet_to_csv(sheet) + "\n";
     });
     return allText;
   } else {
@@ -326,6 +283,8 @@ export default function BulkScheduleUpload2() {
   }, []);
 
   // ─── Pre-flight duplicate scan for the current term ────────
+  // Runs whenever the room list, semester, or school year changes.
+  // Marks any room that already has a schedule for this term.
   useEffect(() => {
     if (!semester || !schoolYear || rooms.length === 0) return;
     let cancelled = false;
@@ -362,6 +321,7 @@ export default function BulkScheduleUpload2() {
     };
   }, [rooms, semester, schoolYear]);
 
+  // ─── Available rooms exclude duplicates + already-selected ─
   const availableRooms = rooms.filter(
     (r) =>
       !selectedRooms.some((sr) => sr.roomName === r.roomName) &&
@@ -396,6 +356,7 @@ export default function BulkScheduleUpload2() {
     );
   };
 
+  // ─── Final safety check right before parsing ────────────────
   const recheckDuplicatesForSelected = async () => {
     const dupRooms = [];
     await Promise.all(
@@ -430,13 +391,16 @@ export default function BulkScheduleUpload2() {
     showToast("loading", "Checking", "Verifying existing schedules...");
 
     try {
+      // ── Final duplicate safety check (in case another user just uploaded)
       const duplicates = await recheckDuplicatesForSelected();
       if (duplicates.length > 0) {
+        // refresh the set so UI hides them
         setDuplicateRoomNames((prev) => {
           const next = new Set(prev);
           duplicates.forEach((d) => next.add(d));
           return next;
         });
+        // Drop them from the selected list
         setSelectedRooms((prev) =>
           prev.filter((r) => !duplicates.includes(r.roomName))
         );

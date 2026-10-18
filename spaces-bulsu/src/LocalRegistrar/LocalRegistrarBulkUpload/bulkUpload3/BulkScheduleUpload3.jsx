@@ -17,8 +17,8 @@ const SNAP_MINUTES = 15;
 
 const MIN_TIME = "07:00";
 const MAX_TIME = "20:00";
-const MIN_SCHEDULE_MIN = 7 * 60;
-const MAX_SCHEDULE_MIN = 20 * 60;
+const MIN_SCHEDULE_MIN = 7 * 60;   // 7:00 AM
+const MAX_SCHEDULE_MIN = 20 * 60;  // 8:00 PM
 
 function getTopFromStart(hour, minute) {
   const startTotal = START_HOUR * 60;
@@ -57,53 +57,8 @@ function formatTime12Hour(hour, minute) {
   return `${displayHour}:${String(minute).padStart(2, "0")} ${suffix}`;
 }
 
-// ─────────────────────────────────────────────────────────────
-// DAY EXPANSION
-// ─────────────────────────────────────────────────────────────
-const DAY_NUM = { MON: 1, TUE: 2, WED: 3, THU: 4, FRI: 5, SAT: 6, SUN: 7 };
-const DAY_NUM_FULL = {
-  MONDAY: 1, TUESDAY: 2, WEDNESDAY: 3,
-  THURSDAY: 4, FRIDAY: 5, SATURDAY: 6, SUNDAY: 7,
-};
-
-function expandDays(raw) {
-  if (raw === null || raw === undefined || raw === "") return [];
-  if (typeof raw === "number") {
-    return raw >= 1 && raw <= 7 ? [raw] : [];
-  }
-  const s = String(raw).toUpperCase().trim();
-  if (!s) return [];
-
-  if (DAY_NUM_FULL[s]) return [DAY_NUM_FULL[s]];
-  if (DAY_NUM[s]) return [DAY_NUM[s]];
-
-  const stripped = s.replace(/[^A-Z]/g, "");
-  const days = [];
-  let i = 0;
-  while (i < stripped.length) {
-    const triple = stripped.slice(i, i + 3);
-    if (DAY_NUM[triple]) { days.push(DAY_NUM[triple]); i += 3; continue; }
-
-    const pair = stripped.slice(i, i + 2);
-    if (pair === "TH") { days.push(4); i += 2; continue; }
-    if (pair === "TU") { days.push(2); i += 2; continue; }
-    if (pair === "SA") { days.push(6); i += 2; continue; }
-    if (pair === "SU") { days.push(7); i += 2; continue; }
-
-    const ch = stripped[i];
-    if (ch === "M") { days.push(1); i++; continue; }
-    if (ch === "T") { days.push(2); i++; continue; }
-    if (ch === "W") { days.push(3); i++; continue; }
-    if (ch === "F") { days.push(5); i++; continue; }
-    if (ch === "S") { days.push(6); i++; continue; }
-    i++;
-  }
-  return [...new Set(days)];
-}
-
-// ─────────────────────────────────────────────────────────────
-// OVERLAP HELPERS
-// ─────────────────────────────────────────────────────────────
+// Returns the first schedule in `schedules` that overlaps with `candidate`,
+// ignoring the schedule whose id matches `candidate.id`.
 function findOverlap(candidate, schedules) {
   const cStart = candidate.startH * 60 + candidate.startM;
   const cEnd = candidate.endH * 60 + candidate.endM;
@@ -116,74 +71,6 @@ function findOverlap(candidate, schedules) {
     if (cStart < sEnd && sStart < cEnd) return s;
   }
   return null;
-}
-
-function layoutDayEvents(events) {
-  const layout = new Map();
-  if (events.length === 0) return layout;
-
-  const sorted = [...events].sort((a, b) => {
-    const aStart = a.startH * 60 + a.startM;
-    const bStart = b.startH * 60 + b.startM;
-    if (aStart !== bStart) return aStart - bStart;
-    const aDur = a.endH * 60 + a.endM - aStart;
-    const bDur = b.endH * 60 + b.endM - bStart;
-    return bDur - aDur;
-  });
-
-  const clusters = [];
-  let current = [];
-  let clusterEnd = -1;
-
-  for (const ev of sorted) {
-    const evStart = ev.startH * 60 + ev.startM;
-    const evEnd = ev.endH * 60 + ev.endM;
-    if (current.length === 0 || evStart >= clusterEnd) {
-      if (current.length > 0) clusters.push(current);
-      current = [ev];
-      clusterEnd = evEnd;
-    } else {
-      current.push(ev);
-      if (evEnd > clusterEnd) clusterEnd = evEnd;
-    }
-  }
-  if (current.length > 0) clusters.push(current);
-
-  for (const cluster of clusters) {
-    if (cluster.length === 1) {
-      layout.set(cluster[0].id, { slot: 0, totalSlots: 1 });
-      continue;
-    }
-
-    const columnEndTimes = [];
-    const assignments = [];
-
-    for (const ev of cluster) {
-      const evStart = ev.startH * 60 + ev.startM;
-      const evEnd = ev.endH * 60 + ev.endM;
-
-      let placedSlot = -1;
-      for (let c = 0; c < columnEndTimes.length; c++) {
-        if (columnEndTimes[c] <= evStart) {
-          columnEndTimes[c] = evEnd;
-          placedSlot = c;
-          break;
-        }
-      }
-      if (placedSlot === -1) {
-        columnEndTimes.push(evEnd);
-        placedSlot = columnEndTimes.length - 1;
-      }
-      assignments.push({ id: ev.id, slot: placedSlot });
-    }
-
-    const totalSlots = columnEndTimes.length;
-    for (const a of assignments) {
-      layout.set(a.id, { slot: a.slot, totalSlots });
-    }
-  }
-
-  return layout;
 }
 
 // ---------- Edit Schedule Modal ----------
@@ -319,7 +206,7 @@ function EditScheduleModal({ schedule, otherSchedules, onSave, onClose }) {
 }
 
 // ---------- Schedule block rendered on the calendar grid ----------
-function CalendarEventBlock({ item, slot = 0, totalSlots = 1, onEdit, onPointerDown }) {
+function CalendarEventBlock({ item, onEdit, onPointerDown }) {
   const top = getTopFromStart(item.startH, item.startM);
   const height = getBlockHeight(item.startH, item.startM, item.endH, item.endM);
   const color = colourPalette[item.colorIdx % colourPalette.length];
@@ -339,18 +226,7 @@ function CalendarEventBlock({ item, slot = 0, totalSlots = 1, onEdit, onPointerD
     .filter(Boolean)
     .join(" • ");
 
-  const style = {
-    top: `${top}px`,
-    height: `${height}px`,
-    backgroundColor: color,
-  };
-  if (totalSlots > 1) {
-    style.left = `calc(${(slot / totalSlots) * 100}% + 3px)`;
-    style.right = `calc(${((totalSlots - slot - 1) / totalSlots) * 100}% + 3px)`;
-  }
-
   const sharedProps = {
-    style,
     onClick: () => onEdit(item),
     onPointerDown: (e) => onPointerDown(item, e),
     title: tooltip,
@@ -358,7 +234,11 @@ function CalendarEventBlock({ item, slot = 0, totalSlots = 1, onEdit, onPointerD
 
   if (isMini) {
     return (
-      <div className="calendar-event is-mini" {...sharedProps}>
+      <div
+        className="calendar-event is-mini"
+        style={{ top: `${top}px`, height: `${height}px`, backgroundColor: color }}
+        {...sharedProps}
+      >
         <span className="calendar-event-code">{item.code}</span>
         <span className="calendar-event-time">{timeLabel}</span>
       </div>
@@ -368,6 +248,7 @@ function CalendarEventBlock({ item, slot = 0, totalSlots = 1, onEdit, onPointerD
   return (
     <div
       className={`calendar-event ${isCompact ? "is-compact" : ""}`}
+      style={{ top: `${top}px`, height: `${height}px`, backgroundColor: color }}
       {...sharedProps}
     >
       <span className="calendar-event-code">{item.code}</span>
@@ -442,6 +323,20 @@ export default function BulkScheduleUpload3() {
 
   const { semester, schoolYear, roomData } = location.state;
 
+  // Conversion helpers
+  const convertDayToNumber = (day) => {
+    switch (day?.toUpperCase()) {
+      case "MON": return 1;
+      case "TUE": return 2;
+      case "WED": return 3;
+      case "THU": return 4;
+      case "FRI": return 5;
+      case "SAT": return 6;
+      case "SUN": return 7;
+      default: return 1;
+    }
+  };
+
   const parseTime = (timeStr) => {
     if (!timeStr) return [7, 0];
     const cleaned = timeStr.trim().replace(/\s+/g, " ");
@@ -456,14 +351,10 @@ export default function BulkScheduleUpload3() {
   };
 
   const convertSchedules = (data = []) => {
-    const placed = [];
-    const unplaced = [];
-    let uid = 1;
-
-    data.forEach((item) => {
+    return data.map((item, index) => {
       let startH = 7, startM = 0, endH = 8, endM = 0;
       if (item.time) {
-        const parts = item.time.replace(/\s*-\s*/g, "-").split("-");
+        const parts = item.time.replace(/\s*-\s*/, "-").split("-");
         if (parts.length === 2) {
           [startH, startM] = parseTime(parts[0]);
           [endH, endM] = parseTime(parts[1]);
@@ -472,90 +363,33 @@ export default function BulkScheduleUpload3() {
         [startH, startM] = item.startTime.split(":").map(Number);
         [endH, endM] = item.endTime.split(":").map(Number);
       }
-
-      const base = {
+      return {
+        id: item.id || index + 1,
         code: item.code || item.subject || "",
         name: item.name || item.subject || "",
         section: item.section || "",
         faculty: item.faculty || "TBA",
-        room: item.room || "",
+        day: typeof item.day === "number" ? item.day : convertDayToNumber(item.day),
         startH, startM, endH, endM,
-        colorIdx: item.colorIdx ?? (uid % 10),
+        room: item.room || "",
+        colorIdx: item.colorIdx ?? (index % 10),
       };
-
-      const dayList = expandDays(item.day);
-
-      if (dayList.length === 0) {
-        unplaced.push({ ...base, id: item.id || `unplaced-${uid++}`, day: null });
-        return;
-      }
-
-      dayList.forEach((dayNum, idx) => {
-        placed.push({
-          ...base,
-          id:
-            dayList.length > 1
-              ? `${item.id || "s"}-${uid}-${idx}`
-              : (item.id || uid),
-          day: dayNum,
-        });
-      });
-      uid++;
     });
-
-    const seen = new Set();
-    const deduped = placed.filter((s) => {
-      const key = `${s.day}|${s.startH}:${s.startM}-${s.endH}:${s.endM}|${s.code}|${s.section}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-
-    return { placed: deduped, unplaced };
   };
 
-  // ────────────────────────────────────────────────────────────────
-  // Build per-room state.
-  //
-  // FIXED: do NOT filter out rooms whose extraction returned [].
-  // If we filter, the 2nd room silently disappears; goNextRoom()
-  // sees `length === 1` and just cycles back to room 1 — which
-  // looks like "next/previous doesn't work".
-  //
-  // We keep every room and let the UI show "No schedules extracted"
-  // for any that came back empty, so the user can navigate and see.
-  // ────────────────────────────────────────────────────────────────
-  const [roomsWithSchedules, setRoomsWithSchedules] = useState(() =>
-    roomData.map((d) => {
-      const safeSchedules = Array.isArray(d.schedules) ? d.schedules : [];
-      const { placed, unplaced } = convertSchedules(safeSchedules);
-      return {
-        room: d.room,
-        schedules: placed,
-        unplaced,
-        rawCount: safeSchedules.length,
-      };
-    })
-  );
+  const initialRoomsWithSchedules = roomData
+    .filter((data) => data.schedules && data.schedules.length > 0)
+    .map((data) => ({
+      room: data.room,
+      schedules: convertSchedules(data.schedules),
+    }));
+
+  const [roomsWithSchedules, setRoomsWithSchedules] = useState(initialRoomsWithSchedules);
   const [currentRoomIndex, setCurrentRoomIndex] = useState(0);
   const [editingSchedule, setEditingSchedule] = useState(null);
 
-  // Debug log: see which rooms extracted what
-  useEffect(() => {
-    console.log(
-      "📋 Step 3 rooms loaded:",
-      roomsWithSchedules.map((r) => ({
-        room: r.room,
-        raw: r.rawCount,
-        placed: r.schedules.length,
-        unplaced: r.unplaced.length,
-      }))
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   // Drag-and-drop state
-  const dragRef = useRef(null);
+  const dragRef = useRef(null);              // { item, offsetY, startX, startY, started }
   const dragPreviewRef = useRef(null);
   const suppressClickRef = useRef(false);
   const dropErrorTimerRef = useRef(null);
@@ -576,7 +410,7 @@ export default function BulkScheduleUpload3() {
   if (roomsWithSchedules.length === 0) {
     return (
       <div className="bulk-upload-page-three">
-        <h2>No rooms to show.</h2>
+        <h2>No schedules found for any room.</h2>
         <button className="btn-next-three" onClick={() => navigate("/local-registrar/bulk-upload-2")}>
           Go Back
         </button>
@@ -585,12 +419,7 @@ export default function BulkScheduleUpload3() {
   }
 
   const currentRoomData = roomsWithSchedules[currentRoomIndex];
-  const { room, schedules, unplaced = [], rawCount = 0 } = currentRoomData;
-
-  const totalUnplaced = roomsWithSchedules.reduce(
-    (sum, r) => sum + (r.unplaced?.length || 0),
-    0
-  );
+  const { room, schedules } = currentRoomData;
 
   const handleUpdateSchedule = (updated) => {
     const updatedRooms = roomsWithSchedules.map((roomData, idx) => {
@@ -759,7 +588,6 @@ export default function BulkScheduleUpload3() {
   }, [schedules, currentRoomIndex]);
 
   const totalGridHeight = (END_HOUR - START_HOUR) * HOUR_HEIGHT;
-  const multiRoom = roomsWithSchedules.length > 1;
 
   const goPrevRoom = () => {
     setCurrentRoomIndex((prev) => (prev > 0 ? prev - 1 : roomsWithSchedules.length - 1));
@@ -794,66 +622,11 @@ export default function BulkScheduleUpload3() {
       <div className="form-card-three calendar-card">
         <div className="calendar-header">
           <div className="room-nav">
-            <i
-              className={`fa-solid fa-chevron-left ${!multiRoom ? "is-disabled" : ""}`}
-              onClick={multiRoom ? goPrevRoom : undefined}
-              aria-disabled={!multiRoom}
-            />
-            <span className="room-name-pill">
-              {room}
-              {multiRoom && (
-                <span className="room-counter">
-                  {" — "}
-                  {currentRoomIndex + 1} of {roomsWithSchedules.length}
-                </span>
-              )}
-            </span>
-            <i
-              className={`fa-solid fa-chevron-right ${!multiRoom ? "is-disabled" : ""}`}
-              onClick={multiRoom ? goNextRoom : undefined}
-              aria-disabled={!multiRoom}
-            />
+            <i className="fa-solid fa-chevron-left" onClick={goPrevRoom} />
+            <span className="room-name-pill">{room}</span>
+            <i className="fa-solid fa-chevron-right" onClick={goNextRoom} />
           </div>
         </div>
-
-        {unplaced.length > 0 && (
-          <div className="unplaced-warning">
-            <i className="fa-solid fa-triangle-exclamation" />
-            <div>
-              <strong>
-                {unplaced.length} schedule{unplaced.length > 1 ? "s" : ""} skipped for this room
-              </strong>{" "}
-              — the day wasn't recognized in the source, so they were not placed on the calendar:
-              <ul>
-                {unplaced.slice(0, 5).map((s, i) => (
-                  <li key={i}>
-                    {s.code || "(no code)"} {s.section ? `· ${s.section}` : ""}
-                    {s.startH !== undefined && (
-                      <> — {formatTime12Hour(s.startH, s.startM)} – {formatTime12Hour(s.endH, s.endM)}</>
-                    )}
-                  </li>
-                ))}
-                {unplaced.length > 5 && <li>…and {unplaced.length - 5} more</li>}
-              </ul>
-              Fix the source file (clear day labels per row) and re-upload.
-            </div>
-          </div>
-        )}
-
-        {schedules.length === 0 && unplaced.length === 0 && (
-          <div className="empty-room-message">
-            <i className="fa-regular fa-calendar-xmark" />
-            <div>
-              <strong>No schedules were extracted for {room}.</strong>
-              <div style={{ fontWeight: 400, marginTop: 4, fontSize: 12 }}>
-                {rawCount === 0
-                  ? "The AI returned an empty result for this file — try re-uploading with a clearer PDF, or check the browser console for extraction logs."
-                  : "Schedules were extracted but couldn't be placed on the calendar — check the warnings above."}
-                {multiRoom && " Use the arrows above to view other rooms."}
-              </div>
-            </div>
-          </div>
-        )}
 
         <div className="calendar-scroll-x">
           <div className="days-header">
@@ -885,9 +658,6 @@ export default function BulkScheduleUpload3() {
                 const daySchedules = schedules.filter(
                   (s) => s.day === dayNumber && s.id !== dragPreview?.scheduleId
                 );
-
-                const layout = layoutDayEvents(daySchedules);
-
                 return (
                   <div
                     className="day-col"
@@ -898,24 +668,14 @@ export default function BulkScheduleUpload3() {
                     {Array.from({ length: END_HOUR - START_HOUR }, (_, i) => (
                       <div className="hour-line" key={i} style={{ top: i * HOUR_HEIGHT }} />
                     ))}
-
-                    {daySchedules.map((item) => {
-                      const { slot, totalSlots } = layout.get(item.id) || {
-                        slot: 0,
-                        totalSlots: 1,
-                      };
-                      return (
-                        <CalendarEventBlock
-                          key={item.id}
-                          item={item}
-                          slot={slot}
-                          totalSlots={totalSlots}
-                          onEdit={handleEventClick}
-                          onPointerDown={handlePointerDown}
-                        />
-                      );
-                    })}
-
+                    {daySchedules.map((item) => (
+                      <CalendarEventBlock
+                        key={item.id}
+                        item={item}
+                        onEdit={handleEventClick}
+                        onPointerDown={handlePointerDown}
+                      />
+                    ))}
                     {dragPreview && dragPreview.day === dayNumber && (
                       <DragPreviewBlock preview={dragPreview} />
                     )}
@@ -960,7 +720,7 @@ export default function BulkScheduleUpload3() {
               })),
             }));
             navigate("/local-registrar/bulk-upload-4", {
-              state: { semester, schoolYear, allRoomsData, totalUnplaced },
+              state: { semester, schoolYear, allRoomsData },
             });
           }}
         >
