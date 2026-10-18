@@ -337,9 +337,15 @@ function FacultyEditPendingReservation() {
         ]);
 
       const releases = releaseSnap.docs.map((d) => d.data());
-      const reassignments = reassignSnap.docs
+            const reassignments = reassignSnap.docs
         .map((d) => d.data())
-        .filter((r) => normalize(r.status) === "approved");
+        .filter((r) => {
+          const s = normalize(r.status);
+          if (s !== "approved" && s !== "accepted") return false;
+          // ✅ Skip event reassignments — class stays, only activity moves
+          if (r.reassignType === "event") return false;
+          return true;
+        });
       const events = eventSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
       const reservations = reservationSnap.docs
         .map((d) => ({ id: d.id, ...d.data() }))

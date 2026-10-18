@@ -127,8 +127,9 @@ function FacultyViewRoom() {
       .map((d) => ({ id: d.id, ...d.data() }))
       .filter(
         (r) =>
-          // ✅ Accepts "approved" AND "accepted"
           isApprovedReassignment(r.status) &&
+          // ✅ Exclude event reassignments — class stays put, only the activity moves
+          r.reassignType !== "event" &&
           (r.oldRoomId === room.id || r.newRoomId === room.id)
       );
     setReassignedAwayKeys(

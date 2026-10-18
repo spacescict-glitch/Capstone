@@ -193,11 +193,13 @@ const checkReservationConflicts = async (reservation, skipReservationId) => {
       });
     });
 
-    reSnap.docs.forEach((d) => {
+        reSnap.docs.forEach((d) => {
       const r = { id: d.id, ...d.data() };
       if (r.date !== reservation.date) return;
       const status = String(r.status || "").toLowerCase();
       if (status !== "accepted" && status !== "approved") return;
+      // ✅ Skip event reassignments — class stays, only activity moves
+      if (r.reassignType === "event") return;
       const into = (roomId && r.newRoomId === roomId) || (roomName && r.newRoomName === roomName);
       if (!into) return;
       const s = parseTimeToMin(r.startTime);
@@ -700,9 +702,15 @@ function AdminEditApprovedReservation() {
         )),
       ]);
 
-      const releases = releaseSnap.docs.map((d) => d.data());
+            const releases = releaseSnap.docs.map((d) => d.data());
       const reassignments = reassignSnap.docs.map((d) => d.data())
-        .filter((r) => normalize(r.status) === "approved");
+        .filter((r) => {
+          const s = normalize(r.status);
+          if (s !== "approved" && s !== "accepted") return false;
+          // ✅ Skip event reassignments — class stays, only activity moves
+          if (r.reassignType === "event") return false;
+          return true;
+        });
       const events = eventSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
       const reservations = reservationSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
         .filter((r) => r.id !== reservation.id);

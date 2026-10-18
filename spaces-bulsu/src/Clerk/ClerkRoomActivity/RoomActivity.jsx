@@ -385,14 +385,16 @@ export default function RoomActivity() {
             });
           });
 
-        allReassignments
-          .filter(
-            (r) =>
-              isAcceptedReassign(r) &&
-              r.date === form.date &&
-              (r.newRoomId === room.id || r.newRoomName === roomLabel) &&
-              overlap(reqStart, reqEnd, parseTime(r.startTime), parseTime(r.endTime))
-          )
+            allReassignments
+      .filter(
+        (r) =>
+          isAcceptedReassign(r) &&
+          // ✅ Skip event reassignments — class stays, only activity moves
+          r.reassignType !== "event" &&
+          r.date === date &&
+          (r.newRoomId === roomId || r.newRoomName === roomName) &&
+          overlap(reqStart, reqEnd, parseTime(r.startTime), parseTime(r.endTime))
+      )
           .forEach((r) => {
             results.push({
               id: r.id,

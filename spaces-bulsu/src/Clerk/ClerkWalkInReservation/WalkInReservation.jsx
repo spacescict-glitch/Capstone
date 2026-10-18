@@ -293,12 +293,15 @@ export default function WalkInReservation() {
       setReleases(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     });
 
-    const unsubReassign = onSnapshot(collection(db, "roomReassignments"), (snap) => {
+        const unsubReassign = onSnapshot(collection(db, "roomReassignments"), (snap) => {
       const data = snap.docs
         .map((d) => ({ id: d.id, ...d.data() }))
         .filter((r) => {
           const s = normalize(r.status);
-          return s === "accepted" || s === "approved";
+          if (s !== "accepted" && s !== "approved") return false;
+          // ✅ Skip event reassignments — class stays, only activity moves
+          if (r.reassignType === "event") return false;
+          return true;
         });
       setReassignments(data);
     });

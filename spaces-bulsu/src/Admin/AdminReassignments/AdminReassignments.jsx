@@ -1,7 +1,7 @@
 import "./admin-reassignments.css";
 import { useEffect, useState, useMemo } from "react";
 import {
-  collection, onSnapshot, doc, updateDoc, addDoc, getDoc, getDocs, serverTimestamp,
+  collection, onSnapshot, doc, updateDoc, addDoc, getDoc, getDocs, query, where, serverTimestamp,
 } from "firebase/firestore";
 import { auth, db } from "../../firebase";
 import Toast from "../../Popup/Toast/Toast";
@@ -47,6 +47,148 @@ const fmtDate = (d) => {
     weekday: "short", month: "short", day: "numeric", year: "numeric",
   });
 };
+
+// ══════════════════════════════════════════════════════════════
+// ROOM CONFLICT CHECK — verifies a slot against everything
+// (events, approved reservations, accepted reassignments,
+//  and class schedules) in the given room.
+//
+// Used in TWO places inside the EVENT approve flow:
+//   1. BEFORE moving — to ensure the TARGET room is still free
+//   2. AFTER moving  — to warn if the CLASS in the OLD room now
+//      picked up new conflicts during the conflict window
+// ══════════════════════════════════════════════════════════════
+async function checkConflictsInRoom({
+  roomId,
+  roomName,
+  date,
+  startTime,
+  endTime,
+  skipEventId = null,
+  skipReservationId = null,
+  skipScheduleId = null,
+}) {
+  if (!date || !startTime || !endTime) return [];
+  if (!roomId && !roomName) return [];
+
+  const toMin = (t) => {
+    if (!t) return null;
+    const [h, m] = t.split(":").map(Number);
+    if (Number.isNaN(h) || Number.isNaN(m)) return null;
+    return h * 60 + m;
+  };
+
+  const reqStart = toMin(startTime);
+  const reqEnd = toMin(endTime);
+  if (reqStart == null || reqEnd == null || reqStart >= reqEnd) return [];
+
+  const overlaps = (aS, aE, bS, bE) => aS < bE && aE > bS;
+  const matchesEvent = (e) =>
+    (roomId && e.roomId === roomId) ||
+    (roomName && e.roomName === roomName);
+  const matchesRes = (r) =>
+    (roomId && r.roomId === roomId) ||
+    (roomName && r.roomName === roomName);
+
+  const conflicts = [];
+  const day = new Date(`${date}T00:00:00`)
+    .toLocaleDateString("en-US", { weekday: "short" })
+    .toUpperCase();
+
+  try {
+    const [evSnap, resSnap, reSnap] = await Promise.all([
+      getDocs(query(collection(db, "events"), where("date", "==", date))),
+      getDocs(query(collection(db, "reservationRequests"), where("date", "==", date))),
+      getDocs(collection(db, "roomReassignments")),
+    ]);
+
+    // ── Events in this room ──
+    evSnap.docs.forEach((d) => {
+      const e = { id: d.id, ...d.data() };
+      if (skipEventId && e.id === skipEventId) return;
+      if (String(e.status || "").toLowerCase() === "cancelled") return;
+      if (!matchesEvent(e)) return;
+      const s = toMin(e.startTime);
+      const en = toMin(e.endTime);
+      if (s == null || en == null) return;
+      if (!overlaps(reqStart, reqEnd, s, en)) return;
+      conflicts.push({
+        kind: "event",
+        title: e.title || e.purpose || "Room Activity",
+        startTime: e.startTime,
+        endTime: e.endTime,
+      });
+    });
+
+    // ── Approved reservations in this room ──
+    resSnap.docs.forEach((d) => {
+      const r = { id: d.id, ...d.data() };
+      if (skipReservationId && r.id === skipReservationId) return;
+      if (String(r.status || "").toLowerCase() !== "approved") return;
+      if (!matchesRes(r)) return;
+      const s = toMin(r.startTime);
+      const en = toMin(r.endTime);
+      if (s == null || en == null) return;
+      if (!overlaps(reqStart, reqEnd, s, en)) return;
+      conflicts.push({
+        kind: "reservation",
+        title: r.customPurpose || r.courseTitle || r.purpose || "Reservation",
+        startTime: r.startTime,
+        endTime: r.endTime,
+      });
+    });
+
+    // ── Accepted reassignments INTO this room (skip event reassignments) ──
+    reSnap.docs.forEach((d) => {
+      const r = { id: d.id, ...d.data() };
+      if (r.date !== date) return;
+      const s = String(r.status || "").toLowerCase();
+      if (s !== "accepted" && s !== "approved") return;
+      if (r.reassignType === "event") return;
+      const intoRoom = roomId
+        ? r.newRoomId === roomId
+        : r.newRoomName === roomName;
+      if (!intoRoom) return;
+      const rs = toMin(r.startTime);
+      const re = toMin(r.endTime);
+      if (rs == null || re == null) return;
+      if (!overlaps(reqStart, reqEnd, rs, re)) return;
+      conflicts.push({
+        kind: "reassignment",
+        title: r.courseTitle || "Reassigned Class",
+        startTime: r.startTime,
+        endTime: r.endTime,
+      });
+    });
+
+    // ── Class schedules in this room ──
+    if (roomId) {
+      const schedSnap = await getDocs(
+        collection(db, "rooms", roomId, "schedules")
+      );
+      schedSnap.docs.forEach((d) => {
+        const s = { id: d.id, ...d.data() };
+        if (skipScheduleId && s.id === skipScheduleId) return;
+        if (s.cancelled || s.initialized) return;
+        if (String(s.day || "").trim().toUpperCase() !== day) return;
+        const sT = toMin(s.startTime);
+        const eT = toMin(s.endTime);
+        if (sT == null || eT == null) return;
+        if (!overlaps(reqStart, reqEnd, sT, eT)) return;
+        conflicts.push({
+          kind: "schedule",
+          title: s.subject || s.courseTitle || "Class",
+          startTime: s.startTime,
+          endTime: s.endTime,
+        });
+      });
+    }
+  } catch (err) {
+    console.error("[checkConflictsInRoom] failed:", err);
+  }
+
+  return conflicts;
+}
 
 function AdminReassignments() {
   const [items, setItems] = useState([]);
@@ -187,7 +329,11 @@ function AdminReassignments() {
       const myName = `${me.firstName} ${me.lastName}`;
 
       // ══════════════════════════════════════════════════════════
-      // 1. APPROVE → send to faculty (N/A for no-room items)
+      // 1. APPROVE
+      //    - Class    → send to faculty for response
+      //    - Event    → move activity immediately (Admin decides),
+      //                 class stays, faculty only notified
+      //                 WITH pre/post conflict checks
       // ══════════════════════════════════════════════════════════
       if (type === "approve") {
         if (isNoRoom) {
@@ -198,9 +344,6 @@ function AdminReassignments() {
         }
 
         // ── Resolve faculty id (fallback by name) ──
-        // If facultyId is missing (name lookup failed during submission,
-        // or the reassignment came back from a "needs_reassign" cycle),
-        // try to re-resolve it now so the notification can be delivered.
         let resolvedFacultyId = item.facultyId || null;
         if (!resolvedFacultyId && item.facultyName) {
           try {
@@ -212,6 +355,184 @@ function AdminReassignments() {
           }
         }
 
+        // ══════════════════════════════════════════════════════════
+        // 🔷 EVENT REASSIGNMENT — auto-accept, no faculty response
+        //    Class stays in original room. Event moves to new room.
+        //
+        //    ⚠️ TWO EXTRA SAFETY CHECKS:
+        //    1. TARGET ROOM — must be free BEFORE we move
+        //    2. OLD ROOM — after move, alert if returning class
+        //       now has new conflicts
+        // ══════════════════════════════════════════════════════════
+        if (isEvent) {
+          // ── CHECK #1: Target room must be free ─────────────────
+          const targetConflicts = await checkConflictsInRoom({
+            roomId: item.newRoomId,
+            roomName: item.newRoomName,
+            date: item.date,
+            startTime: item.startTime,
+            endTime: item.endTime,
+            skipEventId: item.eventId,
+          });
+
+          if (targetConflicts.length > 0) {
+            const list = targetConflicts
+              .map(
+                (c) =>
+                  `• ${c.kind.toUpperCase()}: ${c.title} (${fmt12(c.startTime)}–${fmt12(c.endTime)})`
+              )
+              .join("\n");
+
+            showToast(
+              "error",
+              "Target Room Now Unavailable",
+              `Room ${item.newRoomName} now has ${targetConflicts.length} conflicting booking(s) for this time:\n${list}\n\nPlease use "Reassign Again" to pick a different room, or "Cancel Activity".`
+            );
+            setProcessing(false);
+            return; // ← BLOCK the move
+          }
+
+          // ── MOVE THE EVENT ─────────────────────────────────────
+          if (item.eventId && item.newRoomId) {
+            try {
+              await updateDoc(doc(db, "events", item.eventId), {
+                roomId: item.newRoomId,
+                roomName: item.newRoomName,
+                originalRoomId: item.oldRoomId || null,
+                originalRoomName: item.oldRoomName || null,
+                conflictResolved: true,
+                resolution: "activity_moved",
+                resolutionReason:
+                  "Activity was reassigned to a different room by the Admin. The affected class stays in its original room.",
+                resolvedAt: serverTimestamp(),
+                resolvedBy: myName,
+                updatedAt: serverTimestamp(),
+              });
+            } catch (evErr) {
+              console.warn("[AdminReassignments] Failed to move event:", evErr);
+            }
+          }
+
+          // ── CHECK #2: Old room — did the class that returned pick up new conflicts? ──
+          const oldRoomConflicts = await checkConflictsInRoom({
+            roomId: item.oldRoomId,
+            roomName: item.oldRoomName,
+            date: item.date,
+            startTime: item.startTime,
+            endTime: item.endTime,
+            skipEventId: item.eventId,
+            skipScheduleId: item.scheduleId,
+          }).then((list) => list.filter((c) => c.kind !== "schedule"));
+
+          if (oldRoomConflicts.length > 0) {
+            const list = oldRoomConflicts
+              .map(
+                (c) =>
+                  `• ${c.kind.toUpperCase()}: ${c.title} (${fmt12(c.startTime)}–${fmt12(c.endTime)})`
+              )
+              .join("\n");
+
+            await addDoc(collection(db, "notifications"), {
+              userId: auth.currentUser.uid,
+              ownerType: "admin",
+              assignmentId: item.id,
+              reassignmentId: item.id,
+              title: "⚠️ Class Returned — New Conflicts in Old Room",
+              message:
+                `After moving "${displayTitle}" out of ${item.oldRoomName}, ` +
+                `the class "${item.courseTitle || "Class"}" ` +
+                `(${fmt12(item.startTime)}–${fmt12(item.endTime)}) on ${item.date} ` +
+                `now overlaps ${oldRoomConflicts.length} new booking(s):\n${list}\n\n` +
+                `This likely means new bookings were approved during the conflict window. ` +
+                `Please review and take action (cancel one, or reassign again).`,
+              type: "conflict-alert",
+              unread: true,
+              archived: false,
+              badge: "URGENT",
+              createdAt: serverTimestamp(),
+            });
+          }
+
+          // ── Mark the reassignment as ACCEPTED (final state) ──
+          await updateDoc(doc(db, "roomReassignments", item.id), {
+            status: "accepted",
+            adminNote: noteText || "",
+            approvedById: auth.currentUser.uid,
+            approvedByName: myName,
+            approvedAt: serverTimestamp(),
+            acceptedAt: serverTimestamp(),
+            autoAcceptedByAdmin: true,
+            resolutionReason:
+              "Activity relocated to a different room by Admin",
+            updatedAt: serverTimestamp(),
+            ...(resolvedFacultyId && !item.facultyId ? { facultyId: resolvedFacultyId } : {}),
+          });
+
+          // ── Notify faculty — INFORMATIONAL only (no accept/decline) ──
+          if (resolvedFacultyId) {
+            await addDoc(collection(db, "notifications"), {
+              userId: resolvedFacultyId,
+              ownerType: "faculty",
+              assignmentId: item.id,
+              reassignmentId: item.id,
+              title: "Class Conflict Resolved",
+              message:
+                `The room activity "${displayTitle}" that conflicted with your class ` +
+                `"${item.courseTitle || ""}" on ${item.date} (${fmt12(item.startTime)} – ${fmt12(item.endTime)}) ` +
+                `has been moved to ${item.newRoomName}. ` +
+                `Your class remains in ${item.oldRoomName}. No action needed.`,
+              type: "room-reassignment-status",
+              unread: true,
+              archived: false,
+              badge: "RESOLVED",
+              decided: true,
+              createdAt: serverTimestamp(),
+            });
+          }
+
+          // ── Notify clerk (informational) ──
+          if (item.requestedById) {
+            await addDoc(collection(db, "notifications"), {
+              userId: item.requestedById,
+              ownerType: "clerk",
+              assignmentId: item.id,
+              reassignmentId: item.id,
+              title: "Activity Reassigned",
+              message:
+                `The room activity "${displayTitle}" was moved from ${item.oldRoomName} ` +
+                `to ${item.newRoomName} by the Admin. ` +
+                `Class "${item.courseTitle || ""}" remains in ${item.oldRoomName}. ` +
+                `Conflict resolved.`,
+              type: "room-reassignment-status",
+              unread: true,
+              archived: false,
+              badge: "RESOLVED",
+              decided: true,
+              createdAt: serverTimestamp(),
+            });
+          }
+
+          await logActivity({
+            user: myName, role: me.role,
+            action: "Moved room activity to resolve conflict",
+            actionType: "approve",
+            target: `${displayTitle} • ${item.oldRoomName} → ${item.newRoomName}`,
+            status: "SUCCESS",
+          });
+
+          showToast(
+            "success",
+            "Activity Moved",
+            `The activity is now in ${item.newRoomName}. Faculty and clerk have been notified.`
+          );
+          setActionModal(null);
+          setProcessing(false);
+          return;
+        }
+
+        // ══════════════════════════════════════════════════════════
+        // 🔶 CLASS REASSIGNMENT — send to faculty for accept/decline
+        // ══════════════════════════════════════════════════════════
         await updateDoc(doc(db, "roomReassignments", item.id), {
           status: "pending_faculty",
           adminNote: noteText || "",
@@ -219,7 +540,6 @@ function AdminReassignments() {
           approvedByName: myName,
           approvedAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
-          // Persist resolved facultyId back so future steps find it too.
           ...(resolvedFacultyId && !item.facultyId ? { facultyId: resolvedFacultyId } : {}),
         });
 
@@ -230,7 +550,7 @@ function AdminReassignments() {
             assignmentId: item.id,
             reassignmentId: item.id,
             title: `Room Reassignment — Please Respond`,
-            message: `Your ${entryLabel} "${displayTitle}" has been moved from ${item.oldRoomName} to ${item.newRoomName} on ${item.date} (${fmt12(item.startTime)} – ${fmt12(item.endTime)}). Please review and respond.`,
+            message: `Your class "${displayTitle}" has been moved from ${item.oldRoomName} to ${item.newRoomName} on ${item.date} (${fmt12(item.startTime)} – ${fmt12(item.endTime)}). Please review and respond.`,
             type: "room-reassignment",
             unread: true, archived: false, badge: "NEW",
             createdAt: serverTimestamp(),
@@ -267,37 +587,53 @@ function AdminReassignments() {
       }
 
       // ══════════════════════════════════════════════════════════
-      // 2. CANCEL CLASS / ACTIVITY → resolve conflict
+      // 2. CANCEL CLASS / ACTIVITY
       // ══════════════════════════════════════════════════════════
       else if (type === "cancel_class") {
-        if (item.eventId) {
-          const evRef = doc(db, "events", item.eventId);
-          const evSnap = await getDoc(evRef);
-          const evData = evSnap.data() || {};
-
-          await updateDoc(evRef, {
-            conflictResolved: true,
-            resolution: "cancelled_class",
-            resolutionReason: noteText ||
-              `${isEvent ? "Activity" : "Class"} cancelled by Admin${
-                isDeclinedItem ? " (faculty declined reassignment)" :
-                isNoRoomItem ? " (no suitable room found)" : ""
-              }.`,
-            updatedAt: serverTimestamp(),
-          });
-
-          if (item.scheduleId && evData.roomId) {
-            const schedRef = doc(db, "rooms", evData.roomId, "schedules", item.scheduleId);
-            const schedSnap = await getDoc(schedRef);
-            if (schedSnap.exists()) {
-              await updateDoc(schedRef, {
-                cancelled: true,
-                cancelledReason: `Cancelled by Admin${
-                  isDeclinedItem ? " — faculty declined reassignment" :
-                  isNoRoomItem ? " — no suitable room" : ""
-                }`,
-              });
+        if (isEvent) {
+          if (item.eventId) {
+            await updateDoc(doc(db, "events", item.eventId), {
+              status: "Cancelled",
+              conflictResolved: true,
+              resolution: "activity_cancelled",
+              resolutionReason:
+                noteText ||
+                `Activity cancelled by Admin. The class in ${item.oldRoomName} remains.`,
+              resolvedAt: serverTimestamp(),
+              resolvedBy: myName,
+              updatedAt: serverTimestamp(),
+            });
+          }
+        } else {
+          if (item.scheduleId) {
+            const roomsSnap = await getDocs(collection(db, "rooms"));
+            for (const roomDoc of roomsSnap.docs) {
+              const schedRef = doc(db, "rooms", roomDoc.id, "schedules", item.scheduleId);
+              const schedSnap = await getDoc(schedRef);
+              if (schedSnap.exists()) {
+                await updateDoc(schedRef, {
+                  cancelled: true,
+                  cancelledReason: `Cancelled by Admin${
+                    isDeclinedItem ? " — faculty declined reassignment" :
+                    isNoRoomItem ? " — no suitable room" : ""
+                  }`,
+                });
+                break;
+              }
             }
+          }
+          if (item.eventId) {
+            await updateDoc(doc(db, "events", item.eventId), {
+              conflictResolved: true,
+              resolution: "cancelled_class",
+              resolutionReason:
+                noteText ||
+                `Class cancelled by Admin${
+                  isDeclinedItem ? " (faculty declined reassignment)" :
+                  isNoRoomItem ? " (no suitable room found)" : ""
+                }.`,
+              updatedAt: serverTimestamp(),
+            });
           }
         }
 
@@ -331,13 +667,16 @@ function AdminReassignments() {
             assignmentId: item.id,
             reassignmentId: item.id,
             title: isEvent ? "Activity Cancelled" : "Class Cancelled",
-            message: isDeclinedItem
-              ? `Your ${entryLabel} "${displayTitle}" on ${item.date} (${fmt12(item.startTime)} – ${fmt12(item.endTime)}) has been cancelled by the Admin after your reassignment was declined.${noteText ? ` Reason: ${noteText}` : ""}`
+            message: isEvent
+              ? `The room activity "${displayTitle}" that conflicted with your class on ${item.date} (${fmt12(item.startTime)} – ${fmt12(item.endTime)}) has been cancelled by the Admin. Your class remains in ${item.oldRoomName}.${noteText ? ` Reason: ${noteText}` : ""}`
+              : isDeclinedItem
+              ? `Your class "${displayTitle}" on ${item.date} (${fmt12(item.startTime)} – ${fmt12(item.endTime)}) has been cancelled by the Admin after your reassignment was declined.${noteText ? ` Reason: ${noteText}` : ""}`
               : isNoRoomItem
-              ? `Your ${entryLabel} "${displayTitle}" on ${item.date} (${fmt12(item.startTime)} – ${fmt12(item.endTime)}) has been cancelled by the Admin — no suitable room was available.${noteText ? ` Reason: ${noteText}` : ""}`
-              : `Your ${entryLabel} "${displayTitle}" on ${item.date} (${fmt12(item.startTime)} – ${fmt12(item.endTime)}) has been cancelled by the Admin.${noteText ? ` Reason: ${noteText}` : ""}`,
+              ? `Your class "${displayTitle}" on ${item.date} (${fmt12(item.startTime)} – ${fmt12(item.endTime)}) has been cancelled by the Admin — no suitable room was available.${noteText ? ` Reason: ${noteText}` : ""}`
+              : `Your class "${displayTitle}" on ${item.date} (${fmt12(item.startTime)} – ${fmt12(item.endTime)}) has been cancelled by the Admin.${noteText ? ` Reason: ${noteText}` : ""}`,
             type: "room-reassignment-status",
             unread: true, archived: false, badge: "CANCELLED",
+            decided: true,
             createdAt: serverTimestamp(),
           });
         }
@@ -640,7 +979,9 @@ function AdminReassignments() {
 
             <h3 className="dhr-modal-title">
               {actionModal.type === "approve"
-                ? "Approve Reassignment?"
+                ? actionModal.item.reassignType === "event"
+                  ? "Move Activity to New Room?"
+                  : "Approve Reassignment?"
                 : actionModal.type === "cancel_class"
                 ? actionModal.item.reassignType === "event"
                   ? "Cancel the Activity?"
@@ -650,14 +991,16 @@ function AdminReassignments() {
 
             <p className="dhr-modal-text">
               {actionModal.type === "approve"
-                ? "The affected faculty will be notified and can accept or decline."
+                ? actionModal.item.reassignType === "event"
+                  ? `The activity will be moved to ${actionModal.item.newRoomName} immediately. The affected class stays in ${actionModal.item.oldRoomName}. The faculty will be notified — no response is needed.`
+                  : "The affected faculty will be notified and can accept or decline."
                 : actionModal.type === "cancel_class"
-                ? actionModal.item.status === "declined"
+                ? actionModal.item.reassignType === "event"
+                  ? `The activity will be cancelled. The affected class stays in ${actionModal.item.oldRoomName} and the faculty will be notified. No further response is needed.`
+                  : actionModal.item.status === "declined"
                   ? "The faculty declined this reassignment. Cancelling will resolve the conflict and notify both the faculty and the clerk with the reason you provide."
                   : actionModal.item.noRoomOption
                   ? "The Clerk reported no suitable room. Cancelling will resolve the conflict and notify both faculty and the clerk."
-                  : actionModal.item.reassignType === "event"
-                  ? "The activity will be cancelled immediately. No further response is needed."
                   : "The class will be cancelled immediately. The faculty is aware and no further response is needed."
                 : "This will be sent back to the Clerk to pick a different room."}
             </p>
@@ -746,7 +1089,9 @@ function AdminReassignments() {
                 {processing
                   ? "Processing…"
                   : actionModal.type === "approve"
-                  ? "Approve"
+                  ? actionModal.item.reassignType === "event"
+                    ? "Move Activity"
+                    : "Approve"
                   : actionModal.type === "cancel_class"
                   ? actionModal.item.reassignType === "event"
                     ? "Cancel Activity"
@@ -787,6 +1132,7 @@ function ReassignmentCard({ item, onAction }) {
   const isEvent = item.reassignType === "event";
   const isNoRoom = !!item.noRoomOption;
   const noRoomMeta = isNoRoom ? NO_ROOM_META[item.noRoomOption] : null;
+  const wasAutoAccepted = !!item.autoAcceptedByAdmin;
 
   const displayTitle = isEvent
     ? item.eventTitle || item.courseTitle || "Untitled Activity"
@@ -911,10 +1257,19 @@ function ReassignmentCard({ item, onAction }) {
         >
           <i className="fa-solid fa-circle-check"></i>
           <span>
-            <strong>Accepted by faculty</strong>
-            {item.facultyName ? ` — ${item.facultyName}` : ""}
-            {acceptedDate ? ` · ${fmtDate(acceptedDate)}` : ""}
-            {` · ${isEvent ? "Activity" : "Class"} moved to ${item.newRoomName || "new room"}.`}
+            {wasAutoAccepted && isEvent ? (
+              <>
+                <strong>Activity moved by Admin</strong>
+                {` · ${item.newRoomName || "new room"} · Class stays in ${item.oldRoomName || "original room"} · No faculty response required.`}
+              </>
+            ) : (
+              <>
+                <strong>Accepted by faculty</strong>
+                {item.facultyName ? ` — ${item.facultyName}` : ""}
+                {acceptedDate ? ` · ${fmtDate(acceptedDate)}` : ""}
+                {` · ${isEvent ? "Activity" : "Class"} moved to ${item.newRoomName || "new room"}.`}
+              </>
+            )}
           </span>
         </div>
       )}
@@ -941,7 +1296,8 @@ function ReassignmentCard({ item, onAction }) {
               className="dhr-btn dhr-btn-approve"
               onClick={() => onAction(item, "approve")}
             >
-              <i className="fa-solid fa-circle-check"></i> Approve
+              <i className="fa-solid fa-circle-check"></i>{" "}
+              {isEvent ? "Move Activity" : "Approve"}
             </button>
           )}
           <button

@@ -243,11 +243,13 @@ const checkReservationConflicts = async (reservation) => {
     });
 
     // 2) Accepted reassignments into this room
-    reSnap.docs.forEach((d) => {
+      reSnap.docs.forEach((d) => {
       const r = { id: d.id, ...d.data() };
       if (r.date !== reservation.date) return;
       const status = String(r.status || "").toLowerCase();
       if (status !== "accepted" && status !== "approved") return;
+      // ✅ Skip event reassignments — class stays, only activity moves
+      if (r.reassignType === "event") return;
       const into =
         (roomId && r.newRoomId === roomId) ||
         (roomName && r.newRoomName === roomName);

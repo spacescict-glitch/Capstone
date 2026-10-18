@@ -262,10 +262,12 @@ const detectConflicts = async ({ roomId, roomName, date, startTime, endTime }) =
       });
 
     // 4) Accepted reassignments INTO this room
-    allReassignments
+        allReassignments
       .filter(
         (r) =>
           isAcceptedReassign(r) &&
+          // ✅ Skip event reassignments — class stays, only activity moves
+          r.reassignType !== "event" &&
           r.date === date &&
           (r.newRoomId === roomId || r.newRoomName === roomName) &&
           overlap(reqStart, reqEnd, parseTime(r.startTime), parseTime(r.endTime))

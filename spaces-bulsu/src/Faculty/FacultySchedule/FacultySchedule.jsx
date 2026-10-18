@@ -514,9 +514,14 @@ export default function WeeklyCalendar() {
             where("facultyId", "==", user.uid)
           ),
           (snap) => {
-            const myReassignments = snap.docs
+           const myReassignments = snap.docs
               .map((d) => ({ id: d.id, ...d.data() }))
-              .filter((r) => isApprovedReassignment(r.status));
+              .filter(
+                (r) =>
+                  isApprovedReassignment(r.status) &&
+                  // ✅ Exclude event reassignments — the event moves, not the class
+                  r.reassignType !== "event"
+              );
             setReassignedEvents(myReassignments);
           },
           (err) => {

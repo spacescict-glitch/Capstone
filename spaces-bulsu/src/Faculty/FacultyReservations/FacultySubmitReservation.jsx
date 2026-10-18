@@ -150,9 +150,9 @@ function FacultySubmitReservation() {
 
   const [selectedEquipment, setSelectedEquipment] = useState([]);
   const [studentRange, setStudentRange] = useState("");
-  const [audienceType, setAudienceType] = useState("Class"); // ✅ default Class
-  const [course, setCourse] = useState("BSIT");              // ✅ default BSIT
-  const [customCourse, setCustomCourse] = useState("");      // ✅ for "Others"
+  const [audienceType, setAudienceType] = useState("Class");
+  const [course, setCourse] = useState("BSIT");
+  const [customCourse, setCustomCourse] = useState("");
   const [yearSectionGroup, setYearSectionGroup] = useState("");
   const [organization, setOrganization] = useState("");
   const [customPurposeText, setCustomPurposeText] = useState("");
@@ -173,8 +173,6 @@ function FacultySubmitReservation() {
     title: "",
     message: "",
   });
-
-  const [releasedKeys, setReleasedKeys] = useState(new Set());
 
   const [nowTick, setNowTick] = useState(() => new Date());
 
@@ -204,7 +202,6 @@ function FacultySubmitReservation() {
     );
   };
 
-  // ✅ Derive room status label (single source of truth)
   const getRoomStatus = (room) => {
     if (room.maintenance) return "Under Maintenance";
     if (room.reservedByUser) return "Reserved";
@@ -229,7 +226,8 @@ function FacultySubmitReservation() {
     const userReservations = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 
     for (const res of userReservations) {
-      if (res.status === "Rejected") continue;
+      // ✅ FIX: case-insensitive rejected check
+      if (String(res.status || "").toLowerCase() === "rejected") continue;
 
       const resStart = convertToMinutes(res.startTime);
       const resEnd = convertToMinutes(res.endTime);
@@ -324,6 +322,38 @@ function FacultySubmitReservation() {
         releaseMap.get(r.roomId).add(key);
       });
 
+      // ✅ NEW: Load reassignments (with event skip)
+      const reassignSnap = await getDocs(collection(db, "roomReassignments"));
+      const reassignedAwayByRoom = new Map();
+      const reassignedIntoByRoom = new Map();
+
+      reassignSnap.docs.forEach((d) => {
+        const r = d.data();
+        if (r.date !== date) return;
+        const status = String(r.status || "").toLowerCase();
+        if (status !== "accepted" && status !== "approved") return;
+        // ✅ Skip event reassignments — activity moved, class stays
+        if (r.reassignType === "event") return;
+
+        if (r.oldRoomId && r.scheduleId) {
+          if (!reassignedAwayByRoom.has(r.oldRoomId)) {
+            reassignedAwayByRoom.set(r.oldRoomId, new Set());
+          }
+          reassignedAwayByRoom.get(r.oldRoomId).add(`${r.scheduleId}_${r.date}`);
+        }
+
+        if (r.newRoomId && r.startTime && r.endTime) {
+          if (!reassignedIntoByRoom.has(r.newRoomId)) {
+            reassignedIntoByRoom.set(r.newRoomId, []);
+          }
+          reassignedIntoByRoom.get(r.newRoomId).push({
+            startTime: r.startTime,
+            endTime: r.endTime,
+            label: r.courseTitle || r.subject || "Reassigned Class",
+          });
+        }
+      });
+
       const roomList = [];
 
       for (const roomDoc of roomSnapshot.docs) {
@@ -370,6 +400,7 @@ function FacultySubmitReservation() {
           collection(db, "rooms", room.id, "schedules")
         );
         const releasesForRoom = releaseMap.get(room.id) || new Set();
+        const reassignedAwayForRoom = reassignedAwayByRoom.get(room.id) || new Set();
 
         const hasScheduleConflict = scheduleSnapshot.docs.some((doc) => {
           const sched = doc.data();
@@ -377,6 +408,8 @@ function FacultySubmitReservation() {
           if (sched.day !== getDay(date)) return false;
           const releaseKey = `${doc.id}_${date}`;
           if (releasesForRoom.has(releaseKey)) return false;
+          // ✅ Skip reassigned-away schedules
+          if (reassignedAwayForRoom.has(releaseKey)) return false;
           return isOverlapping(startTime, endTime, sched.startTime, sched.endTime);
         });
         if (hasScheduleConflict) occupied = true;
@@ -392,13 +425,23 @@ function FacultySubmitReservation() {
           if (hasEventConflict) occupied = true;
         }
 
+        // ✅ NEW: Check reassignments INTO this room
+        if (!occupied) {
+          const reassignedInto = reassignedIntoByRoom.get(room.id) || [];
+          const hasReassignConflict = reassignedInto.some((r) =>
+            isOverlapping(startTime, endTime, r.startTime, r.endTime)
+          );
+          if (hasReassignConflict) occupied = true;
+        }
+
         if (!occupied) {
           const conflictingReservations = [];
           requestSnapshot.docs.forEach((doc) => {
             const req = doc.data();
             if (req.roomId !== room.id) return;
             if (req.date !== date) return;
-            if (req.status === "Rejected") return;
+            // ✅ FIX: case-insensitive
+            if (String(req.status || "").toLowerCase() === "rejected") return;
             if (isOverlapping(startTime, endTime, req.startTime, req.endTime)) {
               conflictingReservations.push(req);
             }
@@ -408,7 +451,8 @@ function FacultySubmitReservation() {
             if (req.userId === currentUserId) {
               reservedByUser = true;
               break;
-            } else if (req.status === "Approved") {
+            } else if (String(req.status || "").toLowerCase() === "approved") {
+              // ✅ FIX: case-insensitive — catches walk-in "approved"
               occupied = true;
               break;
             }
@@ -432,10 +476,8 @@ function FacultySubmitReservation() {
     setLoading(false);
   };
 
-  // ✅ Only show rooms that are Available
   const filteredRooms = useMemo(() => {
     return rooms.filter((r) => getRoomStatus(r) === "Available");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rooms]);
 
   const totalRoomPages = Math.max(1, Math.ceil(filteredRooms.length / ROOMS_PER_PAGE));
@@ -446,7 +488,6 @@ function FacultySubmitReservation() {
     roomStartIdx + ROOMS_PER_PAGE
   );
 
-  // Reset page kapag nagbago ang filters o rooms
   useEffect(() => {
     setCurrentPage(1);
   }, [selectedFloor, date, startTime, endTime, rooms.length]);
@@ -567,7 +608,7 @@ function FacultySubmitReservation() {
       showToast(
         "error",
         "Time Conflict Detected",
-        `You already have a ${conflictCheck.status.toLowerCase()} reservation for "${conflictCheck.existingRoom}" on ${conflictCheck.existingDate} from ${conflictCheck.existingStart} to ${conflictCheck.existingEnd}. Please choose a different time.`
+        `You already have a ${String(conflictCheck.status).toLowerCase()} reservation for "${conflictCheck.existingRoom}" on ${conflictCheck.existingDate} from ${conflictCheck.existingStart} to ${conflictCheck.existingEnd}. Please choose a different time.`
       );
       return;
     }
@@ -590,7 +631,6 @@ function FacultySubmitReservation() {
       finalPurpose = customPurposeText.trim() || "Other Activity";
     }
 
-    // ✅ Resolve course value
     const finalCourse = course === "Others" ? customCourse.trim() : course;
 
     try {
@@ -675,7 +715,6 @@ function FacultySubmitReservation() {
       setToast((prev) => ({ ...prev, show: false }));
       setShowSuccessModal(true);
 
-      // ✅ Reset form (keep defaults)
       setCourseTitle("");
       setAudienceType("Class");
       setCourse("BSIT");
@@ -754,9 +793,6 @@ function FacultySubmitReservation() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nowTick]);
 
-  // ═══════════════════════════════════════════════════════════
-  // Preview payload
-  // ═══════════════════════════════════════════════════════════
   const previewData = {
     courseTitle,
     audienceType,
@@ -779,10 +815,6 @@ function FacultySubmitReservation() {
     studentRange,
   };
 
-  // ═══════════════════════════════════════════════════════════
-  // RENDER
-  // ═══════════════════════════════════════════════════════════
-
   return (
     <>
       <div className="faculty-reservations-request">
@@ -793,9 +825,7 @@ function FacultySubmitReservation() {
 
         <div className="faculty-submit-box">
           <div className="faculty-submit-sections">
-            {/* LEFT SIDE */}
             <div className="faculty-submit-section">
-              {/* COURSE TITLE */}
               <div className="faculty-submit-form-group">
                 <label>Course Title</label>
                 <input
@@ -812,7 +842,6 @@ function FacultySubmitReservation() {
                 )}
               </div>
 
-              {/* AUDIENCE TYPE */}
               <div className="faculty-submit-form-group">
                 <label>Audience Type</label>
                 <div className="faculty-submit-dropdown-wrapper">
@@ -843,7 +872,6 @@ function FacultySubmitReservation() {
 
                 {audienceType === "Class" && (
                   <>
-                    {/* ✅ COURSE DROPDOWN (BSIT default, Others → custom input) */}
                     <div className="faculty-submit-form-group">
                       <label>Course</label>
                       <div className="faculty-submit-dropdown-wrapper">
@@ -921,7 +949,6 @@ function FacultySubmitReservation() {
                 )}
               </div>
 
-              {/* PURPOSE */}
               <div className="faculty-submit-form-group">
                 <label>Purpose</label>
                 <div className="faculty-submit-dropdown-wrapper">
@@ -960,7 +987,6 @@ function FacultySubmitReservation() {
                 )}
               </div>
 
-              {/* CLASS SUB-OPTIONS */}
               {audienceType === "Class" && purpose === "Hands-on" && (
                 <div className="faculty-submit-form-group">
                   <label>Required Equipment</label>
@@ -1060,7 +1086,6 @@ function FacultySubmitReservation() {
                 </div>
               )}
 
-              {/* DATE */}
               <div className="faculty-submit-form-group">
                 <div className="dt-section-header">
                   <label>Date</label>
@@ -1198,7 +1223,6 @@ function FacultySubmitReservation() {
                 )}
               </div>
 
-              {/* TIME */}
               <div className="faculty-submit-form-group">
                 <div className="dt-section-header">
                   <label>Time</label>
@@ -1359,7 +1383,6 @@ function FacultySubmitReservation() {
               </div>
             </div>
 
-            {/* RIGHT SIDE — ROOMS */}
             <div className="faculty-submit-section">
               <div className="faculty-submit-venue-header">
                 <span className="faculty-submit-venue-title">Available Rooms</span>
@@ -1504,7 +1527,6 @@ function FacultySubmitReservation() {
           </button>
         </div>
 
-        {/* PREVIEW MODAL */}
         {showPreview && (
           <div
             className="fsr-preview-overlay"
@@ -1626,7 +1648,6 @@ function FacultySubmitReservation() {
           </div>
         )}
 
-        {/* SUCCESS DIALOG */}
         {showSuccessModal && submittedReservation && (
           <div className="rs-success-overlay">
             <div className="rs-success-modal">

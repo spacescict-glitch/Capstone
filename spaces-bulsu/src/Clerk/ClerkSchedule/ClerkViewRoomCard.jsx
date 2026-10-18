@@ -120,14 +120,16 @@ function ClerkViewRoomCard() {
     setReleasedMap(map);
 
     const reassignSnap = await getDocs(collection(db, "roomReassignments"));
-    const roomReassignments = reassignSnap.docs
-      .map((d) => ({ id: d.id, ...d.data() }))
-      .filter(
-        (r) =>
-          // ✅ Accepts "approved" AND "accepted"
-          isApprovedReassignment(r.status) &&
-          (r.oldRoomId === room.id || r.newRoomId === room.id)
-      );
+const roomReassignments = reassignSnap.docs
+  .map((d) => ({ id: d.id, ...d.data() }))
+  .filter(
+    (r) =>
+      // ✅ Accepts "approved" AND "accepted"
+      isApprovedReassignment(r.status) &&
+      // ✅ Exclude event reassignments — class stays put, only the activity moves
+      r.reassignType !== "event" &&
+      (r.oldRoomId === room.id || r.newRoomId === room.id)
+  );
     setReassignedAwayKeys(
       new Set(
         roomReassignments
