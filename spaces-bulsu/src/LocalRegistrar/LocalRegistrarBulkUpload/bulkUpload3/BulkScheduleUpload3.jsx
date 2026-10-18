@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import "./bulk-schedule-upload3.css";
 
@@ -13,6 +13,12 @@ const DAYS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
 const START_HOUR = 7;
 const END_HOUR = 21;
 const HOUR_HEIGHT = 60;
+const SNAP_MINUTES = 15;
+
+const MIN_TIME = "07:00";
+const MAX_TIME = "20:00";
+const MIN_SCHEDULE_MIN = 7 * 60;   // 7:00 AM
+const MAX_SCHEDULE_MIN = 20 * 60;  // 8:00 PM
 
 function getTopFromStart(hour, minute) {
   const startTotal = START_HOUR * 60;
@@ -33,9 +39,6 @@ const colourPalette = [
   "#6f42c1", "#fd7e14", "#20c997", "#d63384", "#6610f2"
 ];
 
-const MIN_TIME = "07:00";
-const MAX_TIME = "20:00";
-
 function toTimeValue(h, m) {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
@@ -47,8 +50,31 @@ function clampTimeValue(value) {
   return value;
 }
 
+function formatTime12Hour(hour, minute) {
+  const suffix = hour >= 12 ? "PM" : "AM";
+  let displayHour = hour % 12;
+  if (displayHour === 0) displayHour = 12;
+  return `${displayHour}:${String(minute).padStart(2, "0")} ${suffix}`;
+}
+
+// Returns the first schedule in `schedules` that overlaps with `candidate`,
+// ignoring the schedule whose id matches `candidate.id`.
+function findOverlap(candidate, schedules) {
+  const cStart = candidate.startH * 60 + candidate.startM;
+  const cEnd = candidate.endH * 60 + candidate.endM;
+  if (cEnd <= cStart) return null;
+  for (const s of schedules) {
+    if (s.id === candidate.id) continue;
+    if (s.day !== candidate.day) continue;
+    const sStart = s.startH * 60 + s.startM;
+    const sEnd = s.endH * 60 + s.endM;
+    if (cStart < sEnd && sStart < cEnd) return s;
+  }
+  return null;
+}
+
 // ---------- Edit Schedule Modal ----------
-function EditScheduleModal({ schedule, onSave, onClose }) {
+function EditScheduleModal({ schedule, otherSchedules, onSave, onClose }) {
   const [code, setCode] = useState(schedule.code || "");
   const [name, setName] = useState(schedule.name || "");
   const [day, setDay] = useState(schedule.day);
@@ -56,23 +82,33 @@ function EditScheduleModal({ schedule, onSave, onClose }) {
   const [endTime, setEndTime] = useState(toTimeValue(schedule.endH, schedule.endM));
   const [faculty, setFaculty] = useState(schedule.faculty);
   const [section, setSection] = useState(schedule.section || "");
-  const [timeError, setTimeError] = useState("");
+
+  const clampedStart = clampTimeValue(startTime);
+  const clampedEnd = clampTimeValue(endTime);
+
+  const { startH, startM, endH, endM } = useMemo(() => {
+    const [sh, sm] = clampedStart.split(":").map(Number);
+    const [eh, em] = clampedEnd.split(":").map(Number);
+    return { startH: sh, startM: sm, endH: eh, endM: em };
+  }, [clampedStart, clampedEnd]);
+
+  const timeError = endH * 60 + endM <= startH * 60 + startM
+    ? "End time must be after start time."
+    : "";
+
+  const conflict = useMemo(() => {
+    if (timeError) return null;
+    return findOverlap(
+      { id: schedule.id, day: parseInt(day), startH, startM, endH, endM },
+      otherSchedules
+    );
+  }, [schedule.id, day, startH, startM, endH, endM, timeError, otherSchedules]);
+
+  const canSubmit = !timeError && !conflict;
 
   const handleSubmit = (e) => {
     e.preventDefault();
-
-    const clampedStart = clampTimeValue(startTime);
-    const clampedEnd = clampTimeValue(endTime);
-
-    if (clampedEnd <= clampedStart) {
-      setTimeError("End time must be after the start time.");
-      return;
-    }
-
-    setTimeError("");
-
-    const [startH, startM] = clampedStart.split(":").map(Number);
-    const [endH, endM] = clampedEnd.split(":").map(Number);
+    if (!canSubmit) return;
 
     onSave({
       ...schedule,
@@ -116,10 +152,7 @@ function EditScheduleModal({ schedule, onSave, onClose }) {
                     min={MIN_TIME}
                     max={MAX_TIME}
                     value={startTime}
-                    onChange={(e) => {
-                      setStartTime(e.target.value);
-                      setTimeError("");
-                    }}
+                    onChange={(e) => setStartTime(e.target.value)}
                     onBlur={(e) => setStartTime(clampTimeValue(e.target.value))}
                   />
                 </div>
@@ -131,10 +164,7 @@ function EditScheduleModal({ schedule, onSave, onClose }) {
                     min={MIN_TIME}
                     max={MAX_TIME}
                     value={endTime}
-                    onChange={(e) => {
-                      setEndTime(e.target.value);
-                      setTimeError("");
-                    }}
+                    onChange={(e) => setEndTime(e.target.value)}
                     onBlur={(e) => setEndTime(clampTimeValue(e.target.value))}
                   />
                 </div>
@@ -151,10 +181,22 @@ function EditScheduleModal({ schedule, onSave, onClose }) {
                 <label>Section</label>
                 <input value={section} onChange={(e) => setSection(e.target.value)} />
               </div>
+
+              {conflict && (
+                <div className="modal-overlap-warning">
+                  <i className="fa-solid fa-triangle-exclamation" />
+                  <span>
+                    Conflicts with <strong>{conflict.code || "another class"}</strong>
+                    {" "}({formatTime12Hour(conflict.startH, conflict.startM)} –{" "}
+                    {formatTime12Hour(conflict.endH, conflict.endM)}) on{" "}
+                    {DAYS[conflict.day - 1]}.
+                  </span>
+                </div>
+              )}
             </div>
             <div className="modal-actions">
               <button type="button" onClick={onClose}>Cancel</button>
-              <button type="submit">Save Changes</button>
+              <button type="submit" disabled={!canSubmit}>Save Changes</button>
             </div>
           </form>
         </div>
@@ -164,7 +206,7 @@ function EditScheduleModal({ schedule, onSave, onClose }) {
 }
 
 // ---------- Schedule block rendered on the calendar grid ----------
-function CalendarEventBlock({ item, onEdit }) {
+function CalendarEventBlock({ item, onEdit, onPointerDown }) {
   const top = getTopFromStart(item.startH, item.startM);
   const height = getBlockHeight(item.startH, item.startM, item.endH, item.endM);
   const color = colourPalette[item.colorIdx % colourPalette.length];
@@ -184,13 +226,18 @@ function CalendarEventBlock({ item, onEdit }) {
     .filter(Boolean)
     .join(" • ");
 
+  const sharedProps = {
+    onClick: () => onEdit(item),
+    onPointerDown: (e) => onPointerDown(item, e),
+    title: tooltip,
+  };
+
   if (isMini) {
     return (
       <div
         className="calendar-event is-mini"
         style={{ top: `${top}px`, height: `${height}px`, backgroundColor: color }}
-        onClick={() => onEdit(item)}
-        title={tooltip}
+        {...sharedProps}
       >
         <span className="calendar-event-code">{item.code}</span>
         <span className="calendar-event-time">{timeLabel}</span>
@@ -202,8 +249,7 @@ function CalendarEventBlock({ item, onEdit }) {
     <div
       className={`calendar-event ${isCompact ? "is-compact" : ""}`}
       style={{ top: `${top}px`, height: `${height}px`, backgroundColor: color }}
-      onClick={() => onEdit(item)}
-      title={tooltip}
+      {...sharedProps}
     >
       <span className="calendar-event-code">{item.code}</span>
 
@@ -229,11 +275,34 @@ function CalendarEventBlock({ item, onEdit }) {
   );
 }
 
-function formatTime12Hour(hour, minute) {
-  const suffix = hour >= 12 ? "PM" : "AM";
-  let displayHour = hour % 12;
-  if (displayHour === 0) displayHour = 12;
-  return `${displayHour}:${String(minute).padStart(2, "0")} ${suffix}`;
+// ---------- Ghost block shown while dragging ----------
+function DragPreviewBlock({ preview }) {
+  const top = getTopFromStart(preview.startH, preview.startM);
+  const height = getBlockHeight(preview.startH, preview.startM, preview.endH, preview.endM);
+  const color = colourPalette[preview.colorIdx % colourPalette.length];
+  const timeLabel = `${formatTime12Hour(preview.startH, preview.startM)} - ${formatTime12Hour(preview.endH, preview.endM)}`;
+
+  return (
+    <div
+      className={`calendar-event drag-preview ${preview.hasConflict ? "has-conflict" : ""}`}
+      style={{
+        top: `${top}px`,
+        height: `${height}px`,
+        backgroundColor: preview.hasConflict ? "#ef4444" : color,
+      }}
+    >
+      <span className="calendar-event-code">{preview.code}</span>
+      <span className="calendar-event-time">
+        <i className="fa-regular fa-clock" aria-hidden="true" />
+        <span>{timeLabel}</span>
+      </span>
+      {preview.hasConflict && (
+        <span className="drag-conflict-badge">
+          <i className="fa-solid fa-triangle-exclamation" /> Conflict
+        </span>
+      )}
+    </div>
+  );
 }
 
 // ---------- Main Component ----------
@@ -308,7 +377,6 @@ export default function BulkScheduleUpload3() {
     });
   };
 
-  // ✅ Build initial roomsWithSchedules and store in state
   const initialRoomsWithSchedules = roomData
     .filter((data) => data.schedules && data.schedules.length > 0)
     .map((data) => ({
@@ -319,6 +387,25 @@ export default function BulkScheduleUpload3() {
   const [roomsWithSchedules, setRoomsWithSchedules] = useState(initialRoomsWithSchedules);
   const [currentRoomIndex, setCurrentRoomIndex] = useState(0);
   const [editingSchedule, setEditingSchedule] = useState(null);
+
+  // Drag-and-drop state
+  const dragRef = useRef(null);              // { item, offsetY, startX, startY, started }
+  const dragPreviewRef = useRef(null);
+  const suppressClickRef = useRef(false);
+  const dropErrorTimerRef = useRef(null);
+  const [dragPreview, setDragPreview] = useState(null);
+  const [dropError, setDropError] = useState("");
+
+  const updatePreview = (p) => {
+    dragPreviewRef.current = p;
+    setDragPreview(p);
+  };
+
+  const showDropError = (msg) => {
+    if (dropErrorTimerRef.current) clearTimeout(dropErrorTimerRef.current);
+    setDropError(msg);
+    dropErrorTimerRef.current = setTimeout(() => setDropError(""), 3200);
+  };
 
   if (roomsWithSchedules.length === 0) {
     return (
@@ -334,7 +421,6 @@ export default function BulkScheduleUpload3() {
   const currentRoomData = roomsWithSchedules[currentRoomIndex];
   const { room, schedules } = currentRoomData;
 
-  // ✅ Update a single schedule and trigger re-render
   const handleUpdateSchedule = (updated) => {
     const updatedRooms = roomsWithSchedules.map((roomData, idx) => {
       if (idx === currentRoomIndex) {
@@ -351,6 +437,156 @@ export default function BulkScheduleUpload3() {
     setEditingSchedule(null);
   };
 
+  const handleEventClick = (item) => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      return;
+    }
+    setEditingSchedule(item);
+  };
+
+  const handlePointerDown = (item, e) => {
+    if (e.button !== 0 && e.pointerType === "mouse") return;
+    suppressClickRef.current = false;
+    const rect = e.currentTarget.getBoundingClientRect();
+    dragRef.current = {
+      item,
+      offsetY: e.clientY - rect.top,
+      startX: e.clientX,
+      startY: e.clientY,
+      started: false,
+    };
+  };
+
+  // Global pointer listeners for drag-and-drop
+  useEffect(() => {
+    const handleMove = (e) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+
+      if (!drag.started) {
+        const dist = Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY);
+        if (dist < 5) return;
+        drag.started = true;
+        suppressClickRef.current = true;
+      }
+
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const dayCol = el?.closest?.(".day-col");
+      if (!dayCol) {
+        updatePreview(null);
+        return;
+      }
+
+      const dayIdx = parseInt(dayCol.dataset.dayIndex, 10);
+      if (Number.isNaN(dayIdx)) {
+        updatePreview(null);
+        return;
+      }
+
+      const rect = dayCol.getBoundingClientRect();
+      const y = e.clientY - rect.top - drag.offsetY;
+
+      const duration =
+        (drag.item.endH * 60 + drag.item.endM) -
+        (drag.item.startH * 60 + drag.item.startM);
+
+      let startMin = (y / HOUR_HEIGHT) * 60 + START_HOUR * 60;
+      startMin = Math.round(startMin / SNAP_MINUTES) * SNAP_MINUTES;
+
+      const maxStart = Math.max(MIN_SCHEDULE_MIN, MAX_SCHEDULE_MIN - duration);
+      startMin = Math.max(MIN_SCHEDULE_MIN, Math.min(maxStart, startMin));
+
+      const endMin = startMin + duration;
+
+      const candidate = {
+        id: drag.item.id,
+        day: dayIdx + 1,
+        startH: Math.floor(startMin / 60),
+        startM: startMin % 60,
+        endH: Math.floor(endMin / 60),
+        endM: endMin % 60,
+      };
+
+      const conflict = findOverlap(candidate, schedules);
+
+      updatePreview({
+        scheduleId: drag.item.id,
+        colorIdx: drag.item.colorIdx,
+        code: drag.item.code,
+        faculty: drag.item.faculty,
+        section: drag.item.section,
+        ...candidate,
+        hasConflict: !!conflict,
+        conflict,
+      });
+    };
+
+    const handleUp = () => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      dragRef.current = null;
+
+      if (!drag.started) {
+        updatePreview(null);
+        return;
+      }
+
+      const preview = dragPreviewRef.current;
+      updatePreview(null);
+      if (!preview) return;
+
+      if (preview.hasConflict) {
+        const c = preview.conflict;
+        showDropError(
+          `Cannot move: conflicts with ${c.code || "another class"} on ${DAYS[c.day - 1]} ` +
+          `(${formatTime12Hour(c.startH, c.startM)} – ${formatTime12Hour(c.endH, c.endM)}).`
+        );
+        return;
+      }
+
+      const original = schedules.find((s) => s.id === preview.scheduleId);
+      if (!original) return;
+      const unchanged =
+        original.day === preview.day &&
+        original.startH === preview.startH &&
+        original.startM === preview.startM &&
+        original.endH === preview.endH &&
+        original.endM === preview.endM;
+      if (unchanged) return;
+
+      setRoomsWithSchedules((prev) =>
+        prev.map((roomData, idx) => {
+          if (idx !== currentRoomIndex) return roomData;
+          return {
+            ...roomData,
+            schedules: roomData.schedules.map((sch) =>
+              sch.id === preview.scheduleId
+                ? {
+                    ...sch,
+                    day: preview.day,
+                    startH: preview.startH,
+                    startM: preview.startM,
+                    endH: preview.endH,
+                    endM: preview.endM,
+                  }
+                : sch
+            ),
+          };
+        })
+      );
+    };
+
+    document.addEventListener("pointermove", handleMove);
+    document.addEventListener("pointerup", handleUp);
+    document.addEventListener("pointercancel", handleUp);
+    return () => {
+      document.removeEventListener("pointermove", handleMove);
+      document.removeEventListener("pointerup", handleUp);
+      document.removeEventListener("pointercancel", handleUp);
+    };
+  }, [schedules, currentRoomIndex]);
+
   const totalGridHeight = (END_HOUR - START_HOUR) * HOUR_HEIGHT;
 
   const goPrevRoom = () => {
@@ -364,7 +600,7 @@ export default function BulkScheduleUpload3() {
     <div className="bulk-upload-page-three">
       <div className="bulk-header-three">
         <h1>Bulk Schedule Upload</h1>
-        <p>Review schedules per room.</p>
+        <p>Review schedules per room. Drag a block to change its day/time, or click it to edit.</p>
       </div>
 
       <div className="stepper-three">
@@ -419,15 +655,30 @@ export default function BulkScheduleUpload3() {
 
               {DAYS.map((_, dayIdx) => {
                 const dayNumber = dayIdx + 1;
-                const daySchedules = schedules.filter((s) => s.day === dayNumber);
+                const daySchedules = schedules.filter(
+                  (s) => s.day === dayNumber && s.id !== dragPreview?.scheduleId
+                );
                 return (
-                  <div className="day-col" key={dayIdx} style={{ height: totalGridHeight, position: "relative" }}>
+                  <div
+                    className="day-col"
+                    key={dayIdx}
+                    data-day-index={dayIdx}
+                    style={{ height: totalGridHeight, position: "relative" }}
+                  >
                     {Array.from({ length: END_HOUR - START_HOUR }, (_, i) => (
                       <div className="hour-line" key={i} style={{ top: i * HOUR_HEIGHT }} />
                     ))}
                     {daySchedules.map((item) => (
-                      <CalendarEventBlock key={item.id} item={item} onEdit={setEditingSchedule} />
+                      <CalendarEventBlock
+                        key={item.id}
+                        item={item}
+                        onEdit={handleEventClick}
+                        onPointerDown={handlePointerDown}
+                      />
                     ))}
+                    {dragPreview && dragPreview.day === dayNumber && (
+                      <DragPreviewBlock preview={dragPreview} />
+                    )}
                   </div>
                 );
               })}
@@ -439,9 +690,17 @@ export default function BulkScheduleUpload3() {
       {editingSchedule && (
         <EditScheduleModal
           schedule={editingSchedule}
+          otherSchedules={schedules.filter((s) => s.id !== editingSchedule.id)}
           onSave={handleUpdateSchedule}
           onClose={() => setEditingSchedule(null)}
         />
+      )}
+
+      {dropError && (
+        <div className="drag-toast">
+          <i className="fa-solid fa-triangle-exclamation" />
+          <span>{dropError}</span>
+        </div>
       )}
 
       <div className="bulk-footer-three step2-footer">
@@ -449,7 +708,6 @@ export default function BulkScheduleUpload3() {
         <button
           className="btn-next-three"
           onClick={() => {
-            // ✅ Use updated roomsWithSchedules from state
             const allRoomsData = roomsWithSchedules.map((r) => ({
               room: r.room,
               schedules: r.schedules.map((s) => ({
