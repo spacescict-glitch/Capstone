@@ -43,10 +43,22 @@ const GEMINI_MODELS = [
   "gemini-flash-lite-latest",
 ];
 
+// ─── Models ────────────────────────────────────────────────────
 const GROQ_MODELS = [
-  "llama-3.3-70b-versatile",
-  "meta-llama/llama-4-scout-17b-16e-instruct",
+  // gpt-oss models — valid as of your key (from the logs, gpt-oss-20b
+  // reached the API; it failed ONLY on JSON validation, which we fix below)
   "openai/gpt-oss-20b",
+  "openai/gpt-oss-120b",
+  // Llama family — fallback; llama-3.3-70b-versatile returned
+  // "does not exist or you do not have access" on your key, but keep it
+  // for accounts that DO have it
+  "llama-3.3-70b-versatile",
+  "llama-3.1-8b-instant",
+  // Older stable models that most accounts still have
+  "llama3-70b-8192",
+  "llama3-8b-8192",
+  "gemma2-9b-it",
+  "mixtral-8x7b-32768",
 ];
 
 // ✅ NEW: Separate sub-budgets for Gemini and Groq
@@ -123,12 +135,26 @@ async function tryGroq({ model, prompt, timeoutMs }) {
       body: JSON.stringify({
         model,
         temperature: 0.1,
-        response_format: { type: "json_object" },
+        max_tokens: 4096,
+        // ── DELIBERATELY OMITTED ─────────────────────────────────
+        // `response_format: { type: "json_object" }` was forcing the
+        // model to emit a JSON *object* (starts with `{`), while our
+        // prompt explicitly asks for a JSON *array* (starts with `[`).
+        // Groq validates the model output against the requested shape
+        // and rejects it with "Failed to validate JSON. Please adjust
+        // your prompt." — which is why openai/gpt-oss-20b kept failing.
+        //
+        // We let the model return whichever shape it prefers (array OR
+        // {schedules:[...]}), and the client's extractJSON() handles
+        // both. It also strips ```json fences automatically.
+        // ─────────────────────────────────────────────────────────
         messages: [
           {
             role: "system",
             content:
-              "You are a university schedule extraction engine. Always return valid JSON only, no markdown.",
+              "You extract university class schedules. Return ONLY valid JSON — " +
+              "either a JSON array of schedule objects, or a JSON object with a " +
+              "\"schedules\" array. No markdown, no prose, no code fences.",
           },
           { role: "user", content: prompt },
         ],
@@ -140,6 +166,12 @@ async function tryGroq({ model, prompt, timeoutMs }) {
     const data = await response.json();
 
     if (!response.ok) {
+      // Log the RAW body so the next failure tells us exactly what went
+      // wrong instead of the generic "Failed to validate JSON" wrapper.
+      console.error(
+        `📛 Groq ${model} raw error:`,
+        JSON.stringify(data).slice(0, 800)
+      );
       const err = new Error(data?.error?.message || "Groq error");
       err.status = response.status;
       err.provider = "groq";
@@ -148,7 +180,13 @@ async function tryGroq({ model, prompt, timeoutMs }) {
     }
 
     const text = data?.choices?.[0]?.message?.content;
-    if (!text) throw new Error("Empty response from Groq");
+    if (!text) {
+      console.error(
+        `📛 Groq ${model} empty content. Full response:`,
+        JSON.stringify(data).slice(0, 500)
+      );
+      throw new Error("Empty response from Groq");
+    }
     return text;
   } catch (e) {
     clearTimeout(timeoutId);
