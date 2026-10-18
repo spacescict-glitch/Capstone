@@ -17,8 +17,8 @@ const SNAP_MINUTES = 15;
 
 const MIN_TIME = "07:00";
 const MAX_TIME = "20:00";
-const MIN_SCHEDULE_MIN = 7 * 60;   // 7:00 AM
-const MAX_SCHEDULE_MIN = 20 * 60;  // 8:00 PM
+const MIN_SCHEDULE_MIN = 7 * 60;
+const MAX_SCHEDULE_MIN = 20 * 60;
 
 function getTopFromStart(hour, minute) {
   const startTotal = START_HOUR * 60;
@@ -59,9 +59,6 @@ function formatTime12Hour(hour, minute) {
 
 // ─────────────────────────────────────────────────────────────
 // DAY EXPANSION
-// Accepts: "MON", "Monday", 3, "MWF", "M/W/F", "TTh", "Tue-Thu",
-// "MTWThF", "SAT", "" ...
-// Returns an array of day numbers (1..7). Empty array = unknown.
 // ─────────────────────────────────────────────────────────────
 const DAY_NUM = { MON: 1, TUE: 2, WED: 3, THU: 4, FRI: 5, SAT: 6, SUN: 7 };
 const DAY_NUM_FULL = {
@@ -80,7 +77,6 @@ function expandDays(raw) {
   if (DAY_NUM_FULL[s]) return [DAY_NUM_FULL[s]];
   if (DAY_NUM[s]) return [DAY_NUM[s]];
 
-  // Run of abbreviations like "MWF", "MTWThF", "TTH"
   const stripped = s.replace(/[^A-Z]/g, "");
   const days = [];
   let i = 0;
@@ -89,18 +85,18 @@ function expandDays(raw) {
     if (DAY_NUM[triple]) { days.push(DAY_NUM[triple]); i += 3; continue; }
 
     const pair = stripped.slice(i, i + 2);
-    if (pair === "TH") { days.push(4); i += 2; continue; } // Thurs
-    if (pair === "TU") { days.push(2); i += 2; continue; } // Tues
-    if (pair === "SA") { days.push(6); i += 2; continue; } // Sat
-    if (pair === "SU") { days.push(7); i += 2; continue; } // Sun
+    if (pair === "TH") { days.push(4); i += 2; continue; }
+    if (pair === "TU") { days.push(2); i += 2; continue; }
+    if (pair === "SA") { days.push(6); i += 2; continue; }
+    if (pair === "SU") { days.push(7); i += 2; continue; }
 
     const ch = stripped[i];
     if (ch === "M") { days.push(1); i++; continue; }
-    if (ch === "T") { days.push(2); i++; continue; } // ambiguous → Tue
+    if (ch === "T") { days.push(2); i++; continue; }
     if (ch === "W") { days.push(3); i++; continue; }
     if (ch === "F") { days.push(5); i++; continue; }
-    if (ch === "S") { days.push(6); i++; continue; } // ambiguous → Sat
-    i++; // skip unknown
+    if (ch === "S") { days.push(6); i++; continue; }
+    i++;
   }
   return [...new Set(days)];
 }
@@ -122,15 +118,10 @@ function findOverlap(candidate, schedules) {
   return null;
 }
 
-// Compute a side-by-side layout for one day's events.
-// Returns Map<scheduleId, { slot, totalSlots }>.
-// totalSlots > 1 means the event shares its row with other overlapping
-// events — it will be rendered in a narrower column instead of stacking.
 function layoutDayEvents(events) {
   const layout = new Map();
   if (events.length === 0) return layout;
 
-  // Sort by start, then by duration descending (longer first → left slot)
   const sorted = [...events].sort((a, b) => {
     const aStart = a.startH * 60 + a.startM;
     const bStart = b.startH * 60 + b.startM;
@@ -140,7 +131,6 @@ function layoutDayEvents(events) {
     return bDur - aDur;
   });
 
-  // Build clusters of events whose time ranges overlap (transitively)
   const clusters = [];
   let current = [];
   let clusterEnd = -1;
@@ -159,7 +149,6 @@ function layoutDayEvents(events) {
   }
   if (current.length > 0) clusters.push(current);
 
-  // Assign each event to the leftmost available column within its cluster
   for (const cluster of clusters) {
     if (cluster.length === 1) {
       layout.set(cluster[0].id, { slot: 0, totalSlots: 1 });
@@ -350,8 +339,6 @@ function CalendarEventBlock({ item, slot = 0, totalSlots = 1, onEdit, onPointerD
     .filter(Boolean)
     .join(" • ");
 
-  // If this event shares its row with others, split the column horizontally.
-  // Otherwise fall back to the CSS default (left/right: 6px).
   const style = {
     top: `${top}px`,
     height: `${height}px`,
@@ -468,9 +455,6 @@ export default function BulkScheduleUpload3() {
     return [hour, minute];
   };
 
-  // Convert raw AI output → placed schedules (day known) + unplaced (day unknown).
-  // Handles multi-day strings ("MWF" → three objects), and does NOT silently
-  // default unknown days to MON (that was the source of "patong patong").
   const convertSchedules = (data = []) => {
     const placed = [];
     const unplaced = [];
@@ -519,9 +503,6 @@ export default function BulkScheduleUpload3() {
       uid++;
     });
 
-    // Dedupe exact duplicates (day + times + code + section).
-    // Guards against AI returning the same row twice, which post-expansion
-    // would produce visually identical stacked blocks.
     const seen = new Set();
     const deduped = placed.filter((s) => {
       const key = `${s.day}|${s.startH}:${s.startM}-${s.endH}:${s.endM}|${s.code}|${s.section}`;
@@ -533,20 +514,45 @@ export default function BulkScheduleUpload3() {
     return { placed: deduped, unplaced };
   };
 
-  const initialRoomsWithSchedules = roomData
-    .filter((d) => d.schedules && d.schedules.length > 0)
-    .map((d) => {
-      const { placed, unplaced } = convertSchedules(d.schedules);
+  // ────────────────────────────────────────────────────────────────
+  // Build per-room state.
+  //
+  // FIXED: do NOT filter out rooms whose extraction returned [].
+  // If we filter, the 2nd room silently disappears; goNextRoom()
+  // sees `length === 1` and just cycles back to room 1 — which
+  // looks like "next/previous doesn't work".
+  //
+  // We keep every room and let the UI show "No schedules extracted"
+  // for any that came back empty, so the user can navigate and see.
+  // ────────────────────────────────────────────────────────────────
+  const [roomsWithSchedules, setRoomsWithSchedules] = useState(() =>
+    roomData.map((d) => {
+      const safeSchedules = Array.isArray(d.schedules) ? d.schedules : [];
+      const { placed, unplaced } = convertSchedules(safeSchedules);
       return {
         room: d.room,
         schedules: placed,
         unplaced,
+        rawCount: safeSchedules.length,
       };
-    });
-
-  const [roomsWithSchedules, setRoomsWithSchedules] = useState(initialRoomsWithSchedules);
+    })
+  );
   const [currentRoomIndex, setCurrentRoomIndex] = useState(0);
   const [editingSchedule, setEditingSchedule] = useState(null);
+
+  // Debug log: see which rooms extracted what
+  useEffect(() => {
+    console.log(
+      "📋 Step 3 rooms loaded:",
+      roomsWithSchedules.map((r) => ({
+        room: r.room,
+        raw: r.rawCount,
+        placed: r.schedules.length,
+        unplaced: r.unplaced.length,
+      }))
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Drag-and-drop state
   const dragRef = useRef(null);
@@ -570,7 +576,7 @@ export default function BulkScheduleUpload3() {
   if (roomsWithSchedules.length === 0) {
     return (
       <div className="bulk-upload-page-three">
-        <h2>No schedules found for any room.</h2>
+        <h2>No rooms to show.</h2>
         <button className="btn-next-three" onClick={() => navigate("/local-registrar/bulk-upload-2")}>
           Go Back
         </button>
@@ -579,16 +585,12 @@ export default function BulkScheduleUpload3() {
   }
 
   const currentRoomData = roomsWithSchedules[currentRoomIndex];
-  const { room, schedules, unplaced = [] } = currentRoomData;
+  const { room, schedules, unplaced = [], rawCount = 0 } = currentRoomData;
 
-  // Sum of unplaced across all rooms — the "some days have no schedule" bucket
   const totalUnplaced = roomsWithSchedules.reduce(
     (sum, r) => sum + (r.unplaced?.length || 0),
     0
   );
-  const unplacedPreview = roomsWithSchedules
-    .flatMap((r) => (r.unplaced || []).map((u) => ({ ...u, room: r.room })))
-    .slice(0, 5);
 
   const handleUpdateSchedule = (updated) => {
     const updatedRooms = roomsWithSchedules.map((roomData, idx) => {
@@ -757,6 +759,7 @@ export default function BulkScheduleUpload3() {
   }, [schedules, currentRoomIndex]);
 
   const totalGridHeight = (END_HOUR - START_HOUR) * HOUR_HEIGHT;
+  const multiRoom = roomsWithSchedules.length > 1;
 
   const goPrevRoom = () => {
     setCurrentRoomIndex((prev) => (prev > 0 ? prev - 1 : roomsWithSchedules.length - 1));
@@ -791,9 +794,25 @@ export default function BulkScheduleUpload3() {
       <div className="form-card-three calendar-card">
         <div className="calendar-header">
           <div className="room-nav">
-            <i className="fa-solid fa-chevron-left" onClick={goPrevRoom} />
-            <span className="room-name-pill">{room}</span>
-            <i className="fa-solid fa-chevron-right" onClick={goNextRoom} />
+            <i
+              className={`fa-solid fa-chevron-left ${!multiRoom ? "is-disabled" : ""}`}
+              onClick={multiRoom ? goPrevRoom : undefined}
+              aria-disabled={!multiRoom}
+            />
+            <span className="room-name-pill">
+              {room}
+              {multiRoom && (
+                <span className="room-counter">
+                  {" — "}
+                  {currentRoomIndex + 1} of {roomsWithSchedules.length}
+                </span>
+              )}
+            </span>
+            <i
+              className={`fa-solid fa-chevron-right ${!multiRoom ? "is-disabled" : ""}`}
+              onClick={multiRoom ? goNextRoom : undefined}
+              aria-disabled={!multiRoom}
+            />
           </div>
         </div>
 
@@ -817,6 +836,21 @@ export default function BulkScheduleUpload3() {
                 {unplaced.length > 5 && <li>…and {unplaced.length - 5} more</li>}
               </ul>
               Fix the source file (clear day labels per row) and re-upload.
+            </div>
+          </div>
+        )}
+
+        {schedules.length === 0 && unplaced.length === 0 && (
+          <div className="empty-room-message">
+            <i className="fa-regular fa-calendar-xmark" />
+            <div>
+              <strong>No schedules were extracted for {room}.</strong>
+              <div style={{ fontWeight: 400, marginTop: 4, fontSize: 12 }}>
+                {rawCount === 0
+                  ? "The AI returned an empty result for this file — try re-uploading with a clearer PDF, or check the browser console for extraction logs."
+                  : "Schedules were extracted but couldn't be placed on the calendar — check the warnings above."}
+                {multiRoom && " Use the arrows above to view other rooms."}
+              </div>
             </div>
           </div>
         )}
@@ -852,7 +886,6 @@ export default function BulkScheduleUpload3() {
                   (s) => s.day === dayNumber && s.id !== dragPreview?.scheduleId
                 );
 
-                // Side-by-side layout for overlapping events on this day
                 const layout = layoutDayEvents(daySchedules);
 
                 return (
