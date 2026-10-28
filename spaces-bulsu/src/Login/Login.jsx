@@ -22,12 +22,10 @@ import logo from "../assets/logo.png";
 
 // ─── Security constants ────────────────────────────────────────
 const LOCKOUT_WINDOW_MS = 30 * 60 * 1000; // 30 min sliding window
-const MAX_ATTEMPTS = 5;                   // block threshold
-const WARN_ATTEMPT = 3;                   // warn admin threshold
-const AUTO_UNBLOCK_MS = 30 * 60 * 1000;   // auto-unblock after 30 min
-                                          // set to null para permanent
+const MAX_ATTEMPTS = 5;
+const WARN_ATTEMPT = 3;
+const AUTO_UNBLOCK_MS = 30 * 60 * 1000;
 
-// ─── Block info key (shared sa ProtectedRoute) ─────────────────
 const BLOCK_KEY = "spaces_block_info";
 
 export default function Login() {
@@ -39,18 +37,14 @@ export default function Login() {
   const [redirecting, setRedirecting] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
 
-  // ─── Blocked banner (galing sa ProtectedRoute kapag na-block habang naka-login) ─
   const [blockedBanner, setBlockedBanner] = useState(null);
 
-  // ─── Role dropdown ─────────────────────────────────────────────
   const [roleDropdownOpen, setRoleDropdownOpen] = useState(false);
   const roleDropdownRef = useRef(null);
 
-  // ─── Info modal (Privacy / Terms / Accessibility / Support / FAQs) ─
   const [activeModal, setActiveModal] = useState(null);
   const [openFaqIndex, setOpenFaqIndex] = useState(null);
 
-  // ─── Toast timer ref ───────────────────────────────────────────
   const toastTimeoutRef = useRef(null);
 
   const FAQ_ITEMS = [
@@ -104,14 +98,12 @@ export default function Login() {
     if (savedEmail || savedRole) setRememberMe(true);
   }, []);
 
-  // ─── Read block info (galing sa ProtectedRoute auto sign-out) ──
   useEffect(() => {
     try {
       const raw = sessionStorage.getItem(BLOCK_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
         setBlockedBanner(parsed);
-        // I-clear agad — para hindi na lumabas sa susunod na visit
         sessionStorage.removeItem(BLOCK_KEY);
       }
     } catch (e) {
@@ -119,13 +111,9 @@ export default function Login() {
     }
   }, []);
 
-  // ═════════════════════════════════════════════════════════════════
-  // 🔄 LIVE: Watch kung na-unblock na ng Admin
-  // ═════════════════════════════════════════════════════════════════
+  // ─── LIVE: Watch kung na-unblock na ng Admin ───────────────────
   useEffect(() => {
-    // Walang naka-blocked banner? Wag mag-listen.
     if (!blockedBanner) return;
-    // Na-unblock na — wag nang mag-listen ulit
     if (blockedBanner.unblocked) return;
 
     const emailToWatch = blockedBanner.email;
@@ -152,7 +140,6 @@ export default function Login() {
           const data = docSnap.data();
           const newStatus = String(data.status || "").toLowerCase();
 
-          // ✅ Na-unblock na — palitan yung banner content
           if (newStatus === "active") {
             setBlockedBanner((prev) =>
               prev
@@ -164,7 +151,6 @@ export default function Login() {
                   }
                 : prev
             );
-            // Stop listening — tapos na
             if (unsub) {
               unsub();
               unsub = null;
@@ -213,7 +199,6 @@ export default function Login() {
     setOpenFaqIndex(null);
   }, [activeModal]);
 
-  // Cleanup toast timer on unmount
   useEffect(() => {
     return () => {
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
@@ -242,22 +227,19 @@ export default function Login() {
     Faculty: "/faculty",
   };
 
+  // ✅ Tinanggal ang "Local Registrar" sa dropdown
   const roles = [
     { name: "Admin", icon: "fa-user-tie" },
-    { name: "Local Registrar", icon: "fa-building" },
     { name: "Clerk", icon: "fa-clipboard" },
     { name: "Faculty", icon: "fa-user" },
   ];
 
-  // ─── Toast helper — with proper timer cleanup ───────────────────
   const showToast = (type, title, message) => {
     if (toastTimeoutRef.current) {
       clearTimeout(toastTimeoutRef.current);
       toastTimeoutRef.current = null;
     }
-
     setToast({ show: true, type, title, message });
-
     if (type !== "loading") {
       toastTimeoutRef.current = setTimeout(() => {
         setToast((prev) => ({ ...prev, show: false }));
@@ -266,17 +248,30 @@ export default function Login() {
     }
   };
 
-  // ─── Helper: notify all Admins (safe-fail) ──────────────────────
-  const notifyAdmins = async (
-    title,
-    message,
-    type = "login-attempt",
-    extra = {}
-  ) => {
+  // ═══════════════════════════════════════════════════════════════
+  // 🔔 NOTIFY ADMINS — case-insensitive + role-safe filter
+  // ═══════════════════════════════════════════════════════════════
+  const notifyAdmins = async (title, message, type = "login-failed", extra = {}) => {
     try {
-      const q = query(collection(db, "users"), where("role", "==", "Admin"));
-      const snap = await getDocs(q);
-      const admins = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      // ✅ Use client-side filter — kahit anong casing ng role (Admin, admin, ADMIN)
+      const usersSnap = await getDocs(collection(db, "users"));
+      const admins = usersSnap.docs.filter((d) => {
+        const role = String(d.data().role || "").toLowerCase().trim();
+        return role === "admin";
+      });
+
+      if (admins.length === 0) {
+        console.warn("[notifyAdmins] No admin users found in system.");
+        return;
+      }
+
+      const badgeMap = {
+        "account-blocked": "ALERT",
+        "login-warning": "WARNING",
+        "login-failed": "NEW",
+        "user-not-found": "WARNING",
+        "blocked-login-attempt": "ALERT",
+      };
 
       await Promise.all(
         admins.map((admin) =>
@@ -288,7 +283,7 @@ export default function Login() {
             type,
             unread: true,
             archived: false,
-            badge: type === "account-blocked" ? "ALERT" : "NEW",
+            badge: badgeMap[type] || "NEW",
             ...extra,
             createdAt: serverTimestamp(),
           }).catch((e) =>
@@ -296,12 +291,13 @@ export default function Login() {
           )
         )
       );
+
+      console.log(`[notifyAdmins] Notified ${admins.length} admin(s) — ${type}`);
     } catch (err) {
       console.warn("Failed to notify admins:", err);
     }
   };
 
-  // ─── Helper: log activity (safe-fail) ───────────────────────────
   const logActivity = async ({
     userId,
     user,
@@ -329,13 +325,13 @@ export default function Login() {
     }
   };
 
-  // ─── Helper: record a failed attempt (FULLY safe-fail) ──────────
+  // ─── Helper: record a failed attempt + notify admin ────────────
   const recordFailedAttempt = async ({
     uid,
     userData,
     email,
     attemptedRole,
-    reason, // "wrong_password" | "role_mismatch" | "invalid_credentials"
+    reason,
   }) => {
     const now = Date.now();
     const lastFailedMs =
@@ -345,7 +341,7 @@ export default function Login() {
     const nextAttempts = prevAttempts + 1;
     const willBlock = nextAttempts >= MAX_ATTEMPTS;
 
-    // ── 1. Update user doc (own try-catch, hindi mag-throw) ──────
+    // ── 1. Update user doc ────────────────────────────────────────
     if (uid) {
       try {
         const updates = {
@@ -370,7 +366,7 @@ export default function Login() {
       }
     }
 
-    // ── 2. Audit trail (securityLogs) — own try-catch ────────────
+    // ── 2. Security audit log ─────────────────────────────────────
     try {
       await addDoc(collection(db, "securityLogs"), {
         uid: uid || null,
@@ -386,36 +382,53 @@ export default function Login() {
       console.warn("[recordFailedAttempt] securityLogs write failed:", e);
     }
 
-    // ── 3. Admin notification (3rd + blocked) — own try-catch ────
-    if (nextAttempts >= WARN_ATTEMPT || willBlock) {
-      try {
-        const reasonLabel =
-          reason === "role_mismatch"
-            ? "wrong role"
-            : reason === "wrong_password"
-            ? "wrong password"
-            : "invalid credentials";
+    // ── 3. 🔔 NOTIFY ADMINS — on EVERY failed attempt ─────────────
+    try {
+      const reasonLabel =
+        reason === "role_mismatch"
+          ? "wrong role selected"
+          : reason === "wrong_password"
+          ? "incorrect password"
+          : reason === "invalid_credentials"
+          ? "invalid credentials"
+          : reason;
 
-        await notifyAdmins(
-          willBlock
-            ? "🚫 Account Auto-Blocked"
-            : "⚠️ Suspicious Login Activity",
-          `${email} — ${nextAttempts} failed attempts (${reasonLabel}). ` +
-            (willBlock
-              ? "Account has been blocked. " +
-                (AUTO_UNBLOCK_MS
-                  ? "Auto-unblock after 30 minutes, or manually unlock."
-                  : "Requires Admin to manually unlock.")
-              : "Please monitor."),
-          willBlock ? "account-blocked" : "login-warning",
-          { email, attemptCount: nextAttempts, reason }
-        );
-      } catch (e) {
-        console.warn("[recordFailedAttempt] notifyAdmins failed:", e);
+      const attemptLabel = `${nextAttempts}/${MAX_ATTEMPTS}`;
+
+      let title, message, type;
+
+      if (willBlock) {
+        title = "🚫 Account Auto-Blocked";
+        message =
+          `${email} was automatically blocked after ${nextAttempts} failed login attempts (${reasonLabel}). ` +
+          (AUTO_UNBLOCK_MS
+            ? "Account will auto-unblock after 30 minutes, or you can manually unblock in User Management."
+            : "Manually unblock in User Management to restore access.");
+        type = "account-blocked";
+      } else if (nextAttempts >= WARN_ATTEMPT) {
+        title = "⚠️ Suspicious Login Activity";
+        message =
+          `${email} — attempt ${attemptLabel} failed (${reasonLabel}). ` +
+          `Account will be blocked after ${MAX_ATTEMPTS} attempts. Please monitor.`;
+        type = "login-warning";
+      } else {
+        title = "❌ Failed Login Attempt";
+        message = `${email} — attempt ${attemptLabel} failed (${reasonLabel}).`;
+        type = "login-failed";
       }
+
+      await notifyAdmins(title, message, type, {
+        email,
+        attemptCount: nextAttempts,
+        reason,
+        attemptedRole,
+        attemptType: "failed_login",
+      });
+    } catch (e) {
+      console.warn("[recordFailedAttempt] notifyAdmins failed:", e);
     }
 
-    // ── 4. Activity log — own try-catch ──────────────────────────
+    // ── 4. Activity log ───────────────────────────────────────────
     try {
       await logActivity({
         userId: uid,
@@ -467,6 +480,7 @@ export default function Login() {
       const userSnap = await getDocs(userQuery);
 
       if (userSnap.empty) {
+        // Security audit
         addDoc(collection(db, "securityLogs"), {
           uid: null,
           email,
@@ -485,6 +499,15 @@ export default function Login() {
           "Account Not Found",
           "No account exists with this email."
         );
+
+        // 🔔 Notify admins about unknown email
+        notifyAdmins(
+          "❓ Unknown Email Login Attempt",
+          `Someone tried to sign in with an unregistered email: ${email}. Role selected: ${selectedRole}.`,
+          "user-not-found",
+          { email, attemptType: "user_not_found", attemptedRole: selectedRole }
+        ).catch(() => {});
+
         setLoading(false);
         return;
       }
@@ -493,15 +516,13 @@ export default function Login() {
       uid = userDoc.id;
       userData = userDoc.data();
 
-      // ─── 2. Check blocked status (UNIFIED — manual + auto) ──────
+      // ─── 2. Check blocked status ────────────────────────────────
       if (userData.status === "Blocked") {
         const blockedUntil = userData.blockedUntil?.toDate?.();
         const isTempBlockActive =
           blockedUntil && blockedUntil.getTime() > Date.now();
 
-        // A) Manual block (no blockedUntil) OR auto-block still active → deny
         if (!blockedUntil || isTempBlockActive) {
-          // Show banner din dito (as extra feedback)
           setBlockedBanner({
             reason:
               userData.blockReason ||
@@ -520,11 +541,40 @@ export default function Login() {
               ? "Your account is temporarily blocked due to multiple failed login attempts. Please try again later or contact the Admin."
               : "Your account has been blocked. Please contact the Admin for assistance."
           );
+
+          // 🔔 Notify admins — blocked user tried to login
+          notifyAdmins(
+            "🚫 Blocked Account Login Attempt",
+            `${userData.email || email} attempted to sign in but their account is blocked. ${
+              userData.blockReason ? `Reason: ${userData.blockReason}` : ""
+            }`,
+            "blocked-login-attempt",
+            {
+              email: userData.email || email,
+              attemptType: "blocked_login_attempt",
+              blockReason: userData.blockReason || "",
+            }
+          ).catch(() => {});
+
+          // Activity log
+          logActivity({
+            userId: uid,
+            user:
+              `${userData.firstName || ""} ${userData.lastName || ""}`.trim() ||
+              email,
+            role: userData.role || "Unknown",
+            action: "Blocked Login Attempt",
+            actionType: "warning",
+            target: email,
+            status: "BLOCKED",
+            details: { blockReason: userData.blockReason },
+          }).catch(() => {});
+
           setLoading(false);
           return;
         }
 
-        // B) Auto-block timer expired → silent auto-unblock
+        // Auto-block timer expired → silent auto-unblock
         try {
           await updateDoc(doc(db, "users", uid), {
             status: "Active",
@@ -545,10 +595,10 @@ export default function Login() {
         }
       }
 
-      // ─── 4. Attempt Firebase sign-in ────────────────────────────
+      // ─── 3. Attempt Firebase sign-in ────────────────────────────
       await signInWithEmailAndPassword(auth, email, password);
 
-      // ─── 5. Role check — counted na ngayon ──────────────────────
+      // ─── 4. Role check ──────────────────────────────────────────
       if (userData.role !== selectedRole) {
         await auth.signOut();
 
@@ -571,7 +621,7 @@ export default function Login() {
         return;
       }
 
-      // ─── 6. Success — reset counters (safe) ─────────────────────
+      // ─── 5. Success — reset counters ────────────────────────────
       if (userData.loginAttempts && userData.loginAttempts > 0) {
         try {
           await updateDoc(doc(db, "users", uid), {
@@ -585,9 +635,7 @@ export default function Login() {
         }
       }
 
-      // ✅ Success — clear any leftover block banner
       setBlockedBanner(null);
-
       setRedirecting(true);
       showToast("success", "Login Successful", `Welcome ${userData.role}!`);
 
@@ -687,6 +735,14 @@ export default function Login() {
         }).catch((e) =>
           console.warn("[login] securityLogs write failed:", e)
         );
+
+        // 🔔 Notify admins — unknown email during auth attempt
+        notifyAdmins(
+          "❓ Unknown Email Login Attempt",
+          `Someone tried to sign in with an unregistered email: ${email}. Role selected: ${selectedRole}.`,
+          "user-not-found",
+          { email, attemptType: "user_not_found", attemptedRole: selectedRole }
+        ).catch(() => {});
       }
     } finally {
       setLoading(false);
@@ -751,7 +807,6 @@ export default function Login() {
               }
             }}
           >
-            {/* ═══════════ BLOCKED / UNBLOCKED BANNER ═══════════ */}
             {blockedBanner && (
               <div
                 className={`login-blocked-alert ${
@@ -762,9 +817,7 @@ export default function Login() {
                 <div className="login-blocked-icon">
                   <i
                     className={`fa-solid ${
-                      blockedBanner.unblocked
-                        ? "fa-circle-check"
-                        : "fa-ban"
+                      blockedBanner.unblocked ? "fa-circle-check" : "fa-ban"
                     }`}
                   />
                 </div>

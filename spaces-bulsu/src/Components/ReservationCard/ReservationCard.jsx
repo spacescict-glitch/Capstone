@@ -430,12 +430,26 @@ function ReservationCard({
   };
 
   // ─── Approve ──────────────────────────────────────────────────
+    // ─── Approve (ROBUST) ─────────────────────────────────────────
   const approveReservation = async () => {
+    if (submitting) return;
+
     setSubmitting(true);
     showToast("loading", "Processing", "Approving reservation...");
 
     try {
-      // ⚠️ FINAL GUARD — re-check one more time to be safe.
+      // 1. Auth pre-check
+      if (!auth.currentUser) {
+        setShowConfirm(false);
+        showToast(
+          "error",
+          "Session Expired",
+          "Your session has expired. Please log in again."
+        );
+        return;
+      }
+
+      // 2. Final conflict check
       const finalConflicts = await checkReservationConflicts(reservation);
       if (finalConflicts.length > 0) {
         setConflicts(finalConflicts);
@@ -449,12 +463,7 @@ function ReservationCard({
         return;
       }
 
-      await updateDoc(doc(db, "reservationRequests", reservation.id), {
-        status: "Approved",
-      });
-
-      // Tag the generated event with reservationId so we never flag
-      // this same reservation as its own conflict later.
+      // 3. Create event FIRST
       await addDoc(collection(db, "events"), {
         roomId: reservation.roomId,
         roomName: reservation.roomName,
@@ -469,138 +478,201 @@ function ReservationCard({
         reservationId: reservation.id,
       });
 
-      const me = await getCurrentUser();
-
-      await logActivity({
-        userId: me.uid,
-        user: me.name,
-        role: me.role,
-        action: "Approved Reservation",
-        actionType: "success",
-        target: `${reservation.roomName} - ${reservation.courseTitle}`,
-        status: "SUCCESS",
-        details: {
-          reservationId: reservation.id,
-          faculty: reservation.facultyName,
-          course: reservation.courseTitle,
-          date: reservation.date,
-          time: `${reservation.startTime} - ${reservation.endTime}`,
-        },
+      // 4. Update reservation status
+      await updateDoc(doc(db, "reservationRequests", reservation.id), {
+        status: "Approved",
+        approvedAt: serverTimestamp(),
+        approvedBy: auth.currentUser.uid,
       });
 
-      let facultyUserId = reservation.userId;
-      if (!facultyUserId && reservation.facultyName) {
-        const u = await findUserByName(reservation.facultyName);
-        if (u) facultyUserId = u.id;
-      }
-      if (facultyUserId) {
-        await sendNotification({
-          receiverId: facultyUserId,
-          ownerType: "faculty",
-          title: "Reservation Approved",
-          message: `Your reservation request for ${reservation.roomName} on ${reservation.date} (${reservation.startTime} - ${reservation.endTime}) has been approved.`,
-          reservationId: reservation.id,
-          type: "reservation-approved",
-          badge: "SUCCESS",
+      // 5. Non-critical: activity log
+      try {
+        const me = await getCurrentUser();
+        await logActivity({
+          userId: me.uid,
+          user: me.name,
+          role: me.role,
+          action: "Approved Reservation",
+          actionType: "success",
+          target: `${reservation.roomName} - ${reservation.courseTitle}`,
+          status: "SUCCESS",
+          details: {
+            reservationId: reservation.id,
+            faculty: reservation.facultyName,
+            course: reservation.courseTitle,
+            date: reservation.date,
+            time: `${reservation.startTime} - ${reservation.endTime}`,
+          },
         });
+      } catch (logErr) {
+        console.warn("Activity log failed (non-critical):", logErr);
       }
 
-      if (me.uid) {
-        await sendNotification({
-          receiverId: me.uid,
-          ownerType: "clerk",
-          title: "Reservation Approved",
-          message: `You approved ${reservation.facultyName}'s reservation request for ${reservation.roomName}.`,
-          reservationId: reservation.id,
-          type: "reservation-approved",
-          badge: "INFO",
-        });
+      // 6. Non-critical: notifications
+      try {
+        let facultyUserId = reservation.userId;
+        if (!facultyUserId && reservation.facultyName) {
+          const u = await findUserByName(reservation.facultyName);
+          if (u) facultyUserId = u.id;
+        }
+        if (facultyUserId) {
+          await sendNotification({
+            receiverId: facultyUserId,
+            ownerType: "faculty",
+            title: "Reservation Approved",
+            message: `Your reservation request for ${reservation.roomName} on ${reservation.date} (${reservation.startTime} - ${reservation.endTime}) has been approved.`,
+            reservationId: reservation.id,
+            type: "reservation-approved",
+            badge: "SUCCESS",
+          });
+        }
+        if (auth.currentUser?.uid) {
+          await sendNotification({
+            receiverId: auth.currentUser.uid,
+            ownerType: "clerk",
+            title: "Reservation Approved",
+            message: `You approved ${reservation.facultyName}'s reservation request for ${reservation.roomName}.`,
+            reservationId: reservation.id,
+            type: "reservation-approved",
+            badge: "INFO",
+          });
+        }
+        await notifyAllAdmins(
+          "Reservation Approved",
+          `${reservation.facultyName}'s reservation for ${reservation.roomName} was approved by Clerk.`,
+          reservation.id
+        );
+      } catch (notifErr) {
+        console.warn("Notifications failed (non-critical):", notifErr);
       }
-
-      await notifyAllAdmins(
-        "Reservation Approved",
-        `${reservation.facultyName}'s reservation for ${reservation.roomName} was approved by Clerk.`,
-        reservation.id
-      );
 
       setShowConfirm(false);
       showToast("success", "Success", "Reservation approved successfully!");
     } catch (err) {
       console.error("Approve error:", err);
-      showToast("error", "Error", err.message || "Failed to approve reservation.");
+
+      let msg = "Failed to approve reservation.";
+      if (err.code === "permission-denied") {
+        msg = "Permission denied. Please contact the admin.";
+      } else if (
+        err.code === "unauthenticated" ||
+        err.code === "auth/user-token-expired"
+      ) {
+        msg = "Your session expired. Please log in again.";
+      } else if (err.code === "unavailable") {
+        msg = "Network issue. Please check your connection and try again.";
+      } else if (err.message) {
+        msg = err.message;
+      }
+
+      showToast("error", "Approval Failed", msg);
+      setShowConfirm(false);
     } finally {
       setSubmitting(false);
     }
   };
 
-  // ─── Deny ─────────────────────────────────────────────────────
+  // ─── Deny (ROBUST) ────────────────────────────────────────────
   const denyReservation = async (reason) => {
+    if (submitting) return;
+
     setSubmitting(true);
     showToast("loading", "Processing", "Denying reservation...");
 
     try {
+      if (!auth.currentUser) {
+        setShowDenial(false);
+        showToast(
+          "error",
+          "Session Expired",
+          "Your session has expired. Please log in again."
+        );
+        return;
+      }
+
       await updateDoc(doc(db, "reservationRequests", reservation.id), {
         status: "Rejected",
         denialReason: reason,
+        rejectedAt: serverTimestamp(),
+        rejectedBy: auth.currentUser.uid,
       });
 
-      const me = await getCurrentUser();
-
-      await logActivity({
-        userId: me.uid,
-        user: me.name,
-        role: me.role,
-        action: "Rejected Reservation",
-        actionType: "failed",
-        target: `${reservation.roomName} - ${reservation.courseTitle}`,
-        status: "FAILED",
-        details: {
-          reservationId: reservation.id,
-          faculty: reservation.facultyName,
-          reason,
-        },
-      });
-
-      let facultyUserId = reservation.userId;
-      if (!facultyUserId && reservation.facultyName) {
-        const u = await findUserByName(reservation.facultyName);
-        if (u) facultyUserId = u.id;
-      }
-      if (facultyUserId) {
-        await sendNotification({
-          receiverId: facultyUserId,
-          ownerType: "faculty",
-          title: "Reservation Rejected",
-          message: `Your reservation request for ${reservation.roomName} was rejected.\nReason: ${reason}`,
-          reservationId: reservation.id,
-          type: "reservation-rejected",
-          badge: "WARNING",
+      try {
+        const me = await getCurrentUser();
+        await logActivity({
+          userId: me.uid,
+          user: me.name,
+          role: me.role,
+          action: "Rejected Reservation",
+          actionType: "failed",
+          target: `${reservation.roomName} - ${reservation.courseTitle}`,
+          status: "FAILED",
+          details: {
+            reservationId: reservation.id,
+            faculty: reservation.facultyName,
+            reason,
+          },
         });
+      } catch (logErr) {
+        console.warn("Activity log failed (non-critical):", logErr);
       }
 
-      if (me.uid) {
-        await sendNotification({
-          receiverId: me.uid,
-          ownerType: "clerk",
-          title: "Reservation Rejected",
-          message: `You rejected ${reservation.facultyName}'s reservation request for ${reservation.roomName}.`,
-          reservationId: reservation.id,
-          type: "reservation-rejected",
-          badge: "INFO",
-        });
+      try {
+        let facultyUserId = reservation.userId;
+        if (!facultyUserId && reservation.facultyName) {
+          const u = await findUserByName(reservation.facultyName);
+          if (u) facultyUserId = u.id;
+        }
+        if (facultyUserId) {
+          await sendNotification({
+            receiverId: facultyUserId,
+            ownerType: "faculty",
+            title: "Reservation Rejected",
+            message: `Your reservation request for ${reservation.roomName} was rejected.\nReason: ${reason}`,
+            reservationId: reservation.id,
+            type: "reservation-rejected",
+            badge: "WARNING",
+          });
+        }
+        if (auth.currentUser?.uid) {
+          await sendNotification({
+            receiverId: auth.currentUser.uid,
+            ownerType: "clerk",
+            title: "Reservation Rejected",
+            message: `You rejected ${reservation.facultyName}'s reservation request for ${reservation.roomName}.`,
+            reservationId: reservation.id,
+            type: "reservation-rejected",
+            badge: "INFO",
+          });
+        }
+        await notifyAllAdmins(
+          "Reservation Rejected",
+          `${reservation.facultyName}'s reservation for ${reservation.roomName} was rejected by Clerk.`,
+          reservation.id
+        );
+      } catch (notifErr) {
+        console.warn("Notifications failed (non-critical):", notifErr);
       }
-
-      await notifyAllAdmins(
-        "Reservation Rejected",
-        `${reservation.facultyName}'s reservation for ${reservation.roomName} was rejected by Clerk.`,
-        reservation.id
-      );
 
       setShowDenial(false);
       showToast("success", "Success", "Reservation denied successfully.");
     } catch (err) {
       console.error("Deny error:", err);
-      showToast("error", "Error", err.message || "Failed to deny reservation.");
+
+      let msg = "Failed to deny reservation.";
+      if (err.code === "permission-denied") {
+        msg = "Permission denied. Please contact the admin.";
+      } else if (
+        err.code === "unauthenticated" ||
+        err.code === "auth/user-token-expired"
+      ) {
+        msg = "Your session expired. Please log in again.";
+      } else if (err.message) {
+        msg = err.message;
+      }
+
+      showToast("error", "Deny Failed", msg);
+      setShowDenial(false);
     } finally {
       setSubmitting(false);
     }

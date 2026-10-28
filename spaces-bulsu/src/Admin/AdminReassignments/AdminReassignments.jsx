@@ -7,6 +7,7 @@ import { auth, db } from "../../firebase";
 import Toast from "../../Popup/Toast/Toast";
 import { logActivity } from "../../utils/logActivity";
 import { findFacultyUserByName } from "../../utils/findFacultyUser";
+import CancelledReportModal from "../../Components/CancelledReportModal/CancelledReportModal";
 
 const ITEMS_PER_PAGE = 6;
 
@@ -205,7 +206,7 @@ function AdminReassignments() {
 
   const [showRoomPicker, setShowRoomPicker] = useState(false);
   const [roomSearch, setRoomSearch] = useState("");
-
+  const [showCancelledReport, setShowCancelledReport] = useState(false);
   const [toast, setToast] = useState({ show: false, type: "success", title: "", message: "" });
   const showToast = (type, title, message) => {
     setToast({ show: true, type, title, message });
@@ -750,14 +751,23 @@ function AdminReassignments() {
     <>
       <div className="dhr-page">
         <div className="dhr-header">
-          <div>
-            <h1 className="dhr-title">Room Reassignments</h1>
-            <p className="dhr-subtitle">
-              Review reassignment requests from the Clerk. Approve, cancel the
-              class, or send it back for a new room.
-            </p>
-          </div>
+        <div>
+          <h1 className="dhr-title">Room Reassignments</h1>
+          <p className="dhr-subtitle">
+            Review reassignment requests from the Clerk. Approve, cancel the
+            class, or send it back for a new room.
+          </p>
         </div>
+
+        <button
+          type="button"
+          className="dhr-report-btn"
+          onClick={() => setShowCancelledReport(true)}
+        >
+          <i className="fa-solid fa-file-lines"></i>
+          Cancellation Report
+        </button>
+      </div>
 
         <div className="dhr-tabs">
           {TABS.map((t) => (
@@ -1102,6 +1112,11 @@ function AdminReassignments() {
           </div>
         </div>
       )}
+
+      <CancelledReportModal
+        isOpen={showCancelledReport}
+        onClose={() => setShowCancelledReport(false)}
+      />
 
       <Toast
         show={toast.show}

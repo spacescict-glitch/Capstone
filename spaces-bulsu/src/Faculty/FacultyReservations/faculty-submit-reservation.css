@@ -1530,3 +1530,281 @@ body {
     text-align: center;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   REQUIRED EQUIPMENT — CHECKLIST UI
+   ═══════════════════════════════════════════════════════════ */
+
+.equipment-count-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #FFF5EE;
+  color: #F2690D;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  border: 1px solid #FCD7B4;
+}
+
+.equipment-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  background: #FAFBFD;
+  border: 1.5px solid #E5E7EB;
+  border-radius: 12px;
+  margin-top: 4px;
+  transition: border-color .15s, background .15s;
+}
+
+.equipment-checklist.has-error {
+  border-color: #dc2626;
+  background: #fef2f2;
+}
+
+/* ── Each row ─────────────────────────────────────────── */
+.equipment-check-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: #fff;
+  border: 1.5px solid #EEF1F5;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1E2430;
+  transition: border-color .12s, background .12s, transform .08s;
+  user-select: none;
+  position: relative;
+}
+
+.equipment-check-row:hover {
+  border-color: #F2690D;
+  background: #FFF9F3;
+}
+
+.equipment-check-row.is-checked {
+  border-color: #F2690D;
+  background: #FFF5EE;
+  box-shadow: 0 0 0 3px rgba(242, 105, 13, 0.08);
+}
+
+/* Hide native checkbox, use custom one */
+.equipment-check-box {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid #CBD5E1;
+  border-radius: 5px;
+  background: #fff;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  transition: 0.12s;
+  margin: 0;
+  position: relative;
+}
+
+.equipment-check-box:hover { border-color: #F2690D; }
+
+.equipment-check-box:checked {
+  background: #F2690D;
+  border-color: #F2690D;
+}
+
+.equipment-check-box:checked::after {
+  content: "";
+  width: 5px;
+  height: 9px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg) translate(-1px, -1px);
+  position: absolute;
+  top: 1px;
+}
+
+.equipment-check-icon {
+  font-size: 16px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.equipment-check-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.equipment-check-remove {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: none;
+  background: #FEE2E2;
+  color: #B91C1C;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  flex-shrink: 0;
+  transition: 0.12s;
+}
+
+.equipment-check-remove:hover {
+  background: #FECACA;
+  color: #991B1B;
+}
+
+/* ── Add other button ─────────────────────────────────── */
+.equipment-add-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 14px;
+  margin-top: 4px;
+  border-radius: 9px;
+  border: 1.5px dashed #CBD5E1;
+  background: #fff;
+  color: #64748B;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: 0.15s;
+}
+
+.equipment-add-btn:hover {
+  border-color: #F2690D;
+  color: #F2690D;
+  background: #FFF9F3;
+}
+
+.equipment-add-btn i {
+  font-size: 11px;
+}
+
+/* ── Add row (input + confirm/cancel) ─────────────────── */
+.equipment-add-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 4px;
+  padding: 6px;
+  background: #FFF9F3;
+  border-radius: 9px;
+  border: 1.5px solid #FCD7B4;
+  animation: slideDown 0.16s ease;
+}
+
+.equipment-add-input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1.5px solid #E5E7EB;
+  border-radius: 7px;
+  font-family: inherit;
+  font-size: 13px;
+  color: #1E2430;
+  outline: none;
+  background: #fff;
+  transition: border-color .12s;
+}
+
+.equipment-add-input:focus {
+  border-color: #F2690D;
+}
+
+.equipment-add-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 12px;
+  border-radius: 7px;
+  border: none;
+  background: #F2690D;
+  color: #fff;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: 0.15s;
+  flex-shrink: 0;
+}
+
+.equipment-add-confirm:hover:not(:disabled) { background: #d95f08; }
+.equipment-add-confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.equipment-add-confirm i { font-size: 10px; }
+
+.equipment-add-cancel {
+  padding: 8px 12px;
+  border-radius: 7px;
+  border: 1.5px solid #E5E7EB;
+  background: #fff;
+  color: #64748B;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: 0.15s;
+  flex-shrink: 0;
+}
+
+.equipment-add-cancel:hover {
+  border-color: #CBD5E1;
+  color: #1E2430;
+}
+
+/* ── Responsive ── */
+@media (max-width: 520px) {
+  .equipment-add-row {
+    flex-wrap: wrap;
+  }
+  .equipment-add-input {
+    width: 100%;
+    flex-basis: 100%;
+  }
+  .equipment-add-confirm,
+  .equipment-add-cancel {
+    flex: 1;
+    justify-content: center;
+  }
+}
+
+/* Help text under "Additional Required Equipment" */
+.equipment-help-text {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 9px 12px;
+  background: #F0F9FF;
+  border-left: 3px solid #0EA5E9;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #0C4A6E;
+  font-weight: 500;
+}
+.equipment-help-text i {
+  color: #0EA5E9;
+  margin-top: 2px;
+  flex-shrink: 0;
+  font-size: 11px;
+}

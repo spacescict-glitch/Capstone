@@ -1009,3 +1009,89 @@
 .sim-toast-layer [class*="toast-"] {
   z-index: 2147483647 !important;
 }
+
+/* ══════════════════════════════════════════════════════════
+   MULTI-SELECT CATEGORIES + "OTHER" INPUT
+   ══════════════════════════════════════════════════════════ */
+.sim-cat { position: relative; }
+
+.sim-cat.active::after {
+  content: "\f00c";
+  font-family: "Font Awesome 6 Free";
+  font-weight: 900;
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  font-size: 8.5px;
+  color: #f57c00;
+  background: #fff;
+  border-radius: 50%;
+  width: 14px;
+  height: 14px;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.sim-other-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1.5px solid #f57c00;
+  border-radius: 10px;
+  background: #FFF9F3;
+  margin-top: 4px;
+  animation: simFade 0.2s ease;
+}
+.sim-other-input-wrap > i {
+  color: #f57c00;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.sim-other-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: "Lexend", sans-serif;
+  font-size: 13px;
+  color: #1a1a1a;
+}
+.sim-other-input::placeholder { color: #B45309; opacity: 0.7; }
+.sim-other-clear {
+  background: #e5e7eb;
+  border: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  color: #6b7280;
+  font-size: 10px;
+  flex-shrink: 0;
+  transition: 0.15s;
+}
+.sim-other-clear:hover { background: #fee2e2; color: #dc2626; }
+
+/* Preview chips for multi-category */
+.sim-preview-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.sim-preview-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #FEF0E7;
+  color: #B45309;
+  font-size: 11.5px;
+  font-weight: 700;
+  border: 1px solid #FCE7D2;
+}
+.sim-preview-row--stacked .sim-preview-chips { justify-content: flex-start; }

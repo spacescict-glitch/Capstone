@@ -503,3 +503,33 @@
   .dhr-room-trigger { width: 100%; }
   .dhr-room-popover { width: 100%; max-width: 100%; left: 0; }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   CANCELLATION REPORT BUTTON (sa page header)
+   ═══════════════════════════════════════════════════════════════ */
+.dhr-report-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border-radius: 10px;
+  border: 1.5px solid #f57c00;
+  background: #fff;
+  color: #f57c00;
+  font-family: "Lexend", sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: 0.15s;
+  height: 46px;
+  flex-shrink: 0;
+}
+
+.dhr-report-btn:hover {
+  background: #fff3e8;
+  box-shadow: 0 2px 8px rgba(245, 124, 0, 0.2);
+}
+
+.dhr-report-btn i {
+  font-size: 13px;
+}

@@ -396,12 +396,26 @@ function ClerkViewReservation() {
     if (jobs.length) await Promise.all(jobs);
   };
 
-  // ─── Approve ─────────────────────────────────────────────────────
+  // ─── Approve (ROBUST — reordered, defensive) ────────────────────
   const approveReservation = async () => {
+    if (submitting) return;
+
     setSubmitting(true);
     showToast("loading", "Processing", "Approving reservation...");
 
     try {
+      // 1. Auth pre-check — hindi tumuloy kung session expired
+      if (!auth.currentUser) {
+        setShowConfirm(false);
+        showToast(
+          "error",
+          "Session Expired",
+          "Your session has expired. Please log in again."
+        );
+        return;
+      }
+
+      // 2. Final conflict check (critical — block kung may conflicts)
       const fresh = await checkReservationConflicts(reservation, reservation.id);
       if (fresh.length > 0) {
         setConflicts(fresh);
@@ -414,10 +428,7 @@ function ClerkViewReservation() {
         return;
       }
 
-      await updateDoc(doc(db, "reservationRequests", reservation.id), {
-        status: "Approved",
-      });
-
+      // 3. Create the event FIRST (para kung mag-fail, walang partial)
       await addDoc(collection(db, "events"), {
         roomId: reservation.roomId,
         roomName: reservation.roomName,
@@ -432,152 +443,209 @@ function ClerkViewReservation() {
         reservationId: reservation.id,
       });
 
-      const firebaseUser = auth.currentUser;
-      let currentUser = {};
-      let clerkName = "Clerk";
-      if (firebaseUser) {
-        const userSnap = await getDoc(doc(db, "users", firebaseUser.uid));
-        if (userSnap.exists()) {
-          currentUser = userSnap.data();
-          clerkName =
-            `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim() ||
-            "Clerk";
-        }
-      }
-
-      await logActivity({
-        userId: firebaseUser?.uid || "",
-        user: clerkName,
-        role: "Clerk",
-        action: "Approved Reservation",
-        actionType: "success",
-        target: `${reservation.roomName} - ${reservation.courseTitle}`,
-        status: "SUCCESS",
-        details: {
-          reservationId: reservation.id,
-          faculty: reservation.facultyName,
-          course: reservation.courseTitle,
-          date: reservation.date,
-          time: `${reservation.startTime} - ${reservation.endTime}`,
-        },
+      // 4. Update reservation status (critical — maging Approved)
+      await updateDoc(doc(db, "reservationRequests", reservation.id), {
+        status: "Approved",
+        approvedAt: serverTimestamp(),
+        approvedBy: auth.currentUser.uid,
       });
 
-      let facultyUserId = reservation.userId;
-      if (!facultyUserId && reservation.facultyName) {
-        const u = await findUserByName(reservation.facultyName);
-        if (u) facultyUserId = u.id;
+      // 5. Non-critical: activity log (wrap — hindi masisira ang flow)
+      let clerkName = "Clerk";
+      try {
+        const userSnap = await getDoc(doc(db, "users", auth.currentUser.uid));
+        if (userSnap.exists()) {
+          const cu = userSnap.data();
+          clerkName =
+            `${cu.firstName || ""} ${cu.lastName || ""}`.trim() || "Clerk";
+        }
+        await logActivity({
+          userId: auth.currentUser.uid,
+          user: clerkName,
+          role: "Clerk",
+          action: "Approved Reservation",
+          actionType: "success",
+          target: `${reservation.roomName} - ${reservation.courseTitle}`,
+          status: "SUCCESS",
+          details: {
+            reservationId: reservation.id,
+            faculty: reservation.facultyName,
+            course: reservation.courseTitle,
+            date: reservation.date,
+            time: `${reservation.startTime} - ${reservation.endTime}`,
+          },
+        });
+      } catch (logErr) {
+        console.warn("Activity log failed (non-critical):", logErr);
       }
 
-      if (facultyUserId) {
-        await notifyReservationDecision(
-          facultyUserId,
-          "faculty",
+      // 6. Non-critical: notifications (wrap din — hindi masisira)
+      try {
+        let facultyUserId = reservation.userId;
+        if (!facultyUserId && reservation.facultyName) {
+          const u = await findUserByName(reservation.facultyName);
+          if (u) facultyUserId = u.id;
+        }
+
+        if (facultyUserId) {
+          await notifyReservationDecision(
+            facultyUserId,
+            "faculty",
+            "Reservation Approved",
+            `Your reservation request for ${reservation.roomName} on ${reservation.date} (${reservation.startTime} - ${reservation.endTime}) has been approved.`,
+            reservation.id,
+            "reservation-approved",
+            "SUCCESS"
+          );
+        }
+
+        if (auth.currentUser?.uid) {
+          await notifyReservationDecision(
+            auth.currentUser.uid,
+            "clerk",
+            "Reservation Approved",
+            `You approved ${reservation.facultyName}'s reservation request for ${reservation.roomName}.`,
+            reservation.id,
+            "reservation-approved",
+            "INFO"
+          );
+        }
+
+        await notifyAllAdmins(
           "Reservation Approved",
-          `Your reservation request for ${reservation.roomName} on ${reservation.date} (${reservation.startTime} - ${reservation.endTime}) has been approved.`,
-          reservation.id,
-          "reservation-approved",
-          "SUCCESS"
+          `${reservation.facultyName}'s reservation for ${reservation.roomName} was approved by Clerk.`,
+          reservation.id
         );
+      } catch (notifErr) {
+        console.warn("Notifications failed (non-critical):", notifErr);
       }
 
-      if (firebaseUser?.uid) {
-        await notifyReservationDecision(
-          firebaseUser.uid,
-          "clerk",
-          "Reservation Approved",
-          `You approved ${reservation.facultyName}'s reservation request for ${reservation.roomName}.`,
-          reservation.id,
-          "reservation-approved",
-          "INFO"
-        );
-      }
-
-      await notifyAllAdmins(
-        "Reservation Approved",
-        `${reservation.facultyName}'s reservation for ${reservation.roomName} was approved by Clerk.`,
-        reservation.id
-      );
-
+      // 7. Success
       setShowConfirm(false);
       showToast("success", "Success", "Reservation approved successfully!");
 
       setTimeout(() => navigate("/clerk/reservations"), 1500);
     } catch (err) {
       console.error("Approve error:", err);
-      showToast("error", "Error", err.message || "Failed to approve reservation.");
+
+      // Better error messages by code
+      let msg = "Failed to approve reservation.";
+      if (err.code === "permission-denied") {
+        msg =
+          "Permission denied. Your account may not have access to approve reservations. Please contact the admin.";
+      } else if (
+        err.code === "unauthenticated" ||
+        err.code === "auth/user-token-expired" ||
+        err.code === "auth/network-request-failed"
+      ) {
+        msg = "Your session expired. Please log in again.";
+      } else if (err.code === "unavailable") {
+        msg = "Network issue. Please check your connection and try again.";
+      } else if (err.message) {
+        msg = err.message;
+      }
+
+      showToast("error", "Approval Failed", msg);
+      setShowConfirm(false);
     } finally {
       setSubmitting(false);
     }
   };
 
-  // ─── Deny ────────────────────────────────────────────────────────
+  // ─── Deny (ROBUST — reordered, defensive) ───────────────────────
   const denyReservation = async (reason) => {
+    if (submitting) return;
+
     setSubmitting(true);
     showToast("loading", "Processing", "Denying reservation...");
 
     try {
+      // 1. Auth pre-check
+      if (!auth.currentUser) {
+        setShowDenial(false);
+        showToast(
+          "error",
+          "Session Expired",
+          "Your session has expired. Please log in again."
+        );
+        return;
+      }
+
+      // 2. Update reservation status
       await updateDoc(doc(db, "reservationRequests", reservation.id), {
         status: "Rejected",
         denialReason: reason,
+        rejectedAt: serverTimestamp(),
+        rejectedBy: auth.currentUser.uid,
       });
 
-      const firebaseUser = auth.currentUser;
+      // 3. Non-critical: activity log
       let clerkName = "Clerk";
-      if (firebaseUser) {
-        const userSnap = await getDoc(doc(db, "users", firebaseUser.uid));
+      try {
+        const userSnap = await getDoc(doc(db, "users", auth.currentUser.uid));
         if (userSnap.exists()) {
           const cu = userSnap.data();
           clerkName =
             `${cu.firstName || ""} ${cu.lastName || ""}`.trim() || "Clerk";
         }
+        await logActivity({
+          userId: auth.currentUser.uid,
+          user: clerkName,
+          role: "Clerk",
+          action: "Rejected Reservation",
+          actionType: "failed",
+          target: `${reservation.roomName} - ${reservation.courseTitle}`,
+          status: "FAILED",
+          details: {
+            reservationId: reservation.id,
+            faculty: reservation.facultyName,
+            reason,
+          },
+        });
+      } catch (logErr) {
+        console.warn("Activity log failed (non-critical):", logErr);
       }
 
-      await logActivity({
-        userId: firebaseUser?.uid || "",
-        user: clerkName,
-        role: "Clerk",
-        action: "Rejected Reservation",
-        actionType: "failed",
-        target: `${reservation.roomName} - ${reservation.courseTitle}`,
-        status: "FAILED",
-        details: { reservationId: reservation.id, faculty: reservation.facultyName, reason },
-      });
+      // 4. Non-critical: notifications
+      try {
+        let facultyUserId = reservation.userId;
+        if (!facultyUserId && reservation.facultyName) {
+          const u = await findUserByName(reservation.facultyName);
+          if (u) facultyUserId = u.id;
+        }
 
-      let facultyUserId = reservation.userId;
-      if (!facultyUserId && reservation.facultyName) {
-        const u = await findUserByName(reservation.facultyName);
-        if (u) facultyUserId = u.id;
-      }
+        if (facultyUserId) {
+          await notifyReservationDecision(
+            facultyUserId,
+            "faculty",
+            "Reservation Rejected",
+            `Your reservation request for ${reservation.roomName} was rejected.\nReason: ${reason}`,
+            reservation.id,
+            "reservation-rejected",
+            "WARNING"
+          );
+        }
 
-      if (facultyUserId) {
-        await notifyReservationDecision(
-          facultyUserId,
-          "faculty",
+        if (auth.currentUser?.uid) {
+          await notifyReservationDecision(
+            auth.currentUser.uid,
+            "clerk",
+            "Reservation Rejected",
+            `You rejected ${reservation.facultyName}'s reservation request.`,
+            reservation.id,
+            "reservation-rejected",
+            "INFO"
+          );
+        }
+
+        await notifyAllAdmins(
           "Reservation Rejected",
-          `Your reservation request for ${reservation.roomName} was rejected.\nReason: ${reason}`,
-          reservation.id,
-          "reservation-rejected",
-          "WARNING"
+          `${reservation.facultyName}'s reservation for ${reservation.roomName} was rejected by Clerk.`,
+          reservation.id
         );
+      } catch (notifErr) {
+        console.warn("Notifications failed (non-critical):", notifErr);
       }
-
-      if (firebaseUser?.uid) {
-        await notifyReservationDecision(
-          firebaseUser.uid,
-          "clerk",
-          "Reservation Rejected",
-          `You rejected ${reservation.facultyName}'s reservation request.`,
-          reservation.id,
-          "reservation-rejected",
-          "INFO"
-        );
-      }
-
-      await notifyAllAdmins(
-        "Reservation Rejected",
-        `${reservation.facultyName}'s reservation for ${reservation.roomName} was rejected by Clerk.`,
-        reservation.id
-      );
 
       setShowDenial(false);
       showToast("success", "Success", "Reservation denied successfully.");
@@ -585,7 +653,22 @@ function ClerkViewReservation() {
       setTimeout(() => navigate("/clerk/reservations"), 1500);
     } catch (err) {
       console.error("Deny error:", err);
-      showToast("error", "Error", err.message || "Failed to deny reservation.");
+
+      let msg = "Failed to deny reservation.";
+      if (err.code === "permission-denied") {
+        msg =
+          "Permission denied. Your account may not have access to deny reservations. Please contact the admin.";
+      } else if (
+        err.code === "unauthenticated" ||
+        err.code === "auth/user-token-expired"
+      ) {
+        msg = "Your session expired. Please log in again.";
+      } else if (err.message) {
+        msg = err.message;
+      }
+
+      showToast("error", "Deny Failed", msg);
+      setShowDenial(false);
     } finally {
       setSubmitting(false);
     }

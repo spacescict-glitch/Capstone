@@ -2,24 +2,17 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import "./submit-issue-modal.css";
 import { auth, db } from "../../firebase";
 import {
-  collection,
-  addDoc,
-  getDoc,
-  getDocs,
-  doc,
+  collection, addDoc, getDoc, getDocs, doc,
   serverTimestamp,
-  query,
-  where,
 } from "firebase/firestore";
 import Toast from "../../Popup/Toast/Toast";
 
 const CLOUDINARY_CLOUD_NAME    = "dqn1s5ujs";
 const CLOUDINARY_UPLOAD_PRESET = "SpaceSCICT";
 
-// ── Upload limits ────────────────────────────────────────────
 const MAX_PHOTOS        = 5;
-const MAX_FILE_MB       = 5;    // per image
-const MAX_TOTAL_MB      = 15;   // all images combined
+const MAX_FILE_MB       = 5;
+const MAX_TOTAL_MB      = 15;
 const MAX_FILE_BYTES    = MAX_FILE_MB  * 1024 * 1024;
 const MAX_TOTAL_BYTES   = MAX_TOTAL_MB * 1024 * 1024;
 
@@ -62,85 +55,61 @@ async function uploadToCloudinary(file) {
   return data.secure_url;
 }
 
-/* ══════════════════════════════════════════════════════════════
-   🔔 NOTIFY HELPERS
-   ══════════════════════════════════════════════════════════════ */
-
-// Notify all admins about a newly submitted room issue
 async function notifyAllAdmins({
-  issueId,
-  roomId,
-  reporterName,
-  roomName,
-  category,
-  severity,
-  description,
+  issueId, roomId, reporterName, roomName, categories, categoryLabel,
+  severity, description,
 }) {
   try {
     const usersSnap = await getDocs(collection(db, "users"));
     const jobs = [];
-
     usersSnap.forEach((u) => {
       const role = (u.data().role || "").toLowerCase().trim();
       if (role !== "admin") return;
-
       jobs.push(
         addDoc(collection(db, "notifications"), {
           userId: u.id,
           ownerType: "admin",
-          issueId,
-          roomId,
-          roomName,
+          issueId, roomId, roomName,
           title: `New ${severity} Room Issue`,
           message:
-            `${reporterName} reported a ${severity} ${category} issue in ${roomName}. ` +
+            `${reporterName} reported a ${severity} ${categoryLabel} issue in ${roomName}. ` +
             `"${(description || "").slice(0, 120)}${(description || "").length > 120 ? "…" : ""}"`,
           type: severity === "Urgent" ? "urgent" : "issue-new",
-          unread: true,
-          archived: false,
+          unread: true, archived: false,
           badge: severity === "Urgent" ? "URGENT" : "NEW",
+          categories,
           createdAt: serverTimestamp(),
         })
       );
     });
-
     if (jobs.length) await Promise.all(jobs);
   } catch (err) {
     console.warn("notifyAllAdmins failed:", err);
   }
 }
 
-// Optional: send a confirmation notification back to the reporter (faculty)
 async function notifyReporterSubmitted({
-  reporterId,
-  issueId,
-  roomName,
-  category,
-  severity,
+  reporterId, issueId, roomName, categories, categoryLabel, severity,
 }) {
   if (!reporterId) return;
   try {
     await addDoc(collection(db, "notifications"), {
       userId: reporterId,
       ownerType: "faculty",
-      issueId,
-      roomName,
+      issueId, roomName,
       title: "Issue Submitted",
       message:
-        `Your ${severity} ${category} issue in ${roomName} was sent to the Admin ` +
+        `Your ${severity} ${categoryLabel} issue in ${roomName} was sent to the Admin ` +
         `for review. You'll be notified once it's acknowledged.`,
       type: "issue-submitted",
-      unread: true,
-      archived: false,
-      badge: "SENT",
+      unread: true, archived: false, badge: "SENT",
+      categories,
       createdAt: serverTimestamp(),
     });
   } catch (err) {
     console.warn("notifyReporterSubmitted failed:", err);
   }
 }
-
-/* ══════════════════════════════════════════════════════════════ */
 
 export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoomId = "" }) {
   const [rooms, setRooms]               = useState([]);
@@ -150,17 +119,19 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
   const [uploadProgress, setUploadProgress] = useState({ done: 0, total: 0 });
 
   const [form, setForm] = useState({
-    roomId: presetRoomId || "", category: "", severity: "Medium", description: "",
+    roomId: presetRoomId || "",
+    categories: [],          // ← multi-select array
+    otherCategory: "",       // ← custom name for "Other"
+    severity: "Medium",
+    description: "",
   });
   const [photoFiles, setPhotoFiles]     = useState([]);
   const [previewUrls, setPreviewUrls]   = useState([]);
   const fileInputRef = useRef(null);
 
-  // ── Room picker popover state ────────────────────────────
   const [showRoomPicker, setShowRoomPicker] = useState(false);
   const [roomSearch, setRoomSearch] = useState("");
 
-  // ── Preview modal state ──────────────────────────────────
   const [showPreview, setShowPreview] = useState(false);
 
   const [toast, setToast] = useState({ show: false, type: "success", title: "", message: "" });
@@ -186,7 +157,13 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
 
   useEffect(() => {
     if (!open) {
-      setForm({ roomId: presetRoomId || "", category: "", severity: "Medium", description: "" });
+      setForm({
+        roomId: presetRoomId || "",
+        categories: [],
+        otherCategory: "",
+        severity: "Medium",
+        description: "",
+      });
       previewUrls.forEach(u => URL.revokeObjectURL(u));
       setPhotoFiles([]);
       setPreviewUrls([]);
@@ -214,17 +191,27 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
     });
   }, [rooms, roomSearch]);
 
-  const selectedCategoryMeta = useMemo(
-    () => CATEGORIES.find(c => c.value === form.category) || null,
-    [form.category]
-  );
-
   const selectedSeverityMeta = useMemo(
     () => SEVERITIES.find(s => s.value === form.severity) || SEVERITIES[1],
     [form.severity]
   );
 
-  // ── Total size of all attached images ────────────────────
+  // Final categories — "Other" resolved to custom text
+  const finalCategories = useMemo(
+    () =>
+      form.categories.map(c =>
+        c === "Other"
+          ? (form.otherCategory.trim() || "Other")
+          : c
+      ),
+    [form.categories, form.otherCategory]
+  );
+
+  const categoryLabel = useMemo(
+    () => finalCategories.join(", ") || "issue",
+    [finalCategories]
+  );
+
   const totalBytes = useMemo(
     () => photoFiles.reduce((sum, f) => sum + f.size, 0),
     [photoFiles]
@@ -232,6 +219,15 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
   const totalPercent = Math.min(100, (totalBytes / MAX_TOTAL_BYTES) * 100);
   const meterState =
     totalPercent >= 90 ? "danger" : totalPercent >= 70 ? "warn" : "ok";
+
+  const toggleCategory = (value) => {
+    setForm(f => ({
+      ...f,
+      categories: f.categories.includes(value)
+        ? f.categories.filter(c => c !== value)
+        : [...f.categories, value],
+    }));
+  };
 
   const handlePhotosChange = (e) => {
     const files = Array.from(e.target.files || []);
@@ -254,18 +250,13 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
         break;
       }
       if (!file.type.startsWith("image/")) {
-        problems.push(`${file.name} is not an image.`);
-        continue;
+        problems.push(`${file.name} is not an image.`); continue;
       }
       if (file.size > MAX_FILE_BYTES) {
-        problems.push(`${file.name} is ${formatBytes(file.size)} (max ${MAX_FILE_MB} MB each).`);
-        continue;
+        problems.push(`${file.name} is ${formatBytes(file.size)} (max ${MAX_FILE_MB} MB each).`); continue;
       }
       if (runningTotal + file.size > MAX_TOTAL_BYTES) {
-        problems.push(
-          `${file.name} would exceed the ${MAX_TOTAL_MB} MB total limit.`
-        );
-        continue;
+        problems.push(`${file.name} would exceed the ${MAX_TOTAL_MB} MB total limit.`); continue;
       }
       runningTotal += file.size;
       accepted.push(file);
@@ -278,7 +269,6 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
         problems.join(" ")
       );
     }
-
     if (accepted.length === 0) return;
 
     setPhotoFiles(prev => [...prev, ...accepted]);
@@ -295,8 +285,12 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
   };
 
   const handleSubmitClick = () => {
-    if (!form.roomId) return showToast("error", "Select Room", "Please select the room.");
-    if (!form.category) return showToast("error", "Select Category", "Please choose a category.");
+    if (!form.roomId)
+      return showToast("error", "Select Room", "Please select the room.");
+    if (form.categories.length === 0)
+      return showToast("error", "Select Category", "Please choose at least one category.");
+    if (form.categories.includes("Other") && !form.otherCategory.trim())
+      return showToast("error", "Specify Type", "Please specify the custom issue type for \"Other\".");
     if (!form.description.trim() || form.description.trim().length < 5)
       return showToast("error", "Description Required", "Please describe the issue (min 5 characters).");
     if (totalBytes > MAX_TOTAL_BYTES)
@@ -332,16 +326,17 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
         setUploading(false);
       }
 
-      // ── 1️⃣ Create the issue ──────────────────────────────
       const issueRef = await addDoc(collection(db, "roomIssues"), {
         roomId:         form.roomId,
         roomName:       selectedRoom?.roomName || "",
         floor:          selectedRoom?.floor || "",
-        category:       form.category,
+        // NEW: store both array & joined string (backward compat)
+        categories:     finalCategories,
+        category:       categoryLabel,
         severity:       form.severity,
         description:    form.description.trim(),
         photoUrls,
-        photoUrl: photoUrls[0] || "",
+        photoUrl:       photoUrls[0] || "",
         reporterId:     user.uid,
         reporterName,
         reporterRole,
@@ -354,29 +349,22 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
         createdAt:      serverTimestamp(),
       });
 
-      // ── 2️⃣ 🔔 Notify all ADMINS ──────────────────────────
       await notifyAllAdmins({
-        issueId:      issueRef.id,
-        roomId:       form.roomId,
-        reporterName,
-        roomName:     selectedRoom?.roomName || "",
-        category:     form.category,
-        severity:     form.severity,
-        description:  form.description.trim(),
+        issueId: issueRef.id, roomId: form.roomId, reporterName,
+        roomName: selectedRoom?.roomName || "",
+        categories: finalCategories, categoryLabel,
+        severity: form.severity, description: form.description.trim(),
       });
 
-      // ── 3️⃣ 🔔 Notify the reporter (faculty confirmation) ─
       await notifyReporterSubmitted({
-        reporterId: user.uid,
-        issueId:    issueRef.id,
-        roomName:   selectedRoom?.roomName || "",
-        category:   form.category,
-        severity:   form.severity,
+        reporterId: user.uid, issueId: issueRef.id,
+        roomName: selectedRoom?.roomName || "",
+        categories: finalCategories, categoryLabel,
+        severity: form.severity,
       });
 
       showToast(
-        "success",
-        "Issue Reported ✓",
+        "success", "Issue Reported ✓",
         "Your report was sent to the Admin. Please wait for their acknowledgment. Thank you for reporting!"
       );
       onSubmitted?.();
@@ -410,10 +398,9 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
           </div>
 
           <div className="sim-body">
-            {/* ═════════ ROOM PICKER ═════════ */}
+            {/* ROOM PICKER (unchanged) */}
             <div className="sim-field">
               <label>Room <span className="sim-required">*</span></label>
-
               <div className="sim-roompicker">
                 <button
                   type="button"
@@ -429,104 +416,70 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
                   <span className="sim-room-trigger-text">
                     {loadingRooms
                       ? "Loading rooms..."
-                      : selectedRoom
-                      ? selectedRoom.roomName
+                      : selectedRoom ? selectedRoom.roomName
                       : "Select a room"}
                   </span>
                   {selectedRoom?.floor && (
-                    <span className="sim-room-trigger-floor">
-                      {selectedRoom.floor}
-                    </span>
+                    <span className="sim-room-trigger-floor">{selectedRoom.floor}</span>
                   )}
-                  <i
-                    className={`fa-solid fa-chevron-down sim-room-caret ${
-                      showRoomPicker ? "open" : ""
-                    }`}
-                  ></i>
+                  <i className={`fa-solid fa-chevron-down sim-room-caret ${showRoomPicker ? "open" : ""}`}></i>
                 </button>
 
                 {showRoomPicker && (
                   <>
-                    <div
-                      className="sim-room-clickaway"
-                      onClick={() => setShowRoomPicker(false)}
-                    ></div>
+                    <div className="sim-room-clickaway" onClick={() => setShowRoomPicker(false)}></div>
                     <div className="sim-room-popover">
                       <span className="sim-room-popover-arrow"></span>
-
                       <div className="sim-room-search-wrap">
                         <i className="fa-solid fa-magnifying-glass"></i>
                         <input
-                          type="text"
-                          className="sim-room-search"
+                          type="text" className="sim-room-search"
                           placeholder="Search room, floor, building..."
                           value={roomSearch}
                           onChange={(e) => setRoomSearch(e.target.value)}
                           autoFocus
                         />
                         {roomSearch && (
-                          <button
-                            type="button"
-                            className="sim-room-search-clear"
-                            onClick={() => setRoomSearch("")}
-                          >
+                          <button type="button" className="sim-room-search-clear" onClick={() => setRoomSearch("")}>
                             <i className="fa-solid fa-xmark"></i>
                           </button>
                         )}
                       </div>
-
                       <div className="sim-room-list">
                         {filteredRooms.length === 0 ? (
                           <div className="sim-room-empty">
                             <i className="fa-regular fa-face-frown"></i>
                             <span>No rooms match your search.</span>
                           </div>
-                        ) : (
-                          filteredRooms.map((r) => {
-                            const isActive = r.id === form.roomId;
-                            return (
-                              <button
-                                type="button"
-                                key={r.id}
-                                className={`sim-room-option ${
-                                  isActive ? "is-active" : ""
-                                }`}
-                                onClick={() => {
-                                  setForm((f) => ({ ...f, roomId: r.id }));
-                                  setShowRoomPicker(false);
-                                  setRoomSearch("");
-                                }}
-                              >
-                                <div className="sim-room-option-icon">
-                                  <i className="fa-solid fa-door-open"></i>
-                                </div>
-                                <div className="sim-room-option-body">
-                                  <span className="sim-room-option-name">
-                                    {r.roomName}
-                                  </span>
-                                  <span className="sim-room-option-meta">
-                                    {r.floor && (
-                                      <>
-                                        <i className="fa-solid fa-building"></i>
-                                        {r.floor}
-                                      </>
-                                    )}
-                                    {r.capacity && (
-                                      <>
-                                        <span className="sim-room-dot">•</span>
-                                        <i className="fa-solid fa-users"></i>
-                                        {r.capacity} Seats
-                                      </>
-                                    )}
-                                  </span>
-                                </div>
-                                {isActive && (
-                                  <i className="fa-solid fa-circle-check sim-room-option-check"></i>
-                                )}
-                              </button>
-                            );
-                          })
-                        )}
+                        ) : filteredRooms.map((r) => {
+                          const isActive = r.id === form.roomId;
+                          return (
+                            <button
+                              type="button" key={r.id}
+                              className={`sim-room-option ${isActive ? "is-active" : ""}`}
+                              onClick={() => {
+                                setForm((f) => ({ ...f, roomId: r.id }));
+                                setShowRoomPicker(false);
+                                setRoomSearch("");
+                              }}
+                            >
+                              <div className="sim-room-option-icon">
+                                <i className="fa-solid fa-door-open"></i>
+                              </div>
+                              <div className="sim-room-option-body">
+                                <span className="sim-room-option-name">{r.roomName}</span>
+                                <span className="sim-room-option-meta">
+                                  {r.floor && (<><i className="fa-solid fa-building"></i>{r.floor}</>)}
+                                  {r.capacity && (
+                                    <><span className="sim-room-dot">•</span>
+                                      <i className="fa-solid fa-users"></i>{r.capacity} Seats</>
+                                  )}
+                                </span>
+                              </div>
+                              {isActive && <i className="fa-solid fa-circle-check sim-room-option-check"></i>}
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   </>
@@ -534,22 +487,57 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
               </div>
             </div>
 
-            {/* Category grid */}
+            {/* MULTI-SELECT CATEGORY GRID */}
             <div className="sim-field">
-              <label>Issue Category <span className="sim-required">*</span></label>
+              <label>
+                Issue Categories <span className="sim-required">*</span>
+                <span className="sim-optional"> (select one or more)</span>
+              </label>
               <div className="sim-cat-grid">
-                {CATEGORIES.map(c => (
-                  <button
-                    key={c.value}
-                    type="button"
-                    className={`sim-cat ${form.category === c.value ? "active" : ""}`}
-                    onClick={() => setForm(f => ({ ...f, category: c.value }))}
-                  >
-                    <i className={`fa-solid ${c.icon}`} />
-                    <span>{c.label}</span>
-                  </button>
-                ))}
+                {CATEGORIES.map(c => {
+                  const isActive = form.categories.includes(c.value);
+                  return (
+                    <button
+                      key={c.value}
+                      type="button"
+                      className={`sim-cat ${isActive ? "active" : ""}`}
+                      onClick={() => toggleCategory(c.value)}
+                      aria-pressed={isActive}
+                    >
+                      <i className={`fa-solid ${c.icon}`} />
+                      <span>{c.label}</span>
+                    </button>
+                  );
+                })}
               </div>
+
+              {/* Custom type input when "Other" is selected */}
+              {form.categories.includes("Other") && (
+                <div className="sim-other-input-wrap">
+                  <i className="fa-solid fa-pen"></i>
+                  <input
+                    type="text"
+                    className="sim-other-input"
+                    placeholder="Specify the custom issue type..."
+                    value={form.otherCategory}
+                    onChange={(e) =>
+                      setForm(f => ({ ...f, otherCategory: e.target.value }))
+                    }
+                    maxLength={60}
+                    autoFocus
+                  />
+                  {form.otherCategory && (
+                    <button
+                      type="button"
+                      className="sim-other-clear"
+                      onClick={() => setForm(f => ({ ...f, otherCategory: "" }))}
+                      aria-label="Clear custom type"
+                    >
+                      <i className="fa-solid fa-xmark"></i>
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Severity */}
@@ -575,9 +563,7 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
             <div className="sim-field">
               <label>Description <span className="sim-required">*</span></label>
               <textarea
-                className="sim-textarea"
-                rows={4}
-                maxLength={500}
+                className="sim-textarea" rows={4} maxLength={500}
                 placeholder="Describe the issue briefly — what happened, where exactly, and how severe."
                 value={form.description}
                 onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
@@ -585,37 +571,29 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
               <span className="sim-counter">{form.description.length}/500</span>
             </div>
 
-            {/* Photos — limits are visible up front */}
+            {/* Photos */}
             <div className="sim-field">
               <label>
-                Photos <span className="sim-optional">
-                  (optional · {photoFiles.length}/{MAX_PHOTOS})
-                </span>
+                Photos <span className="sim-optional">(optional · {photoFiles.length}/{MAX_PHOTOS})</span>
               </label>
-
               <p className="sim-photo-rules">
                 <i className="fa-solid fa-circle-info" />
                 <span>
                   Up to <strong>{MAX_PHOTOS} photos</strong>, <strong>{MAX_FILE_MB} MB</strong> each,
-                  and <strong>{MAX_TOTAL_MB} MB</strong> in total. Clear photos help the
-                  Admin and Clerk act faster.
+                  and <strong>{MAX_TOTAL_MB} MB</strong> in total.
                 </span>
               </p>
-
               {previewUrls.length > 0 && (
                 <>
                   <div className="sim-photo-grid">
                     {previewUrls.map((url, i) => (
                       <div key={url} className="sim-photo-cell">
                         <img src={url} alt={`Preview ${i + 1}`} />
-                        <span className="sim-photo-size">
-                          {formatBytes(photoFiles[i]?.size || 0)}
-                        </span>
+                        <span className="sim-photo-size">{formatBytes(photoFiles[i]?.size || 0)}</span>
                         <button
                           type="button"
                           className="sim-photo-remove-icon"
                           onClick={() => removePhotoAt(i)}
-                          aria-label={`Remove photo ${i + 1}`}
                           disabled={uploading}
                         >
                           <i className="fa-solid fa-xmark" />
@@ -623,57 +601,41 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
                       </div>
                     ))}
                   </div>
-
                   <div className={`sim-size-meter ${meterState}`}>
                     <div className="sim-size-meter-top">
                       <span>Total size</span>
-                      <span>
-                        <strong>{formatBytes(totalBytes)}</strong> / {MAX_TOTAL_MB} MB
-                      </span>
+                      <span><strong>{formatBytes(totalBytes)}</strong> / {MAX_TOTAL_MB} MB</span>
                     </div>
                     <div className="sim-size-meter-bar">
-                      <div
-                        className="sim-size-meter-fill"
-                        style={{ width: `${totalPercent}%` }}
-                      />
+                      <div className="sim-size-meter-fill" style={{ width: `${totalPercent}%` }} />
                     </div>
                   </div>
                 </>
               )}
-
               {photoFiles.length < MAX_PHOTOS && !uploading && (
                 <button
-                  type="button"
-                  className="sim-photo-btn"
+                  type="button" className="sim-photo-btn"
                   onClick={() => fileInputRef.current?.click()}
                 >
                   <i className="fa-solid fa-camera" />
                   {previewUrls.length === 0 ? "Attach Photos" : "Add More Photos"}
                 </button>
               )}
-
               {uploading && (
                 <div className="sim-upload-progress">
                   <i className="fa-solid fa-circle-notch fa-spin" />
                   Uploading photo {uploadProgress.done} of {uploadProgress.total}…
                 </div>
               )}
-
               <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                hidden
+                ref={fileInputRef} type="file" accept="image/*" multiple hidden
                 onChange={handlePhotosChange}
               />
             </div>
           </div>
 
           <div className="sim-footer">
-            <button className="sim-btn cancel" onClick={onClose} disabled={submitting}>
-              Cancel
-            </button>
+            <button className="sim-btn cancel" onClick={onClose} disabled={submitting}>Cancel</button>
             <button
               className="sim-btn submit"
               onClick={handleSubmitClick}
@@ -681,67 +643,46 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
             >
               {submitting || uploading
                 ? <><i className="fa-solid fa-circle-notch fa-spin" /> Submitting...</>
-                : <><i className="fa-solid fa-paper-plane" /> Submit Report</>
-              }
+                : <><i className="fa-solid fa-paper-plane" /> Submit Report</>}
             </button>
           </div>
         </div>
       </div>
 
-      {/* ═══════════ PREVIEW MODAL ═══════════ */}
+      {/* PREVIEW MODAL */}
       {showPreview && (
-        <div
-          className="sim-preview-overlay"
-          onClick={() => !submitting && setShowPreview(false)}
-        >
-          <div
-            className="sim-preview-modal"
-            onClick={(e) => e.stopPropagation()}
-          >
+        <div className="sim-preview-overlay" onClick={() => !submitting && setShowPreview(false)}>
+          <div className="sim-preview-modal" onClick={(e) => e.stopPropagation()}>
             <div className="sim-preview-header">
-              <div className="sim-preview-icon">
-                <i className="fa-solid fa-clipboard-check"></i>
-              </div>
+              <div className="sim-preview-icon"><i className="fa-solid fa-clipboard-check"></i></div>
               <h3>Review Your Report</h3>
-              <p className="sim-preview-subtitle">
-                Please check the details below before submitting.
-              </p>
+              <p className="sim-preview-subtitle">Please check the details below before submitting.</p>
             </div>
 
             <div className="sim-preview-body">
               <div className="sim-preview-row">
                 <span className="sim-preview-label">Room</span>
-                <span className="sim-preview-value">
-                  {selectedRoom?.roomName || "—"}
-                </span>
+                <span className="sim-preview-value">{selectedRoom?.roomName || "—"}</span>
               </div>
-
               <div className="sim-preview-row">
                 <span className="sim-preview-label">Floor</span>
-                <span className="sim-preview-value">
-                  {selectedRoom?.floor || "—"}
-                </span>
+                <span className="sim-preview-value">{selectedRoom?.floor || "—"}</span>
               </div>
 
-              <div className="sim-preview-row">
-                <span className="sim-preview-label">Category</span>
-                <span className="sim-preview-value">
-                  {selectedCategoryMeta ? (
-                    <>
-                      {selectedCategoryMeta.label}
-                    </>
-                  ) : (
-                    "—"
-                  )}
+              <div className="sim-preview-row sim-preview-row--stacked">
+                <span className="sim-preview-label">
+                  Categories ({finalCategories.length})
                 </span>
+                <div className="sim-preview-chips">
+                  {finalCategories.map((c, idx) => (
+                    <span key={`${c}-${idx}`} className="sim-preview-chip">{c}</span>
+                  ))}
+                </div>
               </div>
 
               <div className="sim-preview-row">
                 <span className="sim-preview-label">Severity</span>
-                <span
-                  className="sim-preview-sev"
-                  style={{ "--sev-color": selectedSeverityMeta.color }}
-                >
+                <span className="sim-preview-sev" style={{ "--sev-color": selectedSeverityMeta.color }}>
                   <span className="sim-preview-sev-dot" />
                   {selectedSeverityMeta.label}
                 </span>
@@ -773,11 +714,9 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
                 <i className="fa-solid fa-circle-info"></i>
                 <span>
                   After submitting, please wait for the <strong>Admin to acknowledge</strong>{" "}
-                  your report before it can be resolved. You'll be notified once it's
-                  reviewed.
+                  your report before it can be resolved.
                 </span>
               </div>
-
               <div className="sim-preview-thanks">
                 <i className="fa-solid fa-heart"></i>
                 <span>Thank you for helping us keep our rooms in good condition!</span>
@@ -790,30 +729,22 @@ export default function SubmitIssueModal({ open, onClose, onSubmitted, presetRoo
                 onClick={() => setShowPreview(false)}
                 disabled={submitting}
               >
-                <i className="fa-solid fa-pen-to-square"></i>
-                Edit Report
+                <i className="fa-solid fa-pen-to-square"></i> Edit Report
               </button>
               <button
                 className={`sim-preview-confirm-btn ${submitting ? "disabled" : ""}`}
                 onClick={handleConfirmSubmit}
                 disabled={submitting || uploading}
               >
-                {submitting || uploading ? (
-                  <>
-                    <i className="fa-solid fa-spinner fa-spin"></i> Submitting...
-                  </>
-                ) : (
-                  <>
-                    <i className="fa-solid fa-circle-check"></i> Confirm & Submit
-                  </>
-                )}
+                {submitting || uploading
+                  ? <><i className="fa-solid fa-spinner fa-spin"></i> Submitting...</>
+                  : <><i className="fa-solid fa-circle-check"></i> Confirm & Submit</>}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ═══ TOAST — wrapped para hindi matakpan ng modal overlay ═══ */}
       <div className="sim-toast-layer">
         <Toast
           show={toast.show} type={toast.type} title={toast.title} message={toast.message}

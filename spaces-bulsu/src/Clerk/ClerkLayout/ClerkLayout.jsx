@@ -82,7 +82,6 @@ export default function ClerkLayout() {
         }));
         setNotifications(list);
 
-        // 🔔 Fire real browser push for any NEW notifications
         fireNewNotifications(list);
       });
 
@@ -284,7 +283,6 @@ export default function ClerkLayout() {
   return (
     <>
       <div className="clerk-layout">
-
         {/* MOBILE OVERLAY */}
         {sidebarOpen && isMobile && (
           <div
@@ -298,7 +296,11 @@ export default function ClerkLayout() {
           className={`clerk-sidebar ${sidebarOpen ? "clerk-sidebar-open" : ""}`}
         >
           <div className="clerk-logo">
-            <img src="/SpaceSLogo.png" alt="SpaceS Logo" className="clerk-logo-img" />
+            <img
+              src="/SpaceSLogo.png"
+              alt="SpaceS Logo"
+              className="clerk-logo-img"
+            />
             <div className="clerk-logo-text">
               <h2>SpaceS CICT</h2>
               <span>CICT Clerk</span>
@@ -320,14 +322,16 @@ export default function ClerkLayout() {
               to="/clerk"
               className={({ isActive }) => (isActive ? "clerk-active" : "")}
             >
-              <i className="fa-solid fa-house"></i><span>Dashboard</span>
+              <i className="fa-solid fa-house"></i>
+              <span>Dashboard</span>
             </NavLink>
 
             <NavLink
               to="/clerk/schedule-view-academic-schedule"
               className={({ isActive }) => (isActive ? "clerk-active" : "")}
             >
-              <i className="fa-solid fa-calendar"></i><span>Schedule</span>
+              <i className="fa-solid fa-calendar"></i>
+              <span>Schedule</span>
             </NavLink>
 
             <div className="clerk-nav-group">
@@ -363,6 +367,7 @@ export default function ClerkLayout() {
               </div>
             </div>
 
+            {/* ROOMS SUBMENU */}
             <div className="clerk-nav-group">
               <button
                 type="button"
@@ -383,25 +388,38 @@ export default function ClerkLayout() {
                   to="/clerk/room-activity"
                   className={({ isActive }) => (isActive ? "clerk-active" : "")}
                 >
-                  <i className="fa-solid fa-clock"></i><span>Room Activity</span>
+                  <i className="fa-solid fa-clock"></i>
+                  <span>Room Activity</span>
                 </NavLink>
                 <NavLink
                   to="/clerk/room-issues"
                   className={({ isActive }) => (isActive ? "clerk-active" : "")}
                 >
-                  <i className="fa-solid fa-clipboard-list"></i><span>Room Issues</span>
+                  <i className="fa-solid fa-clipboard-list"></i>
+                  <span>Room Issues</span>
                 </NavLink>
                 <NavLink
                   to="/clerk/room-management"
                   className={({ isActive }) => (isActive ? "clerk-active" : "")}
                 >
-                  <i className="fa-solid fa-door-open"></i><span>Room Management</span>
+                  <i className="fa-solid fa-door-open"></i>
+                  <span>Room Management</span>
                 </NavLink>
                 <NavLink
                   to="/clerk/room-usage"
                   className={({ isActive }) => (isActive ? "clerk-active" : "")}
                 >
-                  <i className="fa-solid fa-chart-simple"></i><span>Room Usage</span>
+                  <i className="fa-solid fa-chart-simple"></i>
+                  <span>Room Usage</span>
+                </NavLink>
+
+                {/* 🆕 QR CODE — nasa loob na ng Room submenu, sa dulo */}
+                <NavLink
+                  to="/clerk/qr-code"
+                  className={({ isActive }) => (isActive ? "clerk-active" : "")}
+                >
+                  <i className="fa-solid fa-qrcode"></i>
+                  <span>QR Code</span>
                 </NavLink>
               </div>
             </div>
@@ -410,14 +428,16 @@ export default function ClerkLayout() {
               to="/clerk/conflicts"
               className={({ isActive }) => (isActive ? "clerk-active" : "")}
             >
-              <i className="fa-solid fa-exclamation-triangle"></i><span>Conflicts</span>
+              <i className="fa-solid fa-exclamation-triangle"></i>
+              <span>Conflicts</span>
             </NavLink>
 
             <NavLink
               to="/clerk/broadcast-channel"
               className={({ isActive }) => (isActive ? "clerk-active" : "")}
             >
-              <i className="fa-solid fa-bullhorn"></i><span>Announcement Channel</span>
+              <i className="fa-solid fa-bullhorn"></i>
+              <span>Announcement Channel</span>
             </NavLink>
           </nav>
 
@@ -432,7 +452,9 @@ export default function ClerkLayout() {
                       {profile.photoUrl ? (
                         <img src={profile.photoUrl} alt="Profile" />
                       ) : (
-                        <span>{initials || <i className="fa-solid fa-user" />}</span>
+                        <span>
+                          {initials || <i className="fa-solid fa-user" />}
+                        </span>
                       )}
                     </div>
                     <div className="clerk-profile-dropdown-user">
@@ -486,7 +508,9 @@ export default function ClerkLayout() {
 
             <button
               type="button"
-              className={`clerk-sidebar-profile ${showProfileMenu ? "menu-open" : ""}`}
+              className={`clerk-sidebar-profile ${
+                showProfileMenu ? "menu-open" : ""
+              }`}
               onClick={() => setShowProfileMenu((v) => !v)}
             >
               <div className="clerk-sidebar-avatar">
@@ -515,9 +539,7 @@ export default function ClerkLayout() {
 
         {/* ================= MAIN ================= */}
         <div className="clerk-main">
-
           <header className="clerk-header">
-            {/* HAMBURGER — mobile only */}
             <button
               type="button"
               className="clerk-hamburger"
@@ -528,7 +550,6 @@ export default function ClerkLayout() {
             </button>
 
             <div className="clerk-header-actions">
-              {/* NOTIFICATION TRIGGER */}
               <div className="clerk-notification-container">
                 <button
                   type="button"
@@ -540,7 +561,9 @@ export default function ClerkLayout() {
                 >
                   <i
                     className={`fa-bell ${
-                      unreadCount > 0 ? "fa-solid clerk-bell-active" : "fa-regular"
+                      unreadCount > 0
+                        ? "fa-solid clerk-bell-active"
+                        : "fa-regular"
                     }`}
                   ></i>
                   {unreadCount > 0 && (
@@ -585,7 +608,8 @@ export default function ClerkLayout() {
                           className={activeTab === "all" ? "clerk-active" : ""}
                           onClick={() => setActiveTab("all")}
                         >
-                          All <span className="clerk-notif-tab-count">{allCount}</span>
+                          All{" "}
+                          <span className="clerk-notif-tab-count">{allCount}</span>
                         </button>
                         <button
                           type="button"
@@ -593,7 +617,9 @@ export default function ClerkLayout() {
                           onClick={() => setActiveTab("unread")}
                         >
                           Unread{" "}
-                          <span className="clerk-notif-tab-count">{unreadCount}</span>
+                          <span className="clerk-notif-tab-count">
+                            {unreadCount}
+                          </span>
                         </button>
                       </div>
 
@@ -604,7 +630,8 @@ export default function ClerkLayout() {
                             className="clerk-notif-mark-all"
                             onClick={markAllAsRead}
                           >
-                            <i className="fa-solid fa-check-double"></i> Mark all as read
+                            <i className="fa-solid fa-check-double"></i> Mark all
+                            as read
                           </button>
                         </div>
                       )}
@@ -622,7 +649,9 @@ export default function ClerkLayout() {
                           filteredNotifications.map((item, i) => (
                             <div
                               key={item.id}
-                              style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}
+                              style={{
+                                animationDelay: `${Math.min(i, 8) * 40}ms`,
+                              }}
                             >
                               <NotificationCard
                                 icon={typeIcon[item.type] || typeIcon.default}
@@ -673,7 +702,6 @@ export default function ClerkLayout() {
             className="notif-detail-card-DH"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* drag handle — visual affordance on mobile */}
             <span className="notif-detail-handle-DH" aria-hidden="true" />
 
             <button
@@ -686,8 +714,16 @@ export default function ClerkLayout() {
             </button>
 
             <div className="notif-detail-head-DH">
-              <div className={`notif-detail-icon-DH type-${selectedNotification.type || "default"}`}>
-                <i className={typeIcon[selectedNotification.type] || typeIcon.default}></i>
+              <div
+                className={`notif-detail-icon-DH type-${
+                  selectedNotification.type || "default"
+                }`}
+              >
+                <i
+                  className={
+                    typeIcon[selectedNotification.type] || typeIcon.default
+                  }
+                ></i>
               </div>
               <div className="notif-detail-head-text-DH">
                 <div className="notif-detail-type-DH">

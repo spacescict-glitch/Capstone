@@ -11,7 +11,6 @@ import {
   doc,
   updateDoc,
   writeBatch,
-  getDoc,
 } from "firebase/firestore";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import LogoutPopup from "../../Popup/LogoutPopup/LogoutPopup";
@@ -20,6 +19,7 @@ import { fireNewNotifications } from "../../utils/pushNotifications";
 
 export default function AdminLayout() {
   const [openRoom, setOpenRoom] = useState(false);
+  const [openSchedule, setOpenSchedule] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
@@ -45,16 +45,31 @@ export default function AdminLayout() {
   const [activeTab, setActiveTab] = useState("all");
   const [selectedNotification, setSelectedNotification] = useState(null);
 
-  const roomRoutes = [
-    "/admin/room-management",
-    "/admin/room-usagement",
-  ];
+  const roomRoutes = ["/admin/room-management", "/admin/room-usagement"];
+  const isRoomActive = roomRoutes.some((path) =>
+    location.pathname.startsWith(path)
+  );
 
-  const isRoomActive = roomRoutes.some((path) => location.pathname.startsWith(path));
+  const scheduleRoutes = [
+    "/admin/schedule-view-academic-schedule",
+    "/admin/schedule-room-card",
+    "/admin/bulk-upload-1",
+    "/admin/bulk-upload-2",
+    "/admin/bulk-upload-3",
+    "/admin/bulk-upload-4",
+    "/admin/my-submitted-schedules",
+  ];
+  const isScheduleActive = scheduleRoutes.some((path) =>
+    location.pathname.startsWith(path)
+  );
 
   useEffect(() => {
     setOpenRoom(isRoomActive);
   }, [isRoomActive]);
+
+  useEffect(() => {
+    setOpenSchedule(isScheduleActive);
+  }, [isScheduleActive]);
 
   /* ---------- Outside click for profile dropdown ---------- */
   useEffect(() => {
@@ -105,8 +120,6 @@ export default function AdminLayout() {
           ...doc.data(),
         }));
         setNotifications(list);
-
-        // 🔔 Fire real browser push for any NEW notifications
         fireNewNotifications(list);
       });
 
@@ -289,13 +302,8 @@ export default function AdminLayout() {
   return (
     <>
       <div className="dept-layout">
-
-        {/* MOBILE OVERLAY */}
         {sidebarOpen && isMobile && (
-          <div
-            className="dept-sidebar-overlay"
-            onClick={() => setSidebarOpen(false)}
-          />
+          <div className="dept-sidebar-overlay" onClick={() => setSidebarOpen(false)} />
         )}
 
         <aside className={`dept-sidebar ${sidebarOpen ? "dept-sidebar-open" : ""}`}>
@@ -327,10 +335,31 @@ export default function AdminLayout() {
               <i className="fa-solid fa-bookmark"></i>
               <span>Reservations</span>
             </NavLink>
-            <NavLink to="/admin/schedule-view-academic-schedule">
-              <i className="fa-solid fa-calendar-days"></i>
-              <span>Schedule</span>
-            </NavLink>
+
+            {/* SCHEDULE SUBMENU */}
+            <div className="nav-group">
+              <button
+                type="button"
+                className={`dept-nav-parent ${isScheduleActive ? "active-parent" : ""}`}
+                onClick={() => setOpenSchedule(!openSchedule)}
+              >
+                <div className="nav-left">
+                  <i className="fa-solid fa-calendar-days"></i>
+                  <span>Schedule</span>
+                </div>
+                <i className={`fa-solid fa-chevron-down arrowDH ${openSchedule ? "open" : ""}`} />
+              </button>
+
+              <div className={`submenu-card ${openSchedule ? "open" : ""}`}>
+                <NavLink to="/admin/schedule-view-academic-schedule">
+                  View Academic Schedule
+                </NavLink>
+                <NavLink to="/admin/bulk-upload-1">Bulk Upload</NavLink>
+                <NavLink to="/admin/my-submitted-schedules">
+                  My Submitted Schedules
+                </NavLink>
+              </div>
+            </div>
 
             <div className="nav-group">
               <button
@@ -425,7 +454,6 @@ export default function AdminLayout() {
 
         <div className="dept-main">
           <header className="dept-header">
-            {/* HAMBURGER — mobile only */}
             <button
               type="button"
               className="dept-hamburger"
@@ -538,30 +566,13 @@ export default function AdminLayout() {
         </div>
       </div>
 
-      {/* ── NOTIFICATION DETAIL OVERLAY ─────────────────────── */}
       {selectedNotification && (
-        <div
-          className="notif-detail-overlay-DH"
-          onClick={closeNotificationDetail}
-          role="dialog"
-          aria-modal="true"
-        >
-          <div
-            className="notif-detail-card-DH"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* drag handle — visual affordance on mobile */}
+        <div className="notif-detail-overlay-DH" onClick={closeNotificationDetail} role="dialog" aria-modal="true">
+          <div className="notif-detail-card-DH" onClick={(e) => e.stopPropagation()}>
             <span className="notif-detail-handle-DH" aria-hidden="true" />
-
-            <button
-              type="button"
-              className="notif-detail-close-DH"
-              onClick={closeNotificationDetail}
-              aria-label="Close"
-            >
+            <button type="button" className="notif-detail-close-DH" onClick={closeNotificationDetail} aria-label="Close">
               <i className="fa-solid fa-xmark"></i>
             </button>
-
             <div className="notif-detail-head-DH">
               <div className={`notif-detail-icon-DH type-${selectedNotification.type || "default"}`}>
                 <i className={typeIcon[selectedNotification.type] || typeIcon.default}></i>
@@ -575,29 +586,20 @@ export default function AdminLayout() {
                 </h3>
               </div>
             </div>
-
             <div className="notif-detail-meta-DH">
               <span>
                 <i className="fa-regular fa-clock"></i>
                 {formatFullTime(selectedNotification.createdAt)}
               </span>
               {selectedNotification.badge && (
-                <span className="notif-detail-badge-DH">
-                  {selectedNotification.badge}
-                </span>
+                <span className="notif-detail-badge-DH">{selectedNotification.badge}</span>
               )}
             </div>
-
             <div className="notif-detail-message-DH">
               {selectedNotification.message || "No additional details."}
             </div>
-
             <div className="notif-detail-footer-DH">
-              <button
-                type="button"
-                className="notif-detail-btn-DH"
-                onClick={closeNotificationDetail}
-              >
+              <button type="button" className="notif-detail-btn-DH" onClick={closeNotificationDetail}>
                 Close
               </button>
             </div>

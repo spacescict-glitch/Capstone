@@ -62,24 +62,30 @@ overflow:hidden;
 .dept-logo-icon img{ width:100%; height:100%; object-fit:contain; }
 
 .dept-logo-text{
-display:flex;
-flex-direction:column;
-min-width:0;
+  display:flex;
+  flex-direction:column;
+  min-width:0;
+  gap:3px;
 }
 
 .dept-logo-text h2{
-margin:0;
-font-size:18px;
-line-height:1;
-color:#16213e;
-white-space:nowrap;
+  margin:0;
+  font-size:20px;
+  font-weight:800;
+  line-height:1;
+  letter-spacing:-0.02em;
+  color:#16213e;
+  white-space:nowrap;
 }
 
 .dept-logo-text span{
-font-size:10px;
-color:#f57c00;
-margin-top:4px;
-white-space:nowrap;
+  font-size:10.5px;
+  font-weight:700;
+  letter-spacing:0.08em;
+  text-transform:uppercase;
+  color:#f57c00;
+  line-height:1;
+  white-space:nowrap;
 }
 
 /* Drawer close */

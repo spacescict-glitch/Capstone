@@ -29,6 +29,7 @@
   justify-content: space-between;
   align-items: center;
   margin: 20px;
+  margin-bottom: 16px;
   flex-wrap: wrap;
   gap: 12px;
 }
@@ -183,16 +184,235 @@
   color: #888;
 }
 
+/* ─── Header right cluster (room name + export btn) ─────────────── */
+.lr-vr-header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.lr-vr-export-pdf-btn {
+  padding: 8px 16px;
+  background: #f57c00;
+  border: none;
+  border-radius: 8px;
+  color: white;
+  font-weight: 700;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+
+.lr-vr-export-pdf-btn:hover:not(:disabled) {
+  background: #e06b00;
+}
+
+.lr-vr-export-pdf-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   .lr-vr-class-details — STACK WRAPPER (fixed, bottom-right)
+   ─────────────────────────────────────────────────────────────────
+   Holds the ClassDetailsCard + the Edit button, stacked vertically
+   with flexbox. The card and button are now guaranteed to be in the
+   same stacking context, so no more z-index/backdrop fights.
+   ═══════════════════════════════════════════════════════════════════ */
 .lr-vr-class-details {
   position: fixed;
   bottom: 24px;
   right: 24px;
   z-index: 999;
-  max-width: 360px;
-  width: calc(100% - 48px);
+  width: 320px;
+  max-width: calc(100vw - 32px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: none; /* empty space around won't block clicks */
 }
 
-/* ============ RESPONSIVE ============ */
+/* Re-enable clicks on actual children (card + button) */
+.lr-vr-class-details > * {
+  pointer-events: auto;
+}
+
+/* ── Hide the backdrop ONLY inside our wrapper ────────────────────
+   Backdrop is what caused the blur + click-through issues. Other
+   pages using <ClassDetailsCard> are unaffected. */
+.lr-vr-class-details .class-details-backdrop {
+  display: none;
+}
+
+/* ── Turn ClassDetailsCard into a normal flow child ───────────────
+   This override is SCOPED to .lr-vr-class-details, so it does not
+   affect any other usage of <ClassDetailsCard> elsewhere. */
+.lr-vr-class-details .class-details-card {
+  position: relative;
+  top: auto;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  transform: none;
+  width: 100%;
+  max-width: 100%;
+  max-height: none;
+  margin: 0;
+  animation: none;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   EDIT BUTTON — now a normal flow child in the flex column
+   Sits BELOW the ClassDetailsCard. Full width, orange, obvious.
+   ═══════════════════════════════════════════════════════════════════ */
+.lr-vr-edit-sched-btn {
+  width: 100%;
+  background: #f57c00;
+  color: #ffffff;
+  border: none;
+  padding: 12px 16px;
+  border-radius: 10px;
+  font-weight: 700;
+  font-size: 13.5px;
+  font-family: inherit;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(245, 124, 0, 0.35);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.lr-vr-edit-sched-btn:hover {
+  background: #e06a00;
+  box-shadow: 0 6px 18px rgba(245, 124, 0, 0.45);
+}
+
+.lr-vr-edit-sched-btn:active {
+  transform: scale(0.97);
+}
+
+.lr-vr-edit-sched-btn i {
+  font-size: 13px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Reusable confirm/edit modal (matches the Submitted Schedules one)
+   ═══════════════════════════════════════════════════════════════════ */
+.msd-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  animation: msdFade 0.2s ease;
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+.msd-modal {
+  background: #fff;
+  border-radius: 16px;
+  width: 100%;
+  max-width: 420px;
+  padding: 28px 26px 22px;
+  text-align: center;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
+  animation: msdPop 0.22s ease;
+}
+
+.msd-modal-icon {
+  width: 62px;
+  height: 62px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 14px;
+  font-size: 24px;
+}
+.msd-modal-icon.activate {
+  background: #fff7ed;
+  color: #f57c00;
+}
+.msd-modal-icon.deactivate {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.msd-modal h3 {
+  margin: 0 0 8px;
+  font-size: 20px;
+  font-weight: 800;
+  color: #1e293b;
+}
+.msd-modal p {
+  margin: 0 0 20px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: #64748b;
+}
+.msd-modal-actions {
+  display: flex;
+  gap: 10px;
+}
+.msd-cancel-btn,
+.msd-confirm-btn {
+  flex: 1;
+  padding: 11px;
+  border: none;
+  border-radius: 10px;
+  font-weight: 700;
+  font-size: 14px;
+  cursor: pointer;
+  transition: 0.2s;
+}
+.msd-cancel-btn {
+  background: #f1f5f9;
+  color: #334155;
+}
+.msd-cancel-btn:hover {
+  background: #e2e8f0;
+}
+.msd-confirm-btn.activate {
+  background: #f57c00;
+  color: white;
+}
+.msd-confirm-btn.activate:hover {
+  background: #e06a00;
+}
+.msd-confirm-btn.deactivate {
+  background: #dc2626;
+  color: white;
+}
+.msd-confirm-btn.deactivate:hover {
+  background: #b91c1c;
+}
+.msd-confirm-btn:disabled,
+.msd-cancel-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+@keyframes msdFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes msdPop {
+  from { opacity: 0; transform: scale(0.94) translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   RESPONSIVE — calendar layout + stack wrapper
+   ═══════════════════════════════════════════════════════════════════ */
 
 @media (max-width: 768px) {
   .lr-view-room {
@@ -219,7 +439,6 @@
     padding: 8px 18px;
   }
 
- 
   .lr-vr-scroll-x {
     overflow-x: auto;
   }
@@ -264,13 +483,22 @@
   .lr-vr-no-schedule h3 {
     font-size: 18px;
   }
+}
 
+/* ─── Narrow screens: full-width stack at the bottom ─────────── */
+@media (max-width: 640px) {
   .lr-vr-class-details {
     left: 12px;
     right: 12px;
     bottom: 12px;
-    max-width: none;
     width: auto;
+    max-width: none;
+    gap: 8px;
+  }
+
+  .lr-vr-edit-sched-btn {
+    font-size: 13px;
+    padding: 12px 14px;
   }
 }
 

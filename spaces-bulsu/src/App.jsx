@@ -34,6 +34,11 @@ import AdminViewReservationCancelled from "./Admin/AdminReservations/AdminViewRe
 import AdminSettings from "./Admin/AdminSettings/AdminSettings";
 import AdminRoomIssues from "./Admin/AdminRoomIssues/AdminRoomIssues";
 import AdminReassignment from "./Admin/AdminReassignments/AdminReassignments";
+import AdminBulkScheduleUpload1 from "./Admin/AdminBulkUpload/bulkUpload1/BulkScheduleUpload1";
+import AdminBulkScheduleUpload2 from "./Admin/AdminBulkUpload/bulkUpload2/BulkScheduleUpload2";
+import AdminBulkScheduleUpload3 from "./Admin/AdminBulkUpload/bulkUpload3/BulkScheduleUpload3";
+import AdminBulkScheduleUpload4 from "./Admin/AdminBulkUpload/bulkUpload4/BulkScheduleUpload4";
+import AdminMySubmittedSchedules from "./Admin/AdminMySubmittedSchedules/MySubmittedSchedules";
 
 // Clerk
 import ClerkLayout from "./Clerk/ClerkLayout/ClerkLayout";
@@ -59,6 +64,7 @@ import ClerkConflicts from "./Clerk/ClerkConflicts/ClerkConflicts";
 import ClerkReassignRoom from "./Clerk/ClerkConflicts/ClerkReassignRoom";
 import ClerkSettings from "./Clerk/ClerkSettings/ClerkSettings";
 import ClerkRoomIssues from "./Clerk/ClerkRoomIssues/ClerkRoomIssues";
+import ClerkQRCode from "./Clerk/ClerkQRCode/ClerkQRCode";
 
 // Faculty
 import FacultyLayout from "./Faculty/FacultyLayout/FacultyLayout";
@@ -123,6 +129,12 @@ function App() {
               path="view-reservation-approved"
               element={<AdminViewReservationApproved />}
             />
+            <Route path="schedule-room-card" element={<AdminViewRoomCard />} />
+            <Route path="bulk-upload-1" element={<AdminBulkScheduleUpload1 />} />
+            <Route path="bulk-upload-2" element={<AdminBulkScheduleUpload2 />} />
+            <Route path="bulk-upload-3" element={<AdminBulkScheduleUpload3 />} />
+            <Route path="bulk-upload-4" element={<AdminBulkScheduleUpload4 />} />
+            <Route path="my-submitted-schedules" element={<AdminMySubmittedSchedules />} />
             <Route
               path="edit-approved-reservation"
               element={<AdminEditApprovedReservation />}
@@ -216,6 +228,7 @@ function App() {
               path="view-reservation-cancelled"
               element={<ClerkViewReservationCancelled />}
             />
+            <Route path="qr-code" element={<ClerkQRCode />} />
             <Route
               path="edit-approved-reservation"
               element={<ClerkEditApprovedReservation />}
