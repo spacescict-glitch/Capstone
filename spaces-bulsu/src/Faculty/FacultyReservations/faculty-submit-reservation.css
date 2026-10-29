@@ -2216,3 +2216,263 @@ body {
     flex-wrap: wrap;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   ADDITIONAL REQUIRED EQUIPMENT — CHECKLIST
+   (Not used for room filtering — just extra info for Clerk/Admin)
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Count badge next to label */
+.equipment-count-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 2px 8px;
+  background: #F2690D;
+  color: #ffffff;
+  font-size: 10.5px;
+  font-weight: 700;
+  border-radius: 999px;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+}
+
+/* Help text under "Additional Required Equipment" */
+.equipment-help-text {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 9px 12px;
+  background: #F0F9FF;
+  border-left: 3px solid #0EA5E9;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #0C4A6E;
+  font-weight: 500;
+}
+
+.equipment-help-text i {
+  color: #0EA5E9;
+  margin-top: 2px;
+  flex-shrink: 0;
+  font-size: 11px;
+}
+
+/* Checklist container */
+.equipment-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  background: #FAFBFD;
+  border: 1px solid #EEF1F5;
+  border-radius: 12px;
+}
+
+.equipment-checklist.has-error {
+  border-color: #dc2626;
+  background: #fef2f2;
+}
+
+/* Each checklist row */
+.equipment-check-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  background: #ffffff;
+  border: 1.5px solid #E5E7EB;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  font-family: inherit;
+  user-select: none;
+}
+
+.equipment-check-row:hover {
+  border-color: #F2690D;
+  background: #FFF9F3;
+}
+
+.equipment-check-row.is-checked {
+  border-color: #F2690D;
+  background: #FFF5EE;
+}
+
+.equipment-check-box {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: #F2690D;
+  flex-shrink: 0;
+}
+
+.equipment-check-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+  width: 20px;
+  text-align: center;
+}
+
+.equipment-check-label {
+  flex: 1;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.equipment-check-row.is-checked .equipment-check-label {
+  color: #B45309;
+}
+
+.equipment-check-remove {
+  background: transparent;
+  border: none;
+  color: #9ca3af;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  transition: color 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+
+.equipment-check-remove:hover {
+  color: #dc2626;
+  background: #fee2e2;
+}
+
+/* "Add Other Equipment" button */
+.equipment-add-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px;
+  margin-top: 4px;
+  background: transparent;
+  border: 1.5px dashed #D8DEE7;
+  border-radius: 10px;
+  color: #6b7280;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  width: 100%;
+}
+
+.equipment-add-btn:hover {
+  border-color: #F2690D;
+  color: #F2690D;
+  background: #FFF9F3;
+}
+
+.equipment-add-btn i {
+  font-size: 11px;
+}
+
+/* Add-equipment inline row */
+.equipment-add-row {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  background: #ffffff;
+  border: 1.5px solid #F2690D;
+  border-radius: 10px;
+  animation: equipmentSlideDown 0.15s ease;
+  margin-top: 4px;
+}
+
+@keyframes equipmentSlideDown {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.equipment-add-input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  color: #1a1a1a;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.equipment-add-input:focus {
+  border-color: #F2690D;
+}
+
+.equipment-add-input::placeholder {
+  color: #9ca3af;
+  font-weight: 400;
+}
+
+.equipment-add-confirm {
+  padding: 8px 12px;
+  background: #F2690D;
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.equipment-add-confirm:hover:not(:disabled) {
+  background: #d95f08;
+}
+
+.equipment-add-confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.equipment-add-cancel {
+  padding: 8px 12px;
+  background: #ffffff;
+  color: #6b7280;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.equipment-add-cancel:hover {
+  background: #F3F4F6;
+  color: #1a1a1a;
+  border-color: #D1D5DB;
+}
+
+/* Responsive */
+@media (max-width: 520px) {
+  .equipment-add-row {
+    flex-wrap: wrap;
+  }
+
+  .equipment-add-input {
+    flex: 1 1 100%;
+  }
+
+  .equipment-count-badge {
+    display: block;
+    margin-left: 0;
+    margin-top: 4px;
+    width: fit-content;
+  }
+}
