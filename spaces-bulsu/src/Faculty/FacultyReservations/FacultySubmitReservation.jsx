@@ -113,25 +113,22 @@ const COURSE_OPTIONS = ["BSIT", "BSIS", "BLIS", "Others"];
 // ─── Pagination ─────────────────────────────────────────────
 const ROOMS_PER_PAGE = 6;
 
-// ─── Equipment options (predefined suggestions) ────────────
-const EQUIPMENT_OPTIONS = [
-  { id: "projector",  label: "Projector",   icon: "📽" },
-  { id: "tvDisplay",  label: "TV Display",  icon: "📺" },
-  { id: "ac",         label: "AC",          icon: "❄️" },
-  { id: "computer",   label: "Computer",    icon: "💻" },
-  { id: "smartBoard", label: "Smart Board", icon: "🖊" },
-];
+// ─── Equipment label lookup (for preview) ─────────────────
+const EQUIPMENT_LABELS = {
+  projector: "Projector",
+  tvDisplay: "TV Display",
+  ac: "AC",
+  computer: "Computer",
+  smartBoard: "Smart Board",
+};
 
-const buildDefaultEquipmentChecklist = () =>
-  EQUIPMENT_OPTIONS.map((e) => ({ ...e, checked: false, isCustom: false }));
-
-// ─── Purpose options by audience ───────────────────────────
-const CLASS_PURPOSES = ["Lecture", "Hands-on", "Examination"];
-const ORG_PURPOSES = ["Workshop", "Training", "Meeting", "Other Activity"];
-const OTHERS_PURPOSES = [
-  "Lecture", "Hands-on", "Examination",
-  "Workshop", "Training", "Meeting", "Other Activity",
-];
+// ─── Conflict kind labels ──────────────────────────────────
+const CONFLICT_KIND_LABELS = {
+  schedule: "Class",
+  event: "Activity",
+  reservation: "Reservation",
+  reassignment: "Reassigned",
+};
 
 function FacultySubmitReservation() {
   const navigate = useNavigate();
@@ -156,21 +153,22 @@ function FacultySubmitReservation() {
   const [selectedFloor, setSelectedFloor] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
 
+  // ✅ NEW: filter — "all" | "available" | "occupied"
+  const [roomStatusFilter, setRoomStatusFilter] = useState("all");
+
+  // ✅ NEW: conflict warning modal
+  const [showConflictWarning, setShowConflictWarning] = useState(false);
+
   const [rooms, setRooms] = useState([]);
   const [selectedRoom, setSelectedRoom] = useState(null);
 
-  // ── Additional required equipment checklist ───────────────
-  const [equipmentChecklist, setEquipmentChecklist] = useState(buildDefaultEquipmentChecklist);
-  const [showAddEquipment, setShowAddEquipment] = useState(false);
-  const [newEquipmentText, setNewEquipmentText] = useState("");
-
+  const [selectedEquipment, setSelectedEquipment] = useState([]);
   const [studentRange, setStudentRange] = useState("");
   const [audienceType, setAudienceType] = useState("Class");
   const [course, setCourse] = useState("BSIT");
   const [customCourse, setCustomCourse] = useState("");
   const [yearSectionGroup, setYearSectionGroup] = useState("");
   const [organization, setOrganization] = useState("");
-  const [customAudience, setCustomAudience] = useState("");
   const [customPurposeText, setCustomPurposeText] = useState("");
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -204,64 +202,18 @@ function FacultySubmitReservation() {
     }
   };
 
-  // ── Selected equipment (labels only) ──────────────────────
-  const selectedEquipmentLabels = useMemo(
-    () => equipmentChecklist.filter((e) => e.checked).map((e) => e.label),
-    [equipmentChecklist]
-  );
+  const EQUIPMENT_OPTIONS = [
+    { id: "projector", label: "Projector", icon: "📽" },
+    { id: "tvDisplay", label: "TV Display", icon: "📺" },
+    { id: "ac", label: "AC", icon: "❄️" },
+    { id: "computer", label: "Computer", icon: "💻" },
+    { id: "smartBoard", label: "Smart Board", icon: "🖊" },
+  ];
 
-  // ── Equipment checklist helpers ───────────────────────────
-  const toggleEquipmentCheck = (id) => {
-    setEquipmentChecklist((prev) =>
-      prev.map((e) => (e.id === id ? { ...e, checked: !e.checked } : e))
+  const toggleEquipment = (id) => {
+    setSelectedEquipment((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
     );
-    revalidate();
-  };
-
-  const handleAddCustomEquipment = () => {
-    const trimmed = newEquipmentText.trim();
-    if (!trimmed) return;
-
-    const existing = equipmentChecklist.find(
-      (e) => e.label.toLowerCase() === trimmed.toLowerCase()
-    );
-    if (existing) {
-      setEquipmentChecklist((prev) =>
-        prev.map((e) => (e.id === existing.id ? { ...e, checked: true } : e))
-      );
-    } else {
-      setEquipmentChecklist((prev) => [
-        ...prev,
-        {
-          id: `custom_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-          label: trimmed,
-          icon: "✏️",
-          checked: true,
-          isCustom: true,
-        },
-      ]);
-    }
-    setNewEquipmentText("");
-    setShowAddEquipment(false);
-    revalidate();
-  };
-
-  const handleRemoveCustomEquipment = (id) => {
-    setEquipmentChecklist((prev) => prev.filter((e) => e.id !== id));
-    revalidate();
-  };
-
-  const resetEquipmentChecklist = () => {
-    setEquipmentChecklist(buildDefaultEquipmentChecklist());
-    setShowAddEquipment(false);
-    setNewEquipmentText("");
-  };
-
-  const getRoomStatus = (room) => {
-    if (room.maintenance) return "Under Maintenance";
-    if (room.reservedByUser) return "Reserved";
-    if (!room.available) return "Occupied";
-    return "Available";
   };
 
   const checkUserConflict = async () => {
@@ -302,11 +254,9 @@ function FacultySubmitReservation() {
     return { conflict: false };
   };
 
-  // ⚠️ NOTE: equipment is NO LONGER part of room filtering.
   useEffect(() => {
     loadAvailableRooms();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [date, startTime, endTime, selectedFloor, purpose, studentRange]);
+  }, [date, startTime, endTime, selectedFloor, purpose, selectedEquipment, studentRange]);
 
   const convertToMinutes = (time) => {
     if (!time) return 0;
@@ -378,6 +328,7 @@ function FacultySubmitReservation() {
         releaseMap.get(r.roomId).add(key);
       });
 
+      // Reassignments (with event skip)
       const reassignSnap = await getDocs(collection(db, "roomReassignments"));
       const reassignedAwayByRoom = new Map();
       const reassignedIntoByRoom = new Map();
@@ -404,6 +355,7 @@ function FacultySubmitReservation() {
             startTime: r.startTime,
             endTime: r.endTime,
             label: r.courseTitle || r.subject || "Reassigned Class",
+            faculty: r.facultyName || "-",
           });
         }
       });
@@ -419,8 +371,16 @@ function FacultySubmitReservation() {
           if (!roomFloor.includes(selected)) continue;
         }
 
-        // ⚠️ Equipment filter REMOVED — additional required equipment is
-        // now just a form field, not a room-selection criterion.
+        if (purpose === "Hands-on" && selectedEquipment.length > 0) {
+          const roomEquipment = Object.entries(room.equipment || {})
+            .filter(([key, value]) => value === true)
+            .map(([key]) => key.toLowerCase());
+
+          const hasAllEquipment = selectedEquipment.every((eq) =>
+            roomEquipment.includes(eq.toLowerCase())
+          );
+          if (!hasAllEquipment) continue;
+        }
 
         if ((purpose === "Lecture" || purpose === "Examination") && studentRange) {
           const requiredCapacity = getMinimumCapacity(studentRange);
@@ -435,12 +395,14 @@ function FacultySubmitReservation() {
             available: false,
             maintenance: true,
             reservedByUser: false,
+            conflicts: [],
           });
           continue;
         }
 
         let occupied = false;
         let reservedByUser = false;
+        const conflicts = [];
 
         const scheduleSnapshot = await getDocs(
           collection(db, "rooms", room.id, "schedules")
@@ -448,56 +410,97 @@ function FacultySubmitReservation() {
         const releasesForRoom = releaseMap.get(room.id) || new Set();
         const reassignedAwayForRoom = reassignedAwayByRoom.get(room.id) || new Set();
 
-        const hasScheduleConflict = scheduleSnapshot.docs.some((doc) => {
+        // 1) Schedule conflicts
+        scheduleSnapshot.docs.forEach((doc) => {
           const sched = doc.data();
-          if (sched.initialized) return false;
-          if (sched.day !== getDay(date)) return false;
+          if (sched.initialized) return;
+          if (sched.day !== getDay(date)) return;
           const releaseKey = `${doc.id}_${date}`;
-          if (releasesForRoom.has(releaseKey)) return false;
-          if (reassignedAwayForRoom.has(releaseKey)) return false;
-          return isOverlapping(startTime, endTime, sched.startTime, sched.endTime);
+          if (releasesForRoom.has(releaseKey)) return;
+          if (reassignedAwayForRoom.has(releaseKey)) return;
+          if (!isOverlapping(startTime, endTime, sched.startTime, sched.endTime)) return;
+
+          occupied = true;
+          conflicts.push({
+            kind: "schedule",
+            title: sched.subject || sched.courseTitle || "Class",
+            section: sched.section || "",
+            faculty: sched.facultyName || sched.faculty || "",
+            startTime: sched.startTime,
+            endTime: sched.endTime,
+          });
         });
-        if (hasScheduleConflict) occupied = true;
 
-        if (!occupied) {
-          const hasEventConflict = activitySnapshot.docs.some((doc) => {
-            const event = doc.data();
-            if (event.roomId !== room.id) return false;
-            if (event.date !== date) return false;
-            if (event.status === "Cancelled") return false;
-            return isOverlapping(startTime, endTime, event.startTime, event.endTime);
+        // 2) Event conflicts
+        activitySnapshot.docs.forEach((doc) => {
+          const event = doc.data();
+          if (event.roomId !== room.id) return;
+          if (event.date !== date) return;
+          if (event.status === "Cancelled") return;
+          if (!isOverlapping(startTime, endTime, event.startTime, event.endTime)) return;
+
+          occupied = true;
+          conflicts.push({
+            kind: "event",
+            title: event.title || event.purpose || "Room Activity",
+            faculty: event.faculty || event.requestedByName || "Admin",
+            startTime: event.startTime,
+            endTime: event.endTime,
           });
-          if (hasEventConflict) occupied = true;
-        }
+        });
 
-        if (!occupied) {
-          const reassignedInto = reassignedIntoByRoom.get(room.id) || [];
-          const hasReassignConflict = reassignedInto.some((r) =>
-            isOverlapping(startTime, endTime, r.startTime, r.endTime)
-          );
-          if (hasReassignConflict) occupied = true;
-        }
-
-        if (!occupied) {
-          const conflictingReservations = [];
-          requestSnapshot.docs.forEach((doc) => {
-            const req = doc.data();
-            if (req.roomId !== room.id) return;
-            if (req.date !== date) return;
-            if (String(req.status || "").toLowerCase() === "rejected") return;
-            if (isOverlapping(startTime, endTime, req.startTime, req.endTime)) {
-              conflictingReservations.push(req);
-            }
+        // 3) Reassigned INTO room
+        const reassignedInto = reassignedIntoByRoom.get(room.id) || [];
+        reassignedInto.forEach((r) => {
+          if (!isOverlapping(startTime, endTime, r.startTime, r.endTime)) return;
+          occupied = true;
+          conflicts.push({
+            kind: "reassignment",
+            title: r.label || "Reassigned Class",
+            faculty: r.faculty || "-",
+            startTime: r.startTime,
+            endTime: r.endTime,
           });
+        });
 
-          for (const req of conflictingReservations) {
-            if (req.userId === currentUserId) {
-              reservedByUser = true;
-              break;
-            } else if (String(req.status || "").toLowerCase() === "approved") {
-              occupied = true;
-              break;
-            }
+        // 4) Reservation conflicts
+        const conflictingReservations = [];
+        requestSnapshot.docs.forEach((doc) => {
+          const req = doc.data();
+          if (req.roomId !== room.id) return;
+          if (req.date !== date) return;
+          if (String(req.status || "").toLowerCase() === "rejected") return;
+          if (!isOverlapping(startTime, endTime, req.startTime, req.endTime)) return;
+          conflictingReservations.push(req);
+        });
+
+        for (const req of conflictingReservations) {
+          if (req.userId === currentUserId) {
+            reservedByUser = true;
+            conflicts.push({
+              kind: "reservation",
+              title:
+                req.courseTitle ||
+                req.customPurpose ||
+                req.purpose ||
+                "Your reservation",
+              faculty: req.facultyName || req.requesterName || "You",
+              startTime: req.startTime,
+              endTime: req.endTime,
+            });
+          } else if (String(req.status || "").toLowerCase() === "approved") {
+            occupied = true;
+            conflicts.push({
+              kind: "reservation",
+              title:
+                req.courseTitle ||
+                req.customPurpose ||
+                req.purpose ||
+                "Reservation",
+              faculty: req.facultyName || req.requesterName || "-",
+              startTime: req.startTime,
+              endTime: req.endTime,
+            });
           }
         }
 
@@ -506,10 +509,20 @@ function FacultySubmitReservation() {
           available: !occupied && !reservedByUser,
           maintenance: false,
           reservedByUser,
+          conflicts,
         });
       }
 
-      setRooms(roomList);
+      // Sort: available first, then by name
+      const sortedList = [...roomList].sort((a, b) => {
+        if (a.available !== b.available) return a.available ? -1 : 1;
+        return (a.roomName || "").localeCompare(b.roomName || "", undefined, {
+          numeric: true,
+          sensitivity: "base",
+        });
+      });
+
+      setRooms(sortedList);
     } catch (err) {
       console.error(err);
       showToast("error", "Error", "Unable to load rooms.");
@@ -518,9 +531,24 @@ function FacultySubmitReservation() {
     setLoading(false);
   };
 
+  // ✅ NEW: filter + sort — available first, then occupied
   const filteredRooms = useMemo(() => {
-    return rooms.filter((r) => getRoomStatus(r) === "Available");
-  }, [rooms]);
+    let list = rooms.filter((r) => !r.maintenance);
+
+    if (roomStatusFilter === "available") {
+      list = list.filter((r) => r.available);
+    } else if (roomStatusFilter === "occupied") {
+      list = list.filter((r) => !r.available);
+    }
+
+    return [...list].sort((a, b) => {
+      if (a.available !== b.available) return a.available ? -1 : 1;
+      return (a.roomName || "").localeCompare(b.roomName || "", undefined, {
+        numeric: true,
+        sensitivity: "base",
+      });
+    });
+  }, [rooms, roomStatusFilter]);
 
   const totalRoomPages = Math.max(1, Math.ceil(filteredRooms.length / ROOMS_PER_PAGE));
   const safeRoomPage = Math.min(currentPage, totalRoomPages);
@@ -532,7 +560,7 @@ function FacultySubmitReservation() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [selectedFloor, date, startTime, endTime, rooms.length]);
+  }, [selectedFloor, date, startTime, endTime, rooms.length, roomStatusFilter]);
 
   const validateFields = () => {
     const errors = {};
@@ -547,11 +575,11 @@ function FacultySubmitReservation() {
         errors.customCourse = "Please specify the course.";
       }
       if (!yearSectionGroup) errors.yearSectionGroup = "Enter Year / Section Group.";
-      if (!CLASS_PURPOSES.includes(purpose)) {
+      if (!["Lecture", "Hands-on", "Examination"].includes(purpose)) {
         errors.purpose = "Select a valid purpose for Class (Lecture, Hands-on, Examination).";
       }
-      if (purpose === "Hands-on" && selectedEquipmentLabels.length === 0) {
-        errors.selectedEquipment = "Please specify at least one additional required equipment.";
+      if (purpose === "Hands-on" && selectedEquipment.length === 0) {
+        errors.selectedEquipment = "Select at least one required equipment.";
       }
       if ((purpose === "Lecture" || purpose === "Examination") && !studentRange) {
         errors.studentRange = "Select the estimated number of students.";
@@ -560,24 +588,8 @@ function FacultySubmitReservation() {
 
     if (audienceType === "Organization") {
       if (!organization) errors.organization = "Enter organization name.";
-      if (!ORG_PURPOSES.includes(purpose)) {
+      if (!["Workshop", "Training", "Meeting", "Other Activity"].includes(purpose)) {
         errors.purpose = "Select a valid purpose for Organization (Workshop, Training, Meeting, Other Activity).";
-      }
-      if (purpose === "Other Activity" && !customPurposeText.trim()) {
-        errors.customPurposeText = "Please specify the activity.";
-      }
-      if (!studentRange) errors.studentRange = "Select the estimated number of attendees.";
-    }
-
-    if (audienceType === "Others") {
-      if (!customAudience.trim()) {
-        errors.customAudience = "Please specify the audience type.";
-      }
-      if (!OTHERS_PURPOSES.includes(purpose)) {
-        errors.purpose = "Select a valid purpose.";
-      }
-      if (purpose === "Hands-on" && selectedEquipmentLabels.length === 0) {
-        errors.selectedEquipment = "Please specify at least one additional required equipment.";
       }
       if (purpose === "Other Activity" && !customPurposeText.trim()) {
         errors.customPurposeText = "Please specify the activity.";
@@ -607,7 +619,7 @@ function FacultySubmitReservation() {
       }
     }
 
-    if (!selectedRoom) errors.selectedRoom = "Select an available room.";
+    if (!selectedRoom) errors.selectedRoom = "Select a room.";
 
     return errors;
   };
@@ -691,6 +703,16 @@ function FacultySubmitReservation() {
 
     const finalCourse = course === "Others" ? customCourse.trim() : course;
 
+    // ✅ NEW: snapshot of conflicts at submit time
+    const conflictSnapshot = (selectedRoom?.conflicts || []).map((c) => ({
+      kind: c.kind,
+      title: c.title,
+      section: c.section || "",
+      faculty: c.faculty || "",
+      startTime: c.startTime,
+      endTime: c.endTime,
+    }));
+
     try {
       const reservationRef = await addDoc(collection(db, "reservationRequests"), {
         userId: auth.currentUser.uid,
@@ -702,23 +724,29 @@ function FacultySubmitReservation() {
           course: finalCourse,
           yearSectionGroup,
           organization,
-          customAudience: audienceType === "Others" ? customAudience.trim() : "",
           customPurpose: customPurposeText,
         },
         courseTitle,
         purpose: finalPurpose,
-        requiredEquipment: selectedEquipmentLabels,
+        requiredEquipment: selectedEquipment,
         studentRange,
         date,
         startTime,
         endTime,
         status: "Pending",
+        // ✅ NEW: persist conflict info for clerk to see
+        submittedWithConflicts: conflictSnapshot.length > 0,
+        conflictSnapshot,
         createdAt: serverTimestamp(),
       });
 
       await notifyClerkAndAdmin(
         "New Reservation Request",
-        `${facultyName} submitted a reservation request for "${courseTitle}" in ${selectedRoom.roomName} on ${date} from ${startTime} to ${endTime}.`,
+        `${facultyName} submitted a reservation request for "${courseTitle}" in ${selectedRoom.roomName} on ${date} from ${startTime} to ${endTime}.${
+          conflictSnapshot.length > 0
+            ? ` ⚠️ ${conflictSnapshot.length} conflict${conflictSnapshot.length > 1 ? "s" : ""} detected at submit time.`
+            : ""
+        }`,
         reservationRef.id
       );
 
@@ -751,8 +779,7 @@ function FacultySubmitReservation() {
           endTime,
           purpose: finalPurpose,
           audienceType,
-          customAudience,
-          requiredEquipment: selectedEquipmentLabels,
+          conflictCount: conflictSnapshot.length,
         },
         userId: auth.currentUser.uid,
       });
@@ -771,8 +798,6 @@ function FacultySubmitReservation() {
         course: finalCourse,
         yearSectionGroup,
         organization,
-        customAudience,
-        requiredEquipment: selectedEquipmentLabels,
       });
 
       setToast((prev) => ({ ...prev, show: false }));
@@ -784,7 +809,6 @@ function FacultySubmitReservation() {
       setCustomCourse("");
       setYearSectionGroup("");
       setOrganization("");
-      setCustomAudience("");
       setCustomPurposeText("");
       setPurpose("");
       setDate("");
@@ -792,7 +816,7 @@ function FacultySubmitReservation() {
       setEndTime("");
       setSelectedRoom(null);
       setRooms([]);
-      resetEquipmentChecklist();
+      setSelectedEquipment([]);
       setStudentRange("");
       setShowCustomTime(false);
       setValidationAttempted(false);
@@ -805,6 +829,7 @@ function FacultySubmitReservation() {
     }
   };
 
+  // ✅ UPDATED: warn first if room is occupied
   const handleSubmitClick = () => {
     if (submitting) return;
     setValidationAttempted(true);
@@ -815,6 +840,14 @@ function FacultySubmitReservation() {
       showToast("error", "Validation Error", firstError);
       return;
     }
+
+    // ✅ NEW: warn if room is occupied
+    const conflicts = selectedRoom?.conflicts || [];
+    if (selectedRoom && !selectedRoom.available && !selectedRoom.maintenance && conflicts.length > 0) {
+      setShowConflictWarning(true);
+      return;
+    }
+
     setShowPreview(true);
   };
 
@@ -863,7 +896,6 @@ function FacultySubmitReservation() {
     course: course === "Others" ? customCourse.trim() : course,
     yearSectionGroup,
     organization,
-    customAudience,
     purpose:
       purpose === "Other Activity"
         ? customPurposeText.trim() || "Other Activity"
@@ -874,14 +906,13 @@ function FacultySubmitReservation() {
     date,
     startTime,
     endTime,
-    equipment: selectedEquipmentLabels.join(", "),
+    equipment: selectedEquipment
+      .map((id) => EQUIPMENT_LABELS[id] || id)
+      .join(", "),
     studentRange,
   };
 
-  const rangeLabel =
-    audienceType === "Class"
-      ? "Estimated Number of Students"
-      : "Estimated Number of Attendees";
+  const selectedConflicts = selectedRoom?.conflicts || [];
 
   return (
     <>
@@ -893,6 +924,7 @@ function FacultySubmitReservation() {
 
         <div className="faculty-submit-box">
           <div className="faculty-submit-sections">
+            {/* LEFT SIDE — form (unchanged) */}
             <div className="faculty-submit-section">
               <div className="faculty-submit-form-group">
                 <label>Course Title</label>
@@ -919,20 +951,18 @@ function FacultySubmitReservation() {
                     onChange={(e) => {
                       setAudienceType(e.target.value);
                       setPurpose("");
-                      resetEquipmentChecklist();
+                      setSelectedEquipment([]);
                       setStudentRange("");
                       setCourse("BSIT");
                       setCustomCourse("");
                       setYearSectionGroup("");
                       setOrganization("");
-                      setCustomAudience("");
                       setCustomPurposeText("");
                       revalidate();
                     }}
                   >
                     <option value="Class">Class</option>
                     <option value="Organization">Organization</option>
-                    <option value="Others">Others</option>
                   </select>
                   <i className="fa-solid fa-angle-down faculty-submit-dropdown-icon"></i>
                 </div>
@@ -955,7 +985,9 @@ function FacultySubmitReservation() {
                           }}
                         >
                           {COURSE_OPTIONS.map((c) => (
-                            <option key={c} value={c}>{c}</option>
+                            <option key={c} value={c}>
+                              {c}
+                            </option>
                           ))}
                         </select>
                         <i className="fa-solid fa-angle-down faculty-submit-dropdown-icon"></i>
@@ -1015,24 +1047,6 @@ function FacultySubmitReservation() {
                     )}
                   </div>
                 )}
-
-                {audienceType === "Others" && (
-                  <div className="faculty-submit-form-group">
-                    <label>Specify Audience Type</label>
-                    <input
-                      className={`faculty-submit-input ${validationAttempted && fieldErrors.customAudience ? "error" : ""}`}
-                      placeholder="Ex. Guest Lecturers, Seminar Participants..."
-                      value={customAudience}
-                      onChange={(e) => {
-                        setCustomAudience(e.target.value);
-                        revalidate();
-                      }}
-                    />
-                    {validationAttempted && fieldErrors.customAudience && (
-                      <span className="field-error-message">{fieldErrors.customAudience}</span>
-                    )}
-                  </div>
-                )}
               </div>
 
               <div className="faculty-submit-form-group">
@@ -1043,7 +1057,7 @@ function FacultySubmitReservation() {
                     value={purpose}
                     onChange={(e) => {
                       setPurpose(e.target.value);
-                      resetEquipmentChecklist();
+                      setSelectedEquipment([]);
                       setStudentRange("");
                       setCustomPurposeText("");
                       revalidate();
@@ -1065,17 +1079,6 @@ function FacultySubmitReservation() {
                         <option value="Other Activity">Other Activity</option>
                       </>
                     )}
-                    {audienceType === "Others" && (
-                      <>
-                        <option value="Lecture">Lecture</option>
-                        <option value="Hands-on">Hands-on</option>
-                        <option value="Examination">Examination</option>
-                        <option value="Workshop">Workshop</option>
-                        <option value="Training">Training</option>
-                        <option value="Meeting">Meeting</option>
-                        <option value="Other Activity">Other Activity</option>
-                      </>
-                    )}
                   </select>
                   <i className="fa-solid fa-angle-down faculty-submit-dropdown-icon"></i>
                 </div>
@@ -1084,128 +1087,63 @@ function FacultySubmitReservation() {
                 )}
               </div>
 
-              {/* ═══════════════════════════════════════════════
-                  ADDITIONAL REQUIRED EQUIPMENT — CHECKLIST
-                  (Not used for room filtering)
-                  ═══════════════════════════════════════════════ */}
-              {purpose === "Hands-on" && (
+              {audienceType === "Class" && purpose === "Hands-on" && (
                 <div className="faculty-submit-form-group">
-                  <label>
-                    Additional Required Equipment
-                    {selectedEquipmentLabels.length > 0 && (
-                      <span className="equipment-count-badge">
-                        {selectedEquipmentLabels.length} selected
-                      </span>
-                    )}
-                  </label>
-
-                  <p className="equipment-help-text">
-                    <i className="fa-solid fa-circle-info"></i>
-                    Specify any extra equipment you'll need. This does not filter
-                    available rooms — it will be included in your request for the
-                    Clerk/Admin to review.
-                  </p>
-
-                  <div
-                    className={`equipment-checklist ${
-                      validationAttempted && fieldErrors.selectedEquipment ? "has-error" : ""
-                    }`}
-                  >
-                    {equipmentChecklist.map((item) => (
-                      <label
-                        key={item.id}
-                        className={`equipment-check-row ${item.checked ? "is-checked" : ""}`}
-                      >
-                        <input
-                          type="checkbox"
-                          className="equipment-check-box"
-                          checked={item.checked}
-                          onChange={() => toggleEquipmentCheck(item.id)}
-                        />
-                        <span className="equipment-check-icon">{item.icon}</span>
-                        <span className="equipment-check-label">{item.label}</span>
-                        {item.isCustom && (
-                          <button
-                            type="button"
-                            className="equipment-check-remove"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              handleRemoveCustomEquipment(item.id);
-                            }}
-                            aria-label={`Remove ${item.label}`}
-                            title="Remove"
-                          >
-                            <i className="fa-solid fa-xmark"></i>
-                          </button>
-                        )}
-                      </label>
-                    ))}
-
-                    {showAddEquipment ? (
-                      <div className="equipment-add-row">
-                        <input
-                          type="text"
-                          className="equipment-add-input"
-                          placeholder="Enter equipment name..."
-                          value={newEquipmentText}
-                          onChange={(e) => setNewEquipmentText(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              handleAddCustomEquipment();
-                            }
-                            if (e.key === "Escape") {
-                              setShowAddEquipment(false);
-                              setNewEquipmentText("");
-                            }
-                          }}
-                          autoFocus
-                          maxLength={50}
-                        />
-                        <button
-                          type="button"
-                          className="equipment-add-confirm"
-                          onClick={handleAddCustomEquipment}
-                          disabled={!newEquipmentText.trim()}
-                        >
-                          <i className="fa-solid fa-check"></i> Add
-                        </button>
-                        <button
-                          type="button"
-                          className="equipment-add-cancel"
-                          onClick={() => {
-                            setShowAddEquipment(false);
-                            setNewEquipmentText("");
-                          }}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
+                  <label>Required Equipment</label>
+                  <div className="equipment-grid">
+                    {EQUIPMENT_OPTIONS.map((item) => (
                       <button
+                        key={item.id}
                         type="button"
-                        className="equipment-add-btn"
-                        onClick={() => setShowAddEquipment(true)}
+                        className={`equipment-card ${
+                          selectedEquipment.includes(item.id) ? "selected" : ""
+                        } ${validationAttempted && fieldErrors.selectedEquipment ? "error" : ""}`}
+                        onClick={() => {
+                          toggleEquipment(item.id);
+                          revalidate();
+                        }}
                       >
-                        <i className="fa-solid fa-plus"></i> Add Other Equipment
+                        <span className="equipment-icon">{item.icon}</span>
+                        <span className="equipment-name">{item.label}</span>
                       </button>
-                    )}
+                    ))}
                   </div>
-
                   {validationAttempted && fieldErrors.selectedEquipment && (
                     <span className="field-error-message">{fieldErrors.selectedEquipment}</span>
                   )}
                 </div>
               )}
 
-              {(purpose === "Lecture" ||
-                purpose === "Examination" ||
-                purpose === "Workshop" ||
-                purpose === "Training" ||
-                purpose === "Meeting" ||
-                purpose === "Other Activity") && (
+              {audienceType === "Class" &&
+                (purpose === "Lecture" || purpose === "Examination") && (
+                  <div className="faculty-submit-form-group">
+                    <label>Estimated Number of Students</label>
+                    <div className="faculty-submit-dropdown-wrapper">
+                      <select
+                        className={`faculty-submit-input faculty-submit-dropdown ${validationAttempted && fieldErrors.studentRange ? "error" : ""}`}
+                        value={studentRange}
+                        onChange={(e) => {
+                          setStudentRange(e.target.value);
+                          revalidate();
+                        }}
+                      >
+                        <option value="">Select Range</option>
+                        <option value="30-50">30 - 50 Students</option>
+                        <option value="50-60">50 - 60 Students</option>
+                        <option value="60-80">60 - 80 Students</option>
+                        <option value="80-100">80 - 100 Students</option>
+                      </select>
+                      <i className="fa-solid fa-angle-down faculty-submit-dropdown-icon"></i>
+                    </div>
+                    {validationAttempted && fieldErrors.studentRange && (
+                      <span className="field-error-message">{fieldErrors.studentRange}</span>
+                    )}
+                  </div>
+                )}
+
+              {audienceType === "Organization" && purpose && (
                 <div className="faculty-submit-form-group">
-                  <label>{rangeLabel}</label>
+                  <label>Estimated Number of Attendees</label>
                   <div className="faculty-submit-dropdown-wrapper">
                     <select
                       className={`faculty-submit-input faculty-submit-dropdown ${validationAttempted && fieldErrors.studentRange ? "error" : ""}`}
@@ -1216,22 +1154,11 @@ function FacultySubmitReservation() {
                       }}
                     >
                       <option value="">Select Range</option>
-                      {audienceType === "Class" || purpose === "Lecture" || purpose === "Examination" ? (
-                        <>
-                          <option value="30-50">30 - 50 Students</option>
-                          <option value="50-60">50 - 60 Students</option>
-                          <option value="60-80">60 - 80 Students</option>
-                          <option value="80-100">80 - 100 Students</option>
-                        </>
-                      ) : (
-                        <>
-                          <option value="1-30">1 - 30 Persons</option>
-                          <option value="31-50">31 - 50 Persons</option>
-                          <option value="51-80">51 - 80 Persons</option>
-                          <option value="81-100">81 - 100 Persons</option>
-                          <option value="101+">101+ Persons</option>
-                        </>
-                      )}
+                      <option value="1-30">1 - 30 Persons</option>
+                      <option value="31-50">31 - 50 Persons</option>
+                      <option value="51-80">51 - 80 Persons</option>
+                      <option value="81-100">81 - 100 Persons</option>
+                      <option value="101+">101+ Persons</option>
                     </select>
                     <i className="fa-solid fa-angle-down faculty-submit-dropdown-icon"></i>
                   </div>
@@ -1241,7 +1168,7 @@ function FacultySubmitReservation() {
                 </div>
               )}
 
-              {purpose === "Other Activity" && (
+              {audienceType === "Organization" && purpose === "Other Activity" && (
                 <div className="faculty-submit-form-group">
                   <label>Specify Activity</label>
                   <input
@@ -1281,7 +1208,10 @@ function FacultySubmitReservation() {
 
                   {showDatePicker && (
                     <>
-                      <div className="fsr-date-clickaway" onClick={() => setShowDatePicker(false)}></div>
+                      <div
+                        className="fsr-date-clickaway"
+                        onClick={() => setShowDatePicker(false)}
+                      ></div>
                       <div className="fsr-date-popover">
                         <span className="fsr-date-popover-arrow"></span>
 
@@ -1299,7 +1229,9 @@ function FacultySubmitReservation() {
                           </button>
                           <button
                             type="button"
-                            className={date === addDaysLocal(toDateInputValue(new Date()), 1) ? "active" : ""}
+                            className={
+                              date === addDaysLocal(toDateInputValue(new Date()), 1) ? "active" : ""
+                            }
                             onClick={() => {
                               setDate(addDaysLocal(toDateInputValue(new Date()), 1));
                               setShowDatePicker(false);
@@ -1317,7 +1249,9 @@ function FacultySubmitReservation() {
                             onClick={() =>
                               setCalendarCursor((c) => {
                                 const m = c.month - 1;
-                                return m < 0 ? { year: c.year - 1, month: 11 } : { year: c.year, month: m };
+                                return m < 0
+                                  ? { year: c.year - 1, month: 11 }
+                                  : { year: c.year, month: m };
                               })
                             }
                           >
@@ -1332,7 +1266,9 @@ function FacultySubmitReservation() {
                             onClick={() =>
                               setCalendarCursor((c) => {
                                 const m = c.month + 1;
-                                return m > 11 ? { year: c.year + 1, month: 0 } : { year: c.year, month: m };
+                                return m > 11
+                                  ? { year: c.year + 1, month: 0 }
+                                  : { year: c.year, month: m };
                               })
                             }
                           >
@@ -1341,35 +1277,41 @@ function FacultySubmitReservation() {
                         </div>
 
                         <div className="fsr-cal-weekdays">
-                          {WEEKDAY_LABELS.map((w) => (<span key={w}>{w}</span>))}
+                          {WEEKDAY_LABELS.map((w) => (
+                            <span key={w}>{w}</span>
+                          ))}
                         </div>
 
                         <div className="fsr-cal-grid">
-                          {buildCalendarGrid(calendarCursor.year, calendarCursor.month).map((cell, i) => {
-                            const cellStr = toDateInputValue(cell.date);
-                            const isPast = cellStr < toDateInputValue(new Date());
-                            const isSelected = cellStr === date;
-                            return (
-                              <button
-                                type="button"
-                                key={i}
-                                className={[
-                                  "fsr-cal-day",
-                                  !cell.inMonth && "is-outside",
-                                  isSelected && "is-selected",
-                                  isPast && "is-disabled",
-                                ].filter(Boolean).join(" ")}
-                                disabled={isPast}
-                                onClick={() => {
-                                  setDate(cellStr);
-                                  setShowDatePicker(false);
-                                  revalidate();
-                                }}
-                              >
-                                {cell.day}
-                              </button>
-                            );
-                          })}
+                          {buildCalendarGrid(calendarCursor.year, calendarCursor.month).map(
+                            (cell, i) => {
+                              const cellStr = toDateInputValue(cell.date);
+                              const isPast = cellStr < toDateInputValue(new Date());
+                              const isSelected = cellStr === date;
+                              return (
+                                <button
+                                  type="button"
+                                  key={i}
+                                  className={[
+                                    "fsr-cal-day",
+                                    !cell.inMonth && "is-outside",
+                                    isSelected && "is-selected",
+                                    isPast && "is-disabled",
+                                  ]
+                                    .filter(Boolean)
+                                    .join(" ")}
+                                  disabled={isPast}
+                                  onClick={() => {
+                                    setDate(cellStr);
+                                    setShowDatePicker(false);
+                                    revalidate();
+                                  }}
+                                >
+                                  {cell.day}
+                                </button>
+                              );
+                            }
+                          )}
                         </div>
                       </div>
                     </>
@@ -1443,7 +1385,10 @@ function FacultySubmitReservation() {
 
                         {showStartTimePicker && (
                           <>
-                            <div className="fsr-time-clickaway" onClick={() => setShowStartTimePicker(false)}></div>
+                            <div
+                              className="fsr-time-clickaway"
+                              onClick={() => setShowStartTimePicker(false)}
+                            ></div>
                             <div className="fsr-time-popover">
                               <span className="fsr-date-popover-arrow"></span>
                               <div className="fsr-time-list">
@@ -1494,7 +1439,10 @@ function FacultySubmitReservation() {
 
                         {showEndTimePicker && (
                           <>
-                            <div className="fsr-time-clickaway" onClick={() => setShowEndTimePicker(false)}></div>
+                            <div
+                              className="fsr-time-clickaway"
+                              onClick={() => setShowEndTimePicker(false)}
+                            ></div>
                             <div className="fsr-time-popover">
                               <span className="fsr-date-popover-arrow"></span>
                               <div className="fsr-time-list">
@@ -1535,11 +1483,37 @@ function FacultySubmitReservation() {
               </div>
             </div>
 
+            {/* RIGHT SIDE — ROOMS (UPDATED) */}
             <div className="faculty-submit-section">
               <div className="faculty-submit-venue-header">
-                <span className="faculty-submit-venue-title">Available Rooms</span>
+                <span className="faculty-submit-venue-title">Rooms</span>
 
                 <div className="faculty-submit-venue-filters">
+                  {/* ✅ NEW: filter tabs */}
+                  <div className="faculty-filter-tabs">
+                    <button
+                      type="button"
+                      className={`faculty-filter-tab ${roomStatusFilter === "all" ? "active" : ""}`}
+                      onClick={() => setRoomStatusFilter("all")}
+                    >
+                      All
+                    </button>
+                    <button
+                      type="button"
+                      className={`faculty-filter-tab ${roomStatusFilter === "available" ? "active" : ""}`}
+                      onClick={() => setRoomStatusFilter("available")}
+                    >
+                      Available
+                    </button>
+                    <button
+                      type="button"
+                      className={`faculty-filter-tab ${roomStatusFilter === "occupied" ? "active" : ""}`}
+                      onClick={() => setRoomStatusFilter("occupied")}
+                    >
+                      Occupied
+                    </button>
+                  </div>
+
                   <div className="faculty-submit-venue-dropdown-wrapper">
                     <select
                       className="faculty-submit-venue-dropdown"
@@ -1560,7 +1534,7 @@ function FacultySubmitReservation() {
               </div>
 
               {loading ? (
-                <div className="faculty-loading">Loading available rooms...</div>
+                <div className="faculty-loading">Loading rooms...</div>
               ) : !date || !startTime || !endTime ? (
                 <div className="faculty-empty">
                   <i className="fa-regular fa-calendar"></i>
@@ -1570,8 +1544,7 @@ function FacultySubmitReservation() {
                 <div className="faculty-empty">
                   <i className="fa-solid fa-circle-xmark"></i>
                   <p>
-                    No available rooms match your selected schedule, purpose,
-                    capacity, or floor.
+                    No {roomStatusFilter === "available" ? "available" : roomStatusFilter === "occupied" ? "occupied" : ""} rooms match your filters.
                   </p>
                 </div>
               ) : (
@@ -1580,11 +1553,17 @@ function FacultySubmitReservation() {
                     {paginatedRooms.map((room) => {
                       const isSelected = selectedRoom?.id === room.id;
                       const isError = validationAttempted && fieldErrors.selectedRoom && !isSelected;
+                      const conflictCount = room.conflicts?.length || 0;
 
                       return (
                         <div
                           key={room.id}
-                          className={`room-card available ${isSelected ? "selected" : ""} ${isError ? "error" : ""}`}
+                          className={`
+                            room-card 
+                            ${room.available ? "available" : "occupied"}
+                            ${isSelected ? "selected" : ""}
+                            ${isError ? "error" : ""}
+                          `}
                           onClick={() => {
                             setSelectedRoom(room);
                             revalidate();
@@ -1601,9 +1580,18 @@ function FacultySubmitReservation() {
                               <i className="fa-solid fa-users"></i> {room.capacity} Seats
                             </div>
                           )}
-                          <div className="room-status">
-                            <i className="fa-solid fa-circle-check"></i> Available
-                          </div>
+                          {room.available ? (
+                            <div className="room-status">
+                              <i className="fa-solid fa-circle-check"></i> Available
+                            </div>
+                          ) : (
+                            <div className="room-status room-status-occupied">
+                              <i className="fa-solid fa-triangle-exclamation"></i>{" "}
+                              Occupied
+                              {conflictCount > 0 &&
+                                ` · ${conflictCount} conflict${conflictCount > 1 ? "s" : ""}`}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -1675,15 +1663,102 @@ function FacultySubmitReservation() {
           </button>
         </div>
 
+        {/* ✅ NEW: CONFLICT WARNING MODAL */}
+        {showConflictWarning && selectedRoom && (
+          <div
+            className="faculty-conflict-warning-overlay"
+            onClick={() => setShowConflictWarning(false)}
+          >
+            <div
+              className="faculty-conflict-warning-modal"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="faculty-conflict-warning-icon">
+                <i className="fa-solid fa-triangle-exclamation"></i>
+              </div>
+              <h3 className="faculty-conflict-warning-title">
+                Room Is Currently Occupied
+              </h3>
+              <p className="faculty-conflict-warning-text">
+                <strong>{selectedRoom.roomName}</strong> has{" "}
+                <strong>
+                  {selectedConflicts.length} conflicting booking
+                  {selectedConflicts.length > 1 ? "s" : ""}
+                </strong>{" "}
+                during your selected time. If you submit, the Clerk/Admin will
+                see this conflict and decide whether to approve or deny.
+              </p>
+
+              <div className="faculty-conflict-warning-list">
+                {selectedConflicts.map((c, i) => (
+                  <div key={i} className="faculty-conflict-warning-item">
+                    <span className={`faculty-conflict-kind kind-${c.kind}`}>
+                      {CONFLICT_KIND_LABELS[c.kind] || "Conflict"}
+                    </span>
+                    <div className="faculty-conflict-warning-item-body">
+                      <div className="faculty-conflict-warning-item-title">
+                        {c.title}
+                        {c.section ? ` (${c.section})` : ""}
+                      </div>
+                      <div className="faculty-conflict-warning-item-time">
+                        {format12Hour(c.startTime)} – {format12Hour(c.endTime)}
+                        {c.faculty ? ` · ${c.faculty}` : ""}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="faculty-conflict-warning-note">
+                <i className="fa-solid fa-circle-info"></i>
+                <span>
+                  Your reservation will still be submitted as{" "}
+                  <strong>Pending</strong>. The Clerk will review the conflict
+                  before approving.
+                </span>
+              </div>
+
+              <div className="faculty-conflict-warning-actions">
+                <button
+                  type="button"
+                  className="faculty-conflict-warning-cancel"
+                  onClick={() => setShowConflictWarning(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="faculty-conflict-warning-confirm"
+                  onClick={() => {
+                    setShowConflictWarning(false);
+                    setShowPreview(true);
+                  }}
+                >
+                  <i className="fa-solid fa-check"></i> Yes, Proceed Anyway
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* PREVIEW MODAL (with conflicts) */}
         {showPreview && (
-          <div className="fsr-preview-overlay" onClick={() => !submitting && setShowPreview(false)}>
-            <div className="fsr-preview-modal" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="fsr-preview-overlay"
+            onClick={() => !submitting && setShowPreview(false)}
+          >
+            <div
+              className="fsr-preview-modal"
+              onClick={(e) => e.stopPropagation()}
+            >
               <div className="fsr-preview-header">
                 <div className="fsr-preview-icon">
                   <i className="fa-solid fa-clipboard-check"></i>
                 </div>
                 <h3>Review Your Request</h3>
-                <p className="fsr-preview-subtitle">Please check the details below before submitting.</p>
+                <p className="fsr-preview-subtitle">
+                  Please check the details below before submitting.
+                </p>
               </div>
 
               <div className="fsr-preview-body">
@@ -1699,12 +1774,10 @@ function FacultySubmitReservation() {
                     {previewData.audienceType === "Class" && previewData.course && (
                       <> — {previewData.course} {previewData.yearSectionGroup}</>
                     )}
-                    {previewData.audienceType === "Organization" && previewData.organization && (
-                      <> — {previewData.organization}</>
-                    )}
-                    {previewData.audienceType === "Others" && previewData.customAudience && (
-                      <> — {previewData.customAudience}</>
-                    )}
+                    {previewData.audienceType === "Organization" &&
+                      previewData.organization && (
+                        <> — {previewData.organization}</>
+                      )}
                   </span>
                 </div>
 
@@ -1736,15 +1809,58 @@ function FacultySubmitReservation() {
 
                 {previewData.equipment && (
                   <div className="fsr-preview-row">
-                    <span className="fsr-preview-label">Additional Equipment</span>
+                    <span className="fsr-preview-label">Equipment</span>
                     <span className="fsr-preview-value">{previewData.equipment}</span>
                   </div>
                 )}
 
                 {previewData.studentRange && (
                   <div className="fsr-preview-row">
-                    <span className="fsr-preview-label">{rangeLabel}</span>
+                    <span className="fsr-preview-label">
+                      {previewData.audienceType === "Organization"
+                        ? "Estimated Attendees"
+                        : "Estimated Students"}
+                    </span>
                     <span className="fsr-preview-value">{previewData.studentRange}</span>
+                  </div>
+                )}
+
+                {/* ✅ NEW: CONFLICT DETAILS IN PREVIEW */}
+                {selectedConflicts.length > 0 && (
+                  <div className="fsr-preview-conflicts">
+                    <div className="fsr-preview-conflicts-header">
+                      <i className="fa-solid fa-triangle-exclamation"></i>
+                      <strong>
+                        {selectedConflicts.length} Conflicting Booking
+                        {selectedConflicts.length > 1 ? "s" : ""} Detected
+                      </strong>
+                    </div>
+                    <div className="fsr-preview-conflicts-list">
+                      {selectedConflicts.map((c, i) => (
+                        <div key={i} className="fsr-preview-conflict-item">
+                          <span className={`fsr-preview-conflict-kind kind-${c.kind}`}>
+                            {CONFLICT_KIND_LABELS[c.kind] || "Conflict"}
+                          </span>
+                          <div className="fsr-preview-conflict-item-body">
+                            <div className="fsr-preview-conflict-title">
+                              {c.title}
+                              {c.section ? ` (${c.section})` : ""}
+                            </div>
+                            <div className="fsr-preview-conflict-time">
+                              {format12Hour(c.startTime)} – {format12Hour(c.endTime)}
+                              {c.faculty ? ` · ${c.faculty}` : ""}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="fsr-preview-conflict-note">
+                      <i className="fa-solid fa-circle-info"></i>
+                      <span>
+                        The Clerk will review this conflict before approving
+                        your request.
+                      </span>
+                    </div>
                   </div>
                 )}
 
@@ -1763,7 +1879,8 @@ function FacultySubmitReservation() {
                   onClick={() => setShowPreview(false)}
                   disabled={submitting}
                 >
-                  <i className="fa-solid fa-pen-to-square"></i> Edit Details
+                  <i className="fa-solid fa-pen-to-square"></i>
+                  Edit Details
                 </button>
                 <button
                   className={`fsr-preview-confirm-btn ${submitting ? "disabled" : ""}`}
@@ -1771,9 +1888,13 @@ function FacultySubmitReservation() {
                   disabled={submitting}
                 >
                   {submitting ? (
-                    <><i className="fa-solid fa-spinner fa-spin"></i> Submitting...</>
+                    <>
+                      <i className="fa-solid fa-spinner fa-spin"></i> Submitting...
+                    </>
                   ) : (
-                    <><i className="fa-solid fa-circle-check"></i> Confirm & Submit</>
+                    <>
+                      <i className="fa-solid fa-circle-check"></i> Confirm & Submit
+                    </>
                   )}
                 </button>
               </div>
@@ -1781,6 +1902,7 @@ function FacultySubmitReservation() {
           </div>
         )}
 
+        {/* SUCCESS DIALOG (unchanged) */}
         {showSuccessModal && submittedReservation && (
           <div className="rs-success-overlay">
             <div className="rs-success-modal">
@@ -1829,19 +1951,8 @@ function FacultySubmitReservation() {
                     {submittedReservation.audienceType === "Organization" && submittedReservation.organization
                       ? ` — ${submittedReservation.organization}`
                       : ""}
-                    {submittedReservation.audienceType === "Others" && submittedReservation.customAudience
-                      ? ` — ${submittedReservation.customAudience}`
-                      : ""}
                   </span>
                 </div>
-                {submittedReservation.requiredEquipment?.length > 0 && (
-                  <div className="rs-success-row">
-                    <span className="rs-success-label">Additional Equipment</span>
-                    <span className="rs-success-value">
-                      {submittedReservation.requiredEquipment.join(", ")}
-                    </span>
-                  </div>
-                )}
                 <div className="rs-success-row">
                   <span className="rs-success-label">Status</span>
                   <span className="rs-status-pill">
