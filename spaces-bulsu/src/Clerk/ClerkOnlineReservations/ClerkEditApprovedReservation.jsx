@@ -149,7 +149,7 @@ const sendNotification = async (userId, ownerType, title, message, type, badge =
 };
 
 // ══════════════════════════════════════════════════════════════
-// CONFLICT CHECK
+// CONFLICT CHECK — RELEASE-AWARE
 // ══════════════════════════════════════════════════════════════
 const checkReservationConflicts = async (reservation, skipReservationId) => {
   if (!reservation) return [];
@@ -168,14 +168,28 @@ const checkReservationConflicts = async (reservation, skipReservationId) => {
   const conflicts = [];
 
   try {
-    const [evSnap, reSnap, resSnap, schedSnap] = await Promise.all([
+    const [evSnap, reSnap, resSnap, schedSnap, relSnap] = await Promise.all([
       getDocs(query(collection(db, "events"), where("date", "==", reservation.date))),
       getDocs(collection(db, "roomReassignments")),
       getDocs(query(collection(db, "reservationRequests"), where("date", "==", reservation.date))),
       roomId
         ? getDocs(collection(db, "rooms", roomId, "schedules"))
         : Promise.resolve({ docs: [] }),
+      // ✅ Fetch ALL releases, filter client-side
+      getDocs(collection(db, "roomReleases")),
     ]);
+
+    // ✅ Build released set
+    const releasedIds = new Set();
+    relSnap.docs.forEach((rd) => {
+      const rel = rd.data();
+      if (rel.date !== reservation.date) return;
+      const matchesRelRoom =
+        (roomId && rel.roomId === roomId) ||
+        (roomName && rel.roomName === roomName);
+      if (!matchesRelRoom) return;
+      if (rel.scheduleId) releasedIds.add(String(rel.scheduleId));
+    });
 
     evSnap.docs.forEach((d) => {
       const e = { id: d.id, ...d.data() };
@@ -195,12 +209,11 @@ const checkReservationConflicts = async (reservation, skipReservationId) => {
       });
     });
 
-      reSnap.docs.forEach((d) => {
+    reSnap.docs.forEach((d) => {
       const r = { id: d.id, ...d.data() };
       if (r.date !== reservation.date) return;
       const status = String(r.status || "").toLowerCase();
       if (status !== "accepted" && status !== "approved") return;
-      // ✅ Skip event reassignments — class stays, only activity moves
       if (r.reassignType === "event") return;
       const into = (roomId && r.newRoomId === roomId) || (roomName && r.newRoomName === roomName);
       if (!into) return;
@@ -236,6 +249,7 @@ const checkReservationConflicts = async (reservation, skipReservationId) => {
       });
     });
 
+    // ✅ Schedules — NOW RELEASE-AWARE
     if (schedSnap.docs?.length) {
       const day = new Date(`${reservation.date}T00:00:00`)
         .toLocaleDateString("en-US", { weekday: "short" }).toUpperCase();
@@ -243,6 +257,7 @@ const checkReservationConflicts = async (reservation, skipReservationId) => {
         const s = { id: d.id, ...d.data() };
         if (s.cancelled || s.initialized) return;
         if (s.day !== day) return;
+        if (releasedIds.has(String(s.id))) return;  // ✅ NEW
         const sT = parseTimeToMin(s.startTime);
         const eT = parseTimeToMin(s.endTime);
         if (sT == null || eT == null) return;
@@ -596,6 +611,9 @@ function ClerkEditApprovedReservation() {
   const [conflicts, setConflicts] = useState([]);
   const [checkingConflicts, setCheckingConflicts] = useState(false);
 
+  // ✅ Auto-refresh key para sa releases (edit page)
+  const [releaseRefreshKey, setReleaseRefreshKey] = useState(0);
+
   const [fieldError, setFieldError] = useState({ field: "", message: "" });
   const [conflictError, setConflictError] = useState("");
   const [showSaveModal, setShowSaveModal] = useState(false);
@@ -626,7 +644,6 @@ function ClerkEditApprovedReservation() {
     [editableFields, originalFields]
   );
 
-  // Room availability check
   const availabilityReady =
     !loadingRooms &&
     !loadingAvailable &&
@@ -639,7 +656,6 @@ function ClerkEditApprovedReservation() {
     !!editableFields.roomName &&
     !availableRooms.some((r) => r.roomName === editableFields.roomName);
 
-  // Live listener
   useEffect(() => {
     if (!initialReservation?.id) return;
     const unsub = onSnapshot(
@@ -652,7 +668,20 @@ function ClerkEditApprovedReservation() {
     return () => unsub();
   }, [initialReservation?.id]);
 
-  // Initial load
+  // ✅ NEW: listen for roomReleases on this room
+  useEffect(() => {
+    const rid = initialReservation?.roomId;
+    if (!rid) return;
+    const unsub = onSnapshot(
+      query(collection(db, "roomReleases"), where("roomId", "==", rid)),
+      (snap) => {
+        setReleaseRefreshKey(snap.docs.length);
+      },
+      (err) => console.warn("Releases listener failed:", err)
+    );
+    return () => unsub();
+  }, [initialReservation?.roomId]);
+
   useEffect(() => {
     if (!reservation) {
       navigate("/clerk/online-reservations");
@@ -705,12 +734,11 @@ function ClerkEditApprovedReservation() {
         )),
       ]);
 
-            const releases = releaseSnap.docs.map((d) => d.data());
+      const releases = releaseSnap.docs.map((d) => d.data());
       const reassignments = reassignSnap.docs.map((d) => d.data())
         .filter((r) => {
           const s = normalize(r.status);
           if (s !== "approved" && s !== "accepted") return false;
-          // ✅ Skip event reassignments — class stays, only activity moves
           if (r.reassignType === "event") return false;
           return true;
         });
@@ -802,10 +830,10 @@ function ClerkEditApprovedReservation() {
       fetchAvailableRooms(allRooms, editableFields.date, editableFields.startTime, editableFields.endTime);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editableFields.date, editableFields.startTime, editableFields.endTime, allRooms]);
+  }, [editableFields.date, editableFields.startTime, editableFields.endTime, allRooms, releaseRefreshKey]);
 
   // ══════════════════════════════════════════════════════════
-  // LIVE CONFLICT CHECK — with sync loading flag
+  // LIVE CONFLICT CHECK — release-aware + auto-refresh
   // ══════════════════════════════════════════════════════════
   useEffect(() => {
     if (!editableFields.roomName || !editableFields.date ||
@@ -815,7 +843,6 @@ function ClerkEditApprovedReservation() {
       return;
     }
 
-    // ✅ Sync agad — walang stale "No conflicts" flash
     setCheckingConflicts(true);
 
     const timer = setTimeout(async () => {
@@ -837,7 +864,7 @@ function ClerkEditApprovedReservation() {
 
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editableFields, allRooms, reservation?.id]);
+  }, [editableFields, allRooms, reservation?.id, releaseRefreshKey]);
 
   const commitField = (field, value) => {
     setFieldError({ field: "", message: "" });
@@ -999,7 +1026,6 @@ function ClerkEditApprovedReservation() {
 
       setShowSaveModal(false);
       showToast("success", "Success", "Reservation updated successfully!");
-
       setTimeout(() => navigate("/clerk/online-reservations"), 1500);
     } catch (err) {
       console.error(err);
@@ -1020,7 +1046,6 @@ function ClerkEditApprovedReservation() {
     );
   }
 
-  // Synthetic conflict — unavailable room
   const effectiveConflicts = currentRoomUnavailable
     ? [
         {
@@ -1037,10 +1062,7 @@ function ClerkEditApprovedReservation() {
     : conflicts;
 
   const hasConflicts = effectiveConflicts.length > 0;
-
-  // ✅ Isang "busy" flag — pinagsama ang availability fetch + conflict check
   const isChecking = loadingAvailable || checkingConflicts;
-
   const canSave = hasChanges && !hasConflicts && !isChecking && !saving;
   const startTimeMin = editableFields.date === getTodayLocal() ? getNowTimeLocal() : null;
 
@@ -1048,7 +1070,6 @@ function ClerkEditApprovedReservation() {
     <div className="clerk-edit-approved-room">
       <div className="clerk-white-box-edit-approved">
 
-        {/* ─── Header ─────────────────────────────────── */}
         <div className="cear-header">
           <div className="cear-header-text">
             <h2 className="clerk-edit-approved-title">Edit Approved Reservation</h2>
@@ -1058,7 +1079,6 @@ function ClerkEditApprovedReservation() {
           </div>
         </div>
 
-        {/* ─── Banners ────────────────────────────────── */}
         {reservationIsPast && (
           <div className="clerk-edit-locked-banner">
             <i className="fa-solid fa-triangle-exclamation"></i>
@@ -1086,10 +1106,7 @@ function ClerkEditApprovedReservation() {
           </div>
         )}
 
-        {/* ─── Info Grid ──────────────────────────────── */}
         <div className="clerk-edit-approved-info-grid">
-
-          {/* Requester */}
           <div className="clerk-edit-approved-info-box">
             <h3 className="clerk-edit-approved-info-box-title">
               <i className="fa-solid fa-user"></i> Requester
@@ -1102,7 +1119,6 @@ function ClerkEditApprovedReservation() {
             </div>
           </div>
 
-          {/* Course & Audience */}
           <div className="clerk-edit-approved-info-box">
             <h3 className="clerk-edit-approved-info-box-title">
               <i className="fa-solid fa-book"></i> Course & Audience
@@ -1119,7 +1135,6 @@ function ClerkEditApprovedReservation() {
             </div>
           </div>
 
-          {/* Editable: Room & Schedule (full width) */}
           <div className="clerk-edit-approved-info-box editable">
             <h3 className="clerk-edit-approved-info-box-title editable-title">
               <i className="fa-solid fa-pen-to-square"></i> Room & Schedule
@@ -1128,7 +1143,6 @@ function ClerkEditApprovedReservation() {
 
             <div className="clerk-edit-approved-info-box-content">
               <div className="cear-fields-grid">
-                {/* ROOM */}
                 <div className="clerk-edit-approved-form-group cear-span-2">
                   <label>Room</label>
                   <div className="cr-picker-inline">
@@ -1181,7 +1195,6 @@ function ClerkEditApprovedReservation() {
                   </div>
                 </div>
 
-                {/* DATE */}
                 <div className="clerk-edit-approved-form-group">
                   <label>Date</label>
                   <div className="cr-picker-inline">
@@ -1223,7 +1236,6 @@ function ClerkEditApprovedReservation() {
                   )}
                 </div>
 
-                {/* TIME ROW */}
                 <div className="cear-time-pair">
                   <div className="clerk-edit-approved-form-group">
                     <label>Start Time</label>
@@ -1309,7 +1321,6 @@ function ClerkEditApprovedReservation() {
                 </div>
               </div>
 
-              {/* Live conflict indicator — uses isChecking (combined) */}
               <div
                 className={`cear-conflict-status ${
                   isChecking ? "is-checking" : hasConflicts ? "is-error" : "is-ok"
@@ -1330,7 +1341,6 @@ function ClerkEditApprovedReservation() {
                 )}
               </div>
 
-              {/* Conflict details — only after isChecking is done */}
               {hasConflicts && !isChecking && (
                 <ul className="cear-conflict-list">
                   {effectiveConflicts.map((c) => (
@@ -1373,7 +1383,6 @@ function ClerkEditApprovedReservation() {
             </div>
           </div>
 
-          {/* Purpose */}
           <div className="clerk-edit-approved-info-box">
             <h3 className="clerk-edit-approved-info-box-title">
               <i className="fa-solid fa-pen"></i> Purpose
@@ -1400,7 +1409,6 @@ function ClerkEditApprovedReservation() {
             </div>
           </div>
 
-          {/* Metadata */}
           <div className="clerk-edit-approved-info-box">
             <h3 className="clerk-edit-approved-info-box-title">
               <i className="fa-solid fa-circle-info"></i> Metadata

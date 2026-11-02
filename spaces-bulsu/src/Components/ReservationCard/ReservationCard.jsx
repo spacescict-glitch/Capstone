@@ -146,21 +146,35 @@ const checkReservationConflicts = async (reservation) => {
   if (reqStart == null || reqEnd == null) return [];
 
   const matchesRoom = (r) =>
-    (roomId && r.roomId === roomId) ||
-    (roomName && r.roomName === roomName);
+    (roomId && r.roomId === roomId) || (roomName && r.roomName === roomName);
 
   const conflicts = [];
 
   try {
-    const [evSnap, reSnap, resSnap, schedSnap] = await Promise.all([
+    const [evSnap, reSnap, resSnap, schedSnap, relSnap] = await Promise.all([
       getDocs(query(collection(db, "events"), where("date", "==", reservation.date))),
       getDocs(collection(db, "roomReassignments")),
       getDocs(query(collection(db, "reservationRequests"), where("date", "==", reservation.date))),
       roomId
         ? getDocs(collection(db, "rooms", roomId, "schedules"))
         : Promise.resolve({ docs: [] }),
+      // ✅ Fetch ALL releases, filter client-side (no composite index)
+      getDocs(collection(db, "roomReleases")),
     ]);
 
+    // ✅ Build released schedule ID set
+    const releasedIds = new Set();
+    relSnap.docs.forEach((rd) => {
+      const rel = rd.data();
+      if (rel.date !== reservation.date) return;
+      const matchesRelRoom =
+        (roomId && rel.roomId === roomId) ||
+        (roomName && rel.roomName === roomName);
+      if (!matchesRelRoom) return;
+      if (rel.scheduleId) releasedIds.add(String(rel.scheduleId));
+    });
+
+    // 1) Events
     evSnap.docs.forEach((d) => {
       const e = { id: d.id, ...d.data() };
       if (String(e.status || "").toLowerCase() === "cancelled") return;
@@ -178,6 +192,7 @@ const checkReservationConflicts = async (reservation) => {
       });
     });
 
+    // 2) Accepted reassignments INTO this room
     reSnap.docs.forEach((d) => {
       const r = { id: d.id, ...d.data() };
       if (r.date !== reservation.date) return;
@@ -200,6 +215,7 @@ const checkReservationConflicts = async (reservation) => {
       });
     });
 
+    // 3) Other approved reservations
     resSnap.docs.forEach((d) => {
       const r = { id: d.id, ...d.data() };
       if (r.id === reservation.id) return;
@@ -219,35 +235,17 @@ const checkReservationConflicts = async (reservation) => {
       });
     });
 
+    // 4) Class schedules — release-aware
     if (schedSnap.docs?.length) {
       const day = new Date(`${reservation.date}T00:00:00`)
         .toLocaleDateString("en-US", { weekday: "short" })
         .toUpperCase();
-
-      let releasedIds = new Set();
-      if (roomId) {
-        try {
-          const relSnap = await getDocs(
-            query(
-              collection(db, "roomReleases"),
-              where("roomId", "==", roomId),
-              where("date", "==", reservation.date)
-            )
-          );
-          relSnap.docs.forEach((rd) => {
-            const rel = rd.data();
-            if (rel.scheduleId) releasedIds.add(rel.scheduleId);
-          });
-        } catch (relErr) {
-          console.warn("Could not load releases:", relErr);
-        }
-      }
-
       schedSnap.docs.forEach((d) => {
         const s = { id: d.id, ...d.data() };
         if (s.cancelled || s.initialized) return;
         if (s.day !== day) return;
-        if (releasedIds.has(s.id)) return;
+        // ✅ Skip released schedules
+        if (releasedIds.has(String(s.id))) return;
         const sT = parseTimeToMin(s.startTime);
         const eT = parseTimeToMin(s.endTime);
         if (sT == null || eT == null) return;

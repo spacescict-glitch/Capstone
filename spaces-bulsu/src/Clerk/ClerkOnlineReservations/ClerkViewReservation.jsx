@@ -52,7 +52,10 @@ const format12Hour = (time) => {
 };
 
 // ══════════════════════════════════════════════════════════════════════
-// CONFLICT CHECK — same logic
+// CONFLICT CHECK — RELEASE-AWARE
+// ✅ NEW: fetches roomReleases (client-side filter — no composite index
+//    required) and skips schedules that were released (including
+//    consent-based releases from FacultyReservationConflict).
 // ══════════════════════════════════════════════════════════════════════
 const checkReservationConflicts = async (reservation, skipReservationId) => {
   if (!reservation) return [];
@@ -73,7 +76,7 @@ const checkReservationConflicts = async (reservation, skipReservationId) => {
   const found = [];
 
   try {
-    const [evSnap, reSnap, resSnap, schedSnap] = await Promise.all([
+    const [evSnap, reSnap, resSnap, schedSnap, relSnap] = await Promise.all([
       getDocs(
         query(collection(db, "events"), where("date", "==", reservation.date))
       ),
@@ -87,7 +90,21 @@ const checkReservationConflicts = async (reservation, skipReservationId) => {
       roomId
         ? getDocs(collection(db, "rooms", roomId, "schedules"))
         : Promise.resolve({ docs: [] }),
+      // ✅ Fetch ALL releases, filter client-side → walang composite index issue
+      getDocs(collection(db, "roomReleases")),
     ]);
+
+    // ✅ Build released schedule ID set (this room + this date)
+    const releasedIds = new Set();
+    relSnap.docs.forEach((rd) => {
+      const rel = rd.data();
+      if (rel.date !== reservation.date) return;
+      const matchesRelRoom =
+        (roomId && rel.roomId === roomId) ||
+        (roomName && rel.roomName === roomName);
+      if (!matchesRelRoom) return;
+      if (rel.scheduleId) releasedIds.add(String(rel.scheduleId));
+    });
 
     // 1) Events
     evSnap.docs.forEach((d) => {
@@ -117,6 +134,7 @@ const checkReservationConflicts = async (reservation, skipReservationId) => {
       if (r.date !== reservation.date) return;
       const status = String(r.status || "").toLowerCase();
       if (status !== "accepted" && status !== "approved") return;
+      if (r.reassignType === "event") return;
       const into =
         (roomId && r.newRoomId === roomId) ||
         (roomName && r.newRoomName === roomName);
@@ -160,7 +178,7 @@ const checkReservationConflicts = async (reservation, skipReservationId) => {
       });
     });
 
-    // 4) Class schedules
+    // 4) Class schedules — ✅ NOW RELEASE-AWARE
     if (schedSnap.docs?.length) {
       const day = new Date(`${reservation.date}T00:00:00`)
         .toLocaleDateString("en-US", { weekday: "short" })
@@ -169,6 +187,8 @@ const checkReservationConflicts = async (reservation, skipReservationId) => {
         const s = { id: d.id, ...d.data() };
         if (s.cancelled || s.initialized) return;
         if (s.day !== day) return;
+        // ✅ NEW: skip schedules that were released (incl. consent-based)
+        if (releasedIds.has(String(s.id))) return;
         const sT = parseTimeToMin(s.startTime);
         const eT = parseTimeToMin(s.endTime);
         if (sT == null || eT == null) return;
@@ -197,19 +217,19 @@ function ClerkViewReservation() {
 
   const initialReservation = state?.reservation;
 
-  // ─── Live reservation state ───────────────────────────────────────
   const [reservation, setReservation] = useState(initialReservation);
 
   const [showDenial, setShowDenial] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  // ─── Requester photo ─────────────────────────────────────────────
   const [requesterPhoto, setRequesterPhoto] = useState(null);
 
-  // ─── Conflict state ──────────────────────────────────────────────
   const [conflicts, setConflicts] = useState([]);
   const [checkingConflicts, setCheckingConflicts] = useState(true);
+
+  // ✅ NEW: bump when releases change → auto re-check conflicts
+  const [releaseRefreshKey, setReleaseRefreshKey] = useState(0);
 
   const toastTimeoutRef = useRef(null);
 
@@ -255,32 +275,43 @@ function ClerkViewReservation() {
     return () => unsub();
   }, [initialReservation?.id]);
 
+  // ✅ NEW: Live listener para sa roomReleases → auto-refresh conflicts
+  useEffect(() => {
+    const rid = initialReservation?.roomId;
+    if (!rid) return;
+    const unsub = onSnapshot(
+      query(collection(db, "roomReleases"), where("roomId", "==", rid)),
+      (snap) => {
+        // Use docs.length as a version key — triggers re-check on add/remove
+        setReleaseRefreshKey(snap.docs.length);
+      },
+      (err) => console.warn("Releases listener failed:", err)
+    );
+    return () => unsub();
+  }, [initialReservation?.roomId]);
+
   // ─── Fetch requester photo ────────────────────────────────────────
   useEffect(() => {
     const fetchRequesterPhoto = async () => {
       if (!reservation) return;
-
       try {
         const inlinePhoto =
           reservation.userPhoto ||
           reservation.requesterPhoto ||
           reservation.facultyPhoto ||
           reservation.photoURL;
-
         if (inlinePhoto) {
           setRequesterPhoto(inlinePhoto);
           return;
         }
 
         let userId = reservation.userId;
-
         if (!userId && (reservation.facultyName || reservation.requesterName)) {
           const user = await findUserByName(
             reservation.facultyName || reservation.requesterName
           );
           if (user) userId = user.id;
         }
-
         if (!userId) return;
 
         const userSnap = await getDoc(doc(db, "users", userId));
@@ -301,12 +332,11 @@ function ClerkViewReservation() {
         console.error("Failed to fetch requester photo:", err);
       }
     };
-
     fetchRequesterPhoto();
   }, [reservation]);
 
   // ═════════════════════════════════════════════════════════════════
-  // Live conflict check — tumatakbo bawat change sa reservation
+  // Live conflict check — re-runs kapag bagong release o bagong reservation
   // ═════════════════════════════════════════════════════════════════
   useEffect(() => {
     let cancelled = false;
@@ -335,13 +365,13 @@ function ClerkViewReservation() {
     return () => {
       cancelled = true;
     };
-  }, [reservation]);
+  }, [reservation, releaseRefreshKey]);
 
   if (!reservation) {
     return (
       <div className="clerk-view-reservation">
         <h2>Reservation not found.</h2>
-        <button onClick={() => navigate("/clerk/reservations")}>Back</button>
+        <button onClick={() => navigate("/clerk/online-reservations")}>Back</button>
       </div>
     );
   }
@@ -396,7 +426,7 @@ function ClerkViewReservation() {
     if (jobs.length) await Promise.all(jobs);
   };
 
-  // ─── Approve (ROBUST — reordered, defensive) ────────────────────
+  // ─── Approve ────────────────────────────────────────────────────
   const approveReservation = async () => {
     if (submitting) return;
 
@@ -404,7 +434,6 @@ function ClerkViewReservation() {
     showToast("loading", "Processing", "Approving reservation...");
 
     try {
-      // 1. Auth pre-check — hindi tumuloy kung session expired
       if (!auth.currentUser) {
         setShowConfirm(false);
         showToast(
@@ -415,7 +444,6 @@ function ClerkViewReservation() {
         return;
       }
 
-      // 2. Final conflict check (critical — block kung may conflicts)
       const fresh = await checkReservationConflicts(reservation, reservation.id);
       if (fresh.length > 0) {
         setConflicts(fresh);
@@ -428,7 +456,6 @@ function ClerkViewReservation() {
         return;
       }
 
-      // 3. Create the event FIRST (para kung mag-fail, walang partial)
       await addDoc(collection(db, "events"), {
         roomId: reservation.roomId,
         roomName: reservation.roomName,
@@ -443,14 +470,12 @@ function ClerkViewReservation() {
         reservationId: reservation.id,
       });
 
-      // 4. Update reservation status (critical — maging Approved)
       await updateDoc(doc(db, "reservationRequests", reservation.id), {
         status: "Approved",
         approvedAt: serverTimestamp(),
         approvedBy: auth.currentUser.uid,
       });
 
-      // 5. Non-critical: activity log (wrap — hindi masisira ang flow)
       let clerkName = "Clerk";
       try {
         const userSnap = await getDoc(doc(db, "users", auth.currentUser.uid));
@@ -479,7 +504,6 @@ function ClerkViewReservation() {
         console.warn("Activity log failed (non-critical):", logErr);
       }
 
-      // 6. Non-critical: notifications (wrap din — hindi masisira)
       try {
         let facultyUserId = reservation.userId;
         if (!facultyUserId && reservation.facultyName) {
@@ -520,15 +544,12 @@ function ClerkViewReservation() {
         console.warn("Notifications failed (non-critical):", notifErr);
       }
 
-      // 7. Success
       setShowConfirm(false);
       showToast("success", "Success", "Reservation approved successfully!");
-
-      setTimeout(() => navigate("/clerk/reservations"), 1500);
+      setTimeout(() => navigate("/clerk/online-reservations"), 1500);
     } catch (err) {
       console.error("Approve error:", err);
 
-      // Better error messages by code
       let msg = "Failed to approve reservation.";
       if (err.code === "permission-denied") {
         msg =
@@ -552,7 +573,7 @@ function ClerkViewReservation() {
     }
   };
 
-  // ─── Deny (ROBUST — reordered, defensive) ───────────────────────
+  // ─── Deny ───────────────────────────────────────────────────────
   const denyReservation = async (reason) => {
     if (submitting) return;
 
@@ -560,7 +581,6 @@ function ClerkViewReservation() {
     showToast("loading", "Processing", "Denying reservation...");
 
     try {
-      // 1. Auth pre-check
       if (!auth.currentUser) {
         setShowDenial(false);
         showToast(
@@ -571,7 +591,6 @@ function ClerkViewReservation() {
         return;
       }
 
-      // 2. Update reservation status
       await updateDoc(doc(db, "reservationRequests", reservation.id), {
         status: "Rejected",
         denialReason: reason,
@@ -579,7 +598,6 @@ function ClerkViewReservation() {
         rejectedBy: auth.currentUser.uid,
       });
 
-      // 3. Non-critical: activity log
       let clerkName = "Clerk";
       try {
         const userSnap = await getDoc(doc(db, "users", auth.currentUser.uid));
@@ -606,7 +624,6 @@ function ClerkViewReservation() {
         console.warn("Activity log failed (non-critical):", logErr);
       }
 
-      // 4. Non-critical: notifications
       try {
         let facultyUserId = reservation.userId;
         if (!facultyUserId && reservation.facultyName) {
@@ -649,8 +666,7 @@ function ClerkViewReservation() {
 
       setShowDenial(false);
       showToast("success", "Success", "Reservation denied successfully.");
-
-      setTimeout(() => navigate("/clerk/reservations"), 1500);
+      setTimeout(() => navigate("/clerk/online-reservations"), 1500);
     } catch (err) {
       console.error("Deny error:", err);
 
@@ -865,7 +881,6 @@ function ClerkViewReservation() {
               </div>
             </div>
 
-            {/* CONFLICT CHECK BOX */}
             <div className="clerk-reservation-info-box conflict-check-box">
               <h3 className="clerk-info-box-title">Conflict Check</h3>
               <div className="clerk-info-box-content">
@@ -978,13 +993,13 @@ function ClerkViewReservation() {
           </div>
         </div>
         <div className="clerk-approved-footer">
-        <button
-          className="clerk-approved-back-btn"
-          onClick={() => navigate("/clerk/online-reservations")}
-        >
-          Back
-        </button>
-      </div>
+          <button
+            className="clerk-approved-back-btn"
+            onClick={() => navigate("/clerk/online-reservations")}
+          >
+            Back
+          </button>
+        </div>
       </div>
 
       {showDenial && (
