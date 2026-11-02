@@ -24,7 +24,7 @@ export default function FacultyLayout() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [notifications, setNotifications] = useState([]);
-const [decidedAssignmentIds, setDecidedAssignmentIds] = useState(new Set());
+  const [decidedAssignmentIds, setDecidedAssignmentIds] = useState(new Set());
   const [activeTab, setActiveTab] = useState("all");
   const [loggingOut, setLoggingOut] = useState(false);
   const [selectedNotification, setSelectedNotification] = useState(null);
@@ -91,48 +91,46 @@ const [decidedAssignmentIds, setDecidedAssignmentIds] = useState(new Set());
   }, []);
 
   /* ---------- Live listener: decided reassignments ---------- */
-useEffect(() => {
-  const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
-    if (!user) return;
+  useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      if (!user) return;
 
-    // Single where clause — walang composite index kailangan
-    const q = query(
-      collection(db, "roomReassignments"),
-      where("facultyId", "==", user.uid)
-    );
+      const q = query(
+        collection(db, "roomReassignments"),
+        where("facultyId", "==", user.uid)
+      );
 
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        const decidedSet = new Set();
-        snap.docs.forEach((d) => {
-          const data = d.data();
-          const status = String(data.status || "").toLowerCase();
-          // Marks as "decided" — hindi na pwedeng mag-respond
-          if (
-            status === "accepted" ||
-            status === "declined" ||
-            status === "cancelled" ||
-            status === "needs_reassign"
-          ) {
-            decidedSet.add(d.id);
-          }
-        });
-        setDecidedAssignmentIds(decidedSet);
-      },
-      (err) => {
-        console.warn(
-          "[FacultyLayout] roomReassignments listener failed:",
-          err
-        );
-      }
-    );
+      const unsub = onSnapshot(
+        q,
+        (snap) => {
+          const decidedSet = new Set();
+          snap.docs.forEach((d) => {
+            const data = d.data();
+            const status = String(data.status || "").toLowerCase();
+            if (
+              status === "accepted" ||
+              status === "declined" ||
+              status === "cancelled" ||
+              status === "needs_reassign"
+            ) {
+              decidedSet.add(d.id);
+            }
+          });
+          setDecidedAssignmentIds(decidedSet);
+        },
+        (err) => {
+          console.warn(
+            "[FacultyLayout] roomReassignments listener failed:",
+            err
+          );
+        }
+      );
 
-    return () => unsub();
-  });
+      return () => unsub();
+    });
 
-  return () => unsubscribeAuth();
-}, []);
+    return () => unsubscribeAuth();
+  }, []);
 
   /* ---------- Close dropdown on outside click ---------- */
   useEffect(() => {
@@ -257,26 +255,26 @@ useEffect(() => {
 
   const closeNotificationDetail = () => setSelectedNotification(null);
 
-const isDecidedNotification = (item) => {
-  // 1️⃣ Notification mismo naka-mark as decided
-  if (item?.decided === true) return true;
+  const isDecidedNotification = (item) => {
+    // 1️⃣ Notification mismo naka-mark as decided
+    if (item?.decided === true) return true;
 
-  // 2️⃣ Fallback: check kung ang linked reassignment ay decided na
-  if (item?.assignmentId && decidedAssignmentIds.has(item.assignmentId)) {
-    return true;
-  }
+    // 2️⃣ Fallback: check kung ang linked reassignment ay decided na
+    if (item?.assignmentId && decidedAssignmentIds.has(item.assignmentId)) {
+      return true;
+    }
 
-  // 3️⃣ Legacy checks (para sa mga lumang notification)
-  const badge = String(item?.badge || "").toUpperCase();
-  const type = String(item?.type || "").toLowerCase();
-  return (
-    badge === "ACCEPTED" ||
-    badge === "DECLINED" ||
-    badge === "APPROVED" ||
-    badge === "REJECTED" ||
-    type === "room-reassignment-status"
-  );
-};
+    // 3️⃣ Legacy checks (para sa mga lumang notification)
+    const badge = String(item?.badge || "").toUpperCase();
+    const type = String(item?.type || "").toLowerCase();
+    return (
+      badge === "ACCEPTED" ||
+      badge === "DECLINED" ||
+      badge === "APPROVED" ||
+      badge === "REJECTED" ||
+      type === "room-reassignment-status"
+    );
+  };
 
   const unreadCount = notifications.filter((n) => n.unread && !n.archived).length;
   const allCount = notifications.filter((n) => !n.archived).length;
@@ -309,6 +307,9 @@ const isDecidedNotification = (item) => {
     "room-release": "fa-solid fa-door-open",
     "conflict-resolution": "fa-solid fa-circle-check",
     "schedule-upload": "fa-solid fa-upload",
+    // ✅ NEW
+    "reservation-conflict": "fa-solid fa-triangle-exclamation",
+    "reservation-conflict-status": "fa-solid fa-triangle-exclamation",
     default: "fa-solid fa-bell",
   };
 
@@ -322,6 +323,9 @@ const isDecidedNotification = (item) => {
     "room-release": "Room Release",
     "conflict-resolution": "Conflict Resolution",
     "schedule-upload": "Schedule Upload",
+    // ✅ NEW
+    "reservation-conflict": "Reservation Conflict",
+    "reservation-conflict-status": "Reservation Conflict",
     default: "Notification",
   };
 
@@ -550,10 +554,6 @@ const isDecidedNotification = (item) => {
                                 type={item.type}
                                 unread={item.unread}
                                 archived={item.archived}
-                                /* 🔒 Only pass assignmentId when the reassignment
-                                   is NOT yet decided — this hides the "View"
-                                   button automatically once the faculty has
-                                   accepted/declined (or when it's a status update). */
                                 assignmentId={
                                   isDecidedNotification(item)
                                     ? undefined
@@ -648,6 +648,28 @@ const isDecidedNotification = (item) => {
               >
                 Close
               </button>
+
+              {/* ✅ NEW: Respond button for reservation conflict notifications */}
+              {selectedNotification.type === "reservation-conflict" &&
+                selectedNotification.conflictConsentId &&
+                !selectedNotification.decided && (
+                  <button
+                    type="button"
+                    className="notif-detail-btn"
+                    style={{
+                      background: "#F2690D",
+                      color: "#fff",
+                      borderColor: "#F2690D",
+                    }}
+                    onClick={() => {
+                      const consentId = selectedNotification.conflictConsentId;
+                      closeNotificationDetail();
+                      navigate(`/faculty/reservation-conflict/${consentId}`);
+                    }}
+                  >
+                    Respond to Conflict
+                  </button>
+                )}
             </div>
           </div>
         </div>

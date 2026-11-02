@@ -83,6 +83,7 @@ import FacultyRoomReassignment from "./Faculty/FacultyLayout/FacultyRoomReassign
 import FacultyViewDenied from "./Faculty/FacultyReservations/FacultyViewDeniedReservation";
 import FacultySettings from "./Faculty/FacultySettings/FacultySettings";
 import FacultyRoomIssues from "./Faculty/FacultyRoomIssues/FacultyRoomIssues";
+import FacultyReservationConflict from "./Faculty/FacultyLayout/FacultyReservationConflict";
 
 // Login
 import Home from "./Home/Home";
@@ -287,6 +288,10 @@ function App() {
             <Route
               path="view-cancelled-reservation"
               element={<FacultyViewCancelledReservation />}
+            />
+            <Route
+              path="/faculty/reservation-conflict/:consentId"
+              element={<FacultyReservationConflict />}
             />
             <Route path="settings" element={<FacultySettings />} />
             <Route path="broadcast-channel" element={<BroadcastChannel />} />

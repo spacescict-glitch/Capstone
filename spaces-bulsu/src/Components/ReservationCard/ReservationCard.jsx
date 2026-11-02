@@ -291,30 +291,53 @@ const checkReservationConflicts = async (reservation) => {
       });
     });
 
-    // 4) Class schedules on the matching weekday
-    if (schedSnap.docs?.length) {
-      const day = new Date(`${reservation.date}T00:00:00`)
-        .toLocaleDateString("en-US", { weekday: "short" })
-        .toUpperCase();
-      schedSnap.docs.forEach((d) => {
-        const s = { id: d.id, ...d.data() };
-        if (s.cancelled || s.initialized) return;
-        if (s.day !== day) return;
-        const sT = parseTimeToMin(s.startTime);
-        const eT = parseTimeToMin(s.endTime);
-        if (sT == null || eT == null) return;
-        if (!overlaps(reqStart, reqEnd, sT, eT)) return;
-        conflicts.push({
-          id: s.id,
-          kind: "schedule",
-          label: "Class Schedule",
-          title: s.subject || s.courseTitle || s.title || "Class",
-          faculty: s.facultyName || s.faculty || "-",
-          startTime: s.startTime,
-          endTime: s.endTime,
+      // 4) Class schedules on the matching weekday (skip released)
+      if (schedSnap.docs?.length) {
+        const day = new Date(`${reservation.date}T00:00:00`)
+          .toLocaleDateString("en-US", { weekday: "short" })
+          .toUpperCase();
+
+        // ✅ NEW: fetch releases so we skip consent-released / self-released schedules
+        let releasedIds = new Set();
+        if (roomId) {
+          try {
+            const relSnap = await getDocs(
+              query(
+                collection(db, "roomReleases"),
+                where("roomId", "==", roomId),
+                where("date", "==", reservation.date)
+              )
+            );
+            relSnap.docs.forEach((rd) => {
+              const rel = rd.data();
+              if (rel.scheduleId) releasedIds.add(rel.scheduleId);
+            });
+          } catch (relErr) {
+            console.warn("Could not load releases:", relErr);
+          }
+        }
+
+        schedSnap.docs.forEach((d) => {
+          const s = { id: d.id, ...d.data() };
+          if (s.cancelled || s.initialized) return;
+          if (s.day !== day) return;
+          // ✅ NEW: skip released schedules (including conflict-consent)
+          if (releasedIds.has(s.id)) return;
+          const sT = parseTimeToMin(s.startTime);
+          const eT = parseTimeToMin(s.endTime);
+          if (sT == null || eT == null) return;
+          if (!overlaps(reqStart, reqEnd, sT, eT)) return;
+          conflicts.push({
+            id: s.id,
+            kind: "schedule",
+            label: "Class Schedule",
+            title: s.subject || s.courseTitle || s.title || "Class",
+            faculty: s.facultyName || s.faculty || "-",
+            startTime: s.startTime,
+            endTime: s.endTime,
+          });
         });
-      });
-    }
+      }
   } catch (err) {
     console.error("Conflict check failed:", err);
   }

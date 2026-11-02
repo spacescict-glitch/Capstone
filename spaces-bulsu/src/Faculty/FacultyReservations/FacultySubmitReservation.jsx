@@ -1,5 +1,5 @@
 // ============================================================
-// FILE: FacultySubmitReservation.jsx (with checklist + conflict warning + room filters)
+// FILE: FacultySubmitReservation.jsx (with checklist + conflict warning + room filters + consent flow)
 // ============================================================
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
@@ -17,6 +17,39 @@ import {
   query,
   where,
 } from "firebase/firestore";
+
+// ─── Helper: find faculty user by name (handles "Last, First" and "First Last") ───
+const findFacultyByName = async (name) => {
+  if (!name) return null;
+  const usersSnap = await getDocs(collection(db, "users"));
+
+  const normalize = (s) =>
+    String(s || "")
+      .toLowerCase()
+      .replace(/[.,]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const partsKey = (s) => normalize(s).split(" ").filter(Boolean).sort().join(" ");
+  const targetKey = partsKey(name);
+  if (!targetKey) return null;
+
+  for (const d of usersSnap.docs) {
+    const data = d.data();
+    if (String(data.role || "").toLowerCase() !== "faculty") continue;
+
+    const variants = [
+      `${data.firstName || ""} ${data.lastName || ""}`,
+      `${data.lastName || ""} ${data.firstName || ""}`,
+      `${data.lastName || ""}, ${data.firstName || ""}`,
+    ];
+
+    for (const v of variants) {
+      if (partsKey(v) === targetKey) return { id: d.id, ...data };
+    }
+  }
+  return null;
+};
 
 // ─── 12-hour time formatter ─────────────────────────────────
 const format12Hour = (time) => {
@@ -468,6 +501,10 @@ function FacultySubmitReservation() {
           occupied = true;
           conflicts.push({
             kind: "schedule",
+            // ✅ NEW: carry schedule/room info for consent flow
+            scheduleId: doc.id,
+            roomId: room.id,
+            roomName: room.roomName,
             title: sched.subject || sched.courseTitle || "Class",
             section: sched.section || "",
             faculty: sched.facultyName || sched.faculty || "",
@@ -655,7 +692,10 @@ function FacultySubmitReservation() {
       if (purpose === "Other Activity" && !customPurposeText.trim()) {
         errors.customPurposeText = "Please specify the activity.";
       }
-      if (!studentRange) errors.studentRange = "Select the estimated number of attendees.";
+      // ✅ FIX: Hands-on doesn't need attendees — only equipment
+      if (purpose !== "Hands-on" && !studentRange) {
+        errors.studentRange = "Select the estimated number of attendees.";
+      }
     }
 
     if (date) {
@@ -766,6 +806,9 @@ function FacultySubmitReservation() {
 
     const conflictSnapshot = (selectedRoom?.conflicts || []).map((c) => ({
       kind: c.kind,
+      scheduleId: c.scheduleId || null,
+      roomId: c.roomId || null,
+      roomName: c.roomName || null,
       title: c.title,
       section: c.section || "",
       faculty: c.faculty || "",
@@ -800,15 +843,81 @@ function FacultySubmitReservation() {
         createdAt: serverTimestamp(),
       });
 
+      const scheduleConflicts = conflictSnapshot.filter(
+        (c) => c.kind === "schedule" && c.faculty
+      );
+
       await notifyClerkAndAdmin(
         "New Reservation Request",
         `${facultyName} submitted a reservation request for "${courseTitle}" in ${selectedRoom.roomName} on ${date} from ${startTime} to ${endTime}.${
-          conflictSnapshot.length > 0
+          scheduleConflicts.length > 0
+            ? ` ⚠️ ${scheduleConflicts.length} schedule conflict${scheduleConflicts.length > 1 ? "s" : ""} — affected faculty notified for consent.`
+            : conflictSnapshot.length > 0
             ? ` ⚠️ ${conflictSnapshot.length} conflict${conflictSnapshot.length > 1 ? "s" : ""} detected at submit time.`
             : ""
         }`,
         reservationRef.id
       );
+
+      // ✅ NEW: create consent docs + notify each affected faculty
+      for (const conflict of scheduleConflicts) {
+        try {
+          const affectedFaculty = await findFacultyByName(conflict.faculty);
+          if (!affectedFaculty) {
+            console.warn(
+              `[FacultySubmitReservation] Could not find faculty user for "${conflict.faculty}" — skipping consent.`
+            );
+            continue;
+          }
+
+          const consentRef = await addDoc(
+            collection(db, "reservationConflictConsents"),
+            {
+              reservationId: reservationRef.id,
+              reservationType: "online",
+              scheduleId: conflict.scheduleId,
+              roomId: selectedRoom.id,
+              roomName: selectedRoom.roomName,
+              facultyId: affectedFaculty.id,
+              facultyName: conflict.faculty,
+              requestedById: auth.currentUser.uid,
+              requestedByName: facultyName,
+              courseTitle,
+              purpose: finalPurpose,
+              date,
+              startTime,
+              endTime,
+              conflictStartTime: conflict.startTime,
+              conflictEndTime: conflict.endTime,
+              conflictSubject: conflict.title,
+              conflictSection: conflict.section || "",
+              status: "pending",
+              respondedAt: null,
+              respondedBy: null,
+              createdAt: serverTimestamp(),
+            }
+          );
+
+          await addDoc(collection(db, "notifications"), {
+            userId: affectedFaculty.id,
+            ownerType: "faculty",
+            conflictConsentId: consentRef.id,
+            reservationId: reservationRef.id,
+            title: "Reservation Conflicts with Your Class",
+            message: `${facultyName} submitted a reservation for ${selectedRoom.roomName} on ${date} (${startTime} - ${endTime}) that overlaps with your class "${conflict.title}"${conflict.section ? ` (${conflict.section})` : ""}. Please respond — accept to release your room, or decline to keep your class.`,
+            type: "reservation-conflict",
+            unread: true,
+            archived: false,
+            badge: "ACTION",
+            createdAt: serverTimestamp(),
+          });
+        } catch (err) {
+          console.warn(
+            `[FacultySubmitReservation] Consent creation failed for "${conflict.faculty}":`,
+            err
+          );
+        }
+      }
 
       await addDoc(collection(db, "notifications"), {
         userId: auth.currentUser.uid,
@@ -1823,9 +1932,7 @@ function FacultySubmitReservation() {
           </button>
         </div>
 
-        {/* ═══════════════════════════════════════════════════════
-            CONFLICT WARNING MODAL
-            ═══════════════════════════════════════════════════════ */}
+        {/* CONFLICT WARNING MODAL */}
         {showConflictWarning && selectedRoom && (
           <div
             className="faculty-conflict-warning-overlay"
@@ -1903,9 +2010,7 @@ function FacultySubmitReservation() {
           </div>
         )}
 
-        {/* ═══════════════════════════════════════════════════════
-            PREVIEW MODAL
-            ═══════════════════════════════════════════════════════ */}
+        {/* PREVIEW MODAL */}
         {showPreview && (
           <div
             className="fsr-preview-overlay"
@@ -2065,9 +2170,7 @@ function FacultySubmitReservation() {
           </div>
         )}
 
-        {/* ═══════════════════════════════════════════════════════
-            SUCCESS DIALOG
-            ═══════════════════════════════════════════════════════ */}
+        {/* SUCCESS DIALOG */}
         {showSuccessModal && submittedReservation && (
           <div className="rs-success-overlay">
             <div className="rs-success-modal">
