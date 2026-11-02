@@ -1,5 +1,7 @@
 // ============================================================
-// FILE: FacultySubmitReservation.jsx (with checklist + conflict warning + room filters + consent flow)
+// FILE: FacultySubmitReservation.jsx
+// - FIX: robust findFacultyByName (middle-initial aware)
+// - FIX: fallback when faculty can't be resolved → notify admins
 // ============================================================
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
@@ -18,40 +20,93 @@ import {
   where,
 } from "firebase/firestore";
 
-// ─── Helper: find faculty user by name (handles "Last, First" and "First Last") ───
+// ─── Helper: normalize names (strip titles, punctuation) ─────
+const TITLE_WORDS = /\b(prof|professor|dr|mr|mrs|ms|sir|ma'am|maam|engr|atty)\.?\s+/gi;
+
+const normalizeNameText = (s) =>
+  String(s || "")
+    .replace(TITLE_WORDS, "")
+    .toLowerCase()
+    .replace(/[.,]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const namePartsSet = (s) =>
+  new Set(normalizeNameText(s).split(" ").filter(Boolean));
+
+// Match kung subset ang isa sa isa pa (middle-initial tolerant)
+const namesEquivalent = (a, b) => {
+  const setA = namePartsSet(a);
+  const setB = namePartsSet(b);
+  if (setA.size === 0 || setB.size === 0) return false;
+
+  const shorter = setA.size <= setB.size ? setA : setB;
+  const longer = setA.size <= setB.size ? setB : setA;
+  const longerArr = [...longer];
+
+  return [...shorter].every((part) => {
+    if (longer.has(part)) return true;
+    // Middle-initial tolerance: "m" vs "miguel"
+    if (part.length <= 2) {
+      return longerArr.some(
+        (lp) => lp === part || lp.startsWith(part) || part.startsWith(lp)
+      );
+    }
+    return false;
+  });
+};
+
 const findFacultyByName = async (name) => {
   if (!name) return null;
+  const target = String(name).trim();
+  if (!target) return null;
+
   const usersSnap = await getDocs(collection(db, "users"));
+  const targetNorm = normalizeNameText(target);
 
-  const normalize = (s) =>
-    String(s || "")
-      .toLowerCase()
-      .replace(/[.,]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-
-  const partsKey = (s) => normalize(s).split(" ").filter(Boolean).sort().join(" ");
-  const targetKey = partsKey(name);
-  if (!targetKey) return null;
+  const exact = [];
+  const partial = [];
 
   for (const d of usersSnap.docs) {
     const data = d.data();
-    if (String(data.role || "").toLowerCase() !== "faculty") continue;
+    const role = String(data.role || "").toLowerCase().trim();
+    if (role !== "faculty") continue;
+
+    const first = data.firstName || "";
+    const last = data.lastName || "";
+    const mid = data.middleInitial || "";
 
     const variants = [
-      `${data.firstName || ""} ${data.lastName || ""}`,
-      `${data.lastName || ""} ${data.firstName || ""}`,
-      `${data.lastName || ""}, ${data.firstName || ""}`,
+      `${first} ${last}`,
+      `${last} ${first}`,
+      `${last}, ${first}`,
+      `${first} ${mid} ${last}`.trim(),
+      `${last} ${first} ${mid}`.trim(),
+      `${last}, ${first} ${mid}`.trim(),
+      `${last}, ${first} ${mid}.`.trim(),
     ];
 
-    for (const v of variants) {
-      if (partsKey(v) === targetKey) return { id: d.id, ...data };
+    if (variants.some((v) => normalizeNameText(v) === targetNorm)) {
+      exact.push({ id: d.id, ...data });
+      continue;
+    }
+    if (variants.some((v) => namesEquivalent(v, target))) {
+      partial.push({ id: d.id, ...data });
     }
   }
+
+  if (exact.length > 0) return exact[0];
+  if (partial.length > 0) {
+    console.warn(
+      `[findFacultyByName] Partial match for "${name}" → ${partial[0].firstName} ${partial[0].lastName}`
+    );
+    return partial[0];
+  }
+  console.warn(`[findFacultyByName] NO MATCH for "${name}"`);
   return null;
 };
 
-// ─── 12-hour time formatter ─────────────────────────────────
+// ─── Formatters ─────────────────────────────────────────────
 const format12Hour = (time) => {
   if (!time) return "-";
   const [hour, minute] = time.split(":").map(Number);
@@ -68,7 +123,6 @@ const formatDateLong = (dateStr) => {
   return d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
 };
 
-// ─── Quick date helpers ─────────────────────────────────────
 const toDateInputValue = (date) => {
   const yyyy = date.getFullYear();
   const mm = String(date.getMonth() + 1).padStart(2, "0");
@@ -130,40 +184,34 @@ const buildTimeOptions = () => {
 const TIME_OPTIONS = buildTimeOptions();
 
 const PRESET_SLOTS = [
-  { label: "7:00 – 8:30 AM",   start: "07:00", end: "08:30" },
-  { label: "8:30 – 10:00 AM",  start: "08:30", end: "10:00" },
+  { label: "7:00 – 8:30 AM", start: "07:00", end: "08:30" },
+  { label: "8:30 – 10:00 AM", start: "08:30", end: "10:00" },
   { label: "10:00 – 11:30 AM", start: "10:00", end: "11:30" },
-  { label: "11:30 – 1:00 PM",  start: "11:30", end: "13:00" },
-  { label: "1:00 – 2:30 PM",   start: "13:00", end: "14:30" },
-  { label: "2:30 – 4:00 PM",   start: "14:30", end: "16:00" },
-  { label: "4:00 – 5:30 PM",   start: "16:00", end: "17:30" },
-  { label: "5:30 – 7:00 PM",   start: "17:30", end: "19:00" },
+  { label: "11:30 – 1:00 PM", start: "11:30", end: "13:00" },
+  { label: "1:00 – 2:30 PM", start: "13:00", end: "14:30" },
+  { label: "2:30 – 4:00 PM", start: "14:30", end: "16:00" },
+  { label: "4:00 – 5:30 PM", start: "16:00", end: "17:30" },
+  { label: "5:30 – 7:00 PM", start: "17:30", end: "19:00" },
 ];
 
-// ─── Course options ────────────────────────────────────────
 const COURSE_OPTIONS = ["BSIT", "BSIS", "BLIS", "Others"];
-
-// ─── Pagination ─────────────────────────────────────────────
 const ROOMS_PER_PAGE = 6;
 
-// ─── Equipment options ─────────────────────────────────────
 const EQUIPMENT_OPTIONS = [
-  { id: "projector",  label: "Projector",   icon: "📽" },
-  { id: "tvDisplay",  label: "TV Display",  icon: "📺" },
-  { id: "ac",         label: "AC",          icon: "❄️" },
-  { id: "computer",   label: "Computer",    icon: "💻" },
+  { id: "projector", label: "Projector", icon: "📽" },
+  { id: "tvDisplay", label: "TV Display", icon: "📺" },
+  { id: "ac", label: "AC", icon: "❄️" },
+  { id: "computer", label: "Computer", icon: "💻" },
   { id: "smartBoard", label: "Smart Board", icon: "🖊" },
 ];
 
 const buildDefaultEquipmentChecklist = () =>
   EQUIPMENT_OPTIONS.map((e) => ({ ...e, checked: false, isCustom: false }));
 
-// ─── Purpose options by audience ───────────────────────────
 const CLASS_PURPOSES = ["Lecture", "Hands-on", "Examination"];
 const ORG_PURPOSES = ["Workshop", "Training", "Meeting", "Other Activity"];
 const OTHERS_PURPOSES = [...CLASS_PURPOSES, ...ORG_PURPOSES];
 
-// ─── Conflict kind labels ──────────────────────────────────
 const CONFLICT_KIND_LABELS = {
   schedule: "Class",
   event: "Activity",
@@ -176,18 +224,15 @@ function FacultySubmitReservation() {
 
   const [purpose, setPurpose] = useState("");
   const [courseTitle, setCourseTitle] = useState("");
-
   const [date, setDate] = useState("");
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
   const [showCustomTime, setShowCustomTime] = useState(false);
-
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [calendarCursor, setCalendarCursor] = useState(() => {
     const d = new Date();
     return { year: d.getFullYear(), month: d.getMonth() };
   });
-
   const [showStartTimePicker, setShowStartTimePicker] = useState(false);
   const [showEndTimePicker, setShowEndTimePicker] = useState(false);
 
@@ -199,7 +244,6 @@ function FacultySubmitReservation() {
   const [rooms, setRooms] = useState([]);
   const [selectedRoom, setSelectedRoom] = useState(null);
 
-  // ── Additional required equipment checklist ───────────────
   const [equipmentChecklist, setEquipmentChecklist] = useState(buildDefaultEquipmentChecklist);
   const [showAddEquipment, setShowAddEquipment] = useState(false);
   const [newEquipmentText, setNewEquipmentText] = useState("");
@@ -216,18 +260,13 @@ function FacultySubmitReservation() {
   const [submitting, setSubmitting] = useState(false);
 
   const [showPreview, setShowPreview] = useState(false);
-
   const [validationAttempted, setValidationAttempted] = useState(false);
   const [fieldErrors, setFieldErrors] = useState({});
-
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [submittedReservation, setSubmittedReservation] = useState(null);
 
   const [toast, setToast] = useState({
-    show: false,
-    type: "success",
-    title: "",
-    message: "",
+    show: false, type: "success", title: "", message: "",
   });
 
   const [nowTick, setNowTick] = useState(() => new Date());
@@ -244,13 +283,11 @@ function FacultySubmitReservation() {
     }
   };
 
-  // ── Selected equipment (labels only) ──────────────────────
   const selectedEquipmentLabels = useMemo(
     () => equipmentChecklist.filter((e) => e.checked).map((e) => e.label),
     [equipmentChecklist]
   );
 
-  // ── Equipment checklist helpers ───────────────────────────
   const toggleEquipmentCheck = (id) => {
     setEquipmentChecklist((prev) =>
       prev.map((e) => (e.id === id ? { ...e, checked: !e.checked } : e))
@@ -261,7 +298,6 @@ function FacultySubmitReservation() {
   const handleAddCustomEquipment = () => {
     const trimmed = newEquipmentText.trim();
     if (!trimmed) return;
-
     const existing = equipmentChecklist.find(
       (e) => e.label.toLowerCase() === trimmed.toLowerCase()
     );
@@ -274,10 +310,7 @@ function FacultySubmitReservation() {
         ...prev,
         {
           id: `custom_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-          label: trimmed,
-          icon: "✏️",
-          checked: true,
-          isCustom: true,
+          label: trimmed, icon: "✏️", checked: true, isCustom: true,
         },
       ]);
     }
@@ -307,28 +340,21 @@ function FacultySubmitReservation() {
   const checkUserConflict = async () => {
     const firebaseUser = auth.currentUser;
     if (!firebaseUser) return null;
-
     const start = convertToMinutes(startTime);
     const end = convertToMinutes(endTime);
-
     const q = query(
       collection(db, "reservationRequests"),
       where("userId", "==", firebaseUser.uid),
       where("date", "==", date)
     );
-
     const snapshot = await getDocs(q);
     const userReservations = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-
     for (const res of userReservations) {
       if (String(res.status || "").toLowerCase() === "rejected") continue;
-
       const resStart = convertToMinutes(res.startTime);
       const resEnd = convertToMinutes(res.endTime);
-
       if (start < resEnd && end > resStart) {
         if (res.roomId === selectedRoom?.id) continue;
-
         return {
           conflict: true,
           existingRoom: res.roomName,
@@ -342,7 +368,6 @@ function FacultySubmitReservation() {
     return { conflict: false };
   };
 
-  // ✅ Equipment NOT part of room filtering — only purpose + studentRange
   useEffect(() => {
     loadAvailableRooms();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -396,9 +421,7 @@ function FacultySubmitReservation() {
       setRooms([]);
       return;
     }
-
     setLoading(true);
-
     const firebaseUser = auth.currentUser;
     const currentUserId = firebaseUser?.uid;
 
@@ -406,7 +429,6 @@ function FacultySubmitReservation() {
       const roomSnapshot = await getDocs(collection(db, "rooms"));
       const activitySnapshot = await getDocs(collection(db, "events"));
       const requestSnapshot = await getDocs(collection(db, "reservationRequests"));
-
       const releaseSnap = await getDocs(collection(db, "roomReleases"));
       const releaseMap = new Map();
 
@@ -428,14 +450,12 @@ function FacultySubmitReservation() {
         const status = String(r.status || "").toLowerCase();
         if (status !== "accepted" && status !== "approved") return;
         if (r.reassignType === "event") return;
-
         if (r.oldRoomId && r.scheduleId) {
           if (!reassignedAwayByRoom.has(r.oldRoomId)) {
             reassignedAwayByRoom.set(r.oldRoomId, new Set());
           }
           reassignedAwayByRoom.get(r.oldRoomId).add(`${r.scheduleId}_${r.date}`);
         }
-
         if (r.newRoomId && r.startTime && r.endTime) {
           if (!reassignedIntoByRoom.has(r.newRoomId)) {
             reassignedIntoByRoom.set(r.newRoomId, []);
@@ -469,11 +489,8 @@ function FacultySubmitReservation() {
 
         if (underMaintenance) {
           roomList.push({
-            ...room,
-            available: false,
-            maintenance: true,
-            reservedByUser: false,
-            conflicts: [],
+            ...room, available: false, maintenance: true,
+            reservedByUser: false, conflicts: [],
           });
           continue;
         }
@@ -488,7 +505,6 @@ function FacultySubmitReservation() {
         const releasesForRoom = releaseMap.get(room.id) || new Set();
         const reassignedAwayForRoom = reassignedAwayByRoom.get(room.id) || new Set();
 
-        // 1) Schedule conflicts
         scheduleSnapshot.docs.forEach((doc) => {
           const sched = doc.data();
           if (sched.initialized) return;
@@ -501,7 +517,6 @@ function FacultySubmitReservation() {
           occupied = true;
           conflicts.push({
             kind: "schedule",
-            // ✅ NEW: carry schedule/room info for consent flow
             scheduleId: doc.id,
             roomId: room.id,
             roomName: room.roomName,
@@ -513,14 +528,12 @@ function FacultySubmitReservation() {
           });
         });
 
-        // 2) Event conflicts
         activitySnapshot.docs.forEach((doc) => {
           const event = doc.data();
           if (event.roomId !== room.id) return;
           if (event.date !== date) return;
           if (event.status === "Cancelled") return;
           if (!isOverlapping(startTime, endTime, event.startTime, event.endTime)) return;
-
           occupied = true;
           conflicts.push({
             kind: "event",
@@ -531,7 +544,6 @@ function FacultySubmitReservation() {
           });
         });
 
-        // 3) Reassigned INTO room
         const reassignedInto = reassignedIntoByRoom.get(room.id) || [];
         reassignedInto.forEach((r) => {
           if (!isOverlapping(startTime, endTime, r.startTime, r.endTime)) return;
@@ -545,7 +557,6 @@ function FacultySubmitReservation() {
           });
         });
 
-        // 4) Reservation conflicts
         const conflictingReservations = [];
         requestSnapshot.docs.forEach((doc) => {
           const req = doc.data();
@@ -561,11 +572,7 @@ function FacultySubmitReservation() {
             reservedByUser = true;
             conflicts.push({
               kind: "reservation",
-              title:
-                req.courseTitle ||
-                req.customPurpose ||
-                req.purpose ||
-                "Your reservation",
+              title: req.courseTitle || req.customPurpose || req.purpose || "Your reservation",
               faculty: req.facultyName || req.requesterName || "You",
               startTime: req.startTime,
               endTime: req.endTime,
@@ -574,11 +581,7 @@ function FacultySubmitReservation() {
             occupied = true;
             conflicts.push({
               kind: "reservation",
-              title:
-                req.courseTitle ||
-                req.customPurpose ||
-                req.purpose ||
-                "Reservation",
+              title: req.courseTitle || req.customPurpose || req.purpose || "Reservation",
               faculty: req.facultyName || req.requesterName || "-",
               startTime: req.startTime,
               endTime: req.endTime,
@@ -595,12 +598,10 @@ function FacultySubmitReservation() {
         });
       }
 
-      // Sort: available first, then by name
       const sortedList = [...roomList].sort((a, b) => {
         if (a.available !== b.available) return a.available ? -1 : 1;
         return (a.roomName || "").localeCompare(b.roomName || "", undefined, {
-          numeric: true,
-          sensitivity: "base",
+          numeric: true, sensitivity: "base",
         });
       });
 
@@ -609,25 +610,17 @@ function FacultySubmitReservation() {
       console.error(err);
       showToast("error", "Error", "Unable to load rooms.");
     }
-
     setLoading(false);
   };
 
-  // ✅ Filter + sort
   const filteredRooms = useMemo(() => {
     let list = rooms.filter((r) => !r.maintenance);
-
-    if (roomStatusFilter === "available") {
-      list = list.filter((r) => r.available);
-    } else if (roomStatusFilter === "occupied") {
-      list = list.filter((r) => !r.available);
-    }
-
+    if (roomStatusFilter === "available") list = list.filter((r) => r.available);
+    else if (roomStatusFilter === "occupied") list = list.filter((r) => !r.available);
     return [...list].sort((a, b) => {
       if (a.available !== b.available) return a.available ? -1 : 1;
       return (a.roomName || "").localeCompare(b.roomName || "", undefined, {
-        numeric: true,
-        sensitivity: "base",
+        numeric: true, sensitivity: "base",
       });
     });
   }, [rooms, roomStatusFilter]);
@@ -635,10 +628,7 @@ function FacultySubmitReservation() {
   const totalRoomPages = Math.max(1, Math.ceil(filteredRooms.length / ROOMS_PER_PAGE));
   const safeRoomPage = Math.min(currentPage, totalRoomPages);
   const roomStartIdx = (safeRoomPage - 1) * ROOMS_PER_PAGE;
-  const paginatedRooms = filteredRooms.slice(
-    roomStartIdx,
-    roomStartIdx + ROOMS_PER_PAGE
-  );
+  const paginatedRooms = filteredRooms.slice(roomStartIdx, roomStartIdx + ROOMS_PER_PAGE);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -646,7 +636,6 @@ function FacultySubmitReservation() {
 
   const validateFields = () => {
     const errors = {};
-
     if (!courseTitle) errors.courseTitle = "Course title is required.";
     if (!date) errors.date = "Select a reservation date.";
     if (!audienceType) errors.audienceType = "Select audience type.";
@@ -667,32 +656,25 @@ function FacultySubmitReservation() {
         errors.studentRange = "Select the estimated number of students.";
       }
     }
-
     if (audienceType === "Organization") {
       if (!organization) errors.organization = "Enter organization name.";
       if (!ORG_PURPOSES.includes(purpose)) {
-        errors.purpose = "Select a valid purpose for Organization (Workshop, Training, Meeting, Other Activity).";
+        errors.purpose = "Select a valid purpose for Organization.";
       }
       if (purpose === "Other Activity" && !customPurposeText.trim()) {
         errors.customPurposeText = "Please specify the activity.";
       }
       if (!studentRange) errors.studentRange = "Select the estimated number of attendees.";
     }
-
     if (audienceType === "Others") {
-      if (!customAudience.trim()) {
-        errors.customAudience = "Please specify the audience type.";
-      }
-      if (!OTHERS_PURPOSES.includes(purpose)) {
-        errors.purpose = "Select a valid purpose.";
-      }
+      if (!customAudience.trim()) errors.customAudience = "Please specify the audience type.";
+      if (!OTHERS_PURPOSES.includes(purpose)) errors.purpose = "Select a valid purpose.";
       if (purpose === "Hands-on" && selectedEquipmentLabels.length === 0) {
         errors.selectedEquipment = "Please specify at least one additional required equipment.";
       }
       if (purpose === "Other Activity" && !customPurposeText.trim()) {
         errors.customPurposeText = "Please specify the activity.";
       }
-      // ✅ FIX: Hands-on doesn't need attendees — only equipment
       if (purpose !== "Hands-on" && !studentRange) {
         errors.studentRange = "Select the estimated number of attendees.";
       }
@@ -705,10 +687,8 @@ function FacultySubmitReservation() {
       selectedDate.setHours(0, 0, 0, 0);
       if (selectedDate < today) errors.date = "You cannot reserve a past date.";
     }
-
     if (!startTime) errors.startTime = "Select a start time.";
     if (!endTime) errors.endTime = "Select an end time.";
-
     if (startTime && endTime) {
       const start = convertToMinutes(startTime);
       const end = convertToMinutes(endTime);
@@ -719,9 +699,7 @@ function FacultySubmitReservation() {
         errors.startTime = "You cannot reserve a past time today.";
       }
     }
-
     if (!selectedRoom) errors.selectedRoom = "Select a room.";
-
     return errors;
   };
 
@@ -735,32 +713,21 @@ function FacultySubmitReservation() {
   const notifyClerkAndAdmin = async (title, message, reservationId) => {
     const usersSnap = await getDocs(collection(db, "users"));
     const notifications = [];
-
     usersSnap.forEach((userDoc) => {
       const user = userDoc.data();
       const role = (user.role || "").toLowerCase().trim();
-
       let ownerType = "";
       if (role === "clerk") ownerType = "clerk";
       else if (role === "admin") ownerType = "admin";
       else return;
-
       notifications.push(
         addDoc(collection(db, "notifications"), {
-          userId: userDoc.id,
-          ownerType,
-          reservationId,
-          title,
-          message,
-          type: "reservation-request",
-          unread: true,
-          archived: false,
-          badge: "NEW",
-          createdAt: serverTimestamp(),
+          userId: userDoc.id, ownerType, reservationId, title, message,
+          type: "reservation-request", unread: true, archived: false,
+          badge: "NEW", createdAt: serverTimestamp(),
         })
       );
     });
-
     await Promise.all(notifications);
   };
 
@@ -769,17 +736,15 @@ function FacultySubmitReservation() {
     if (Object.keys(errors).length > 0) {
       setValidationAttempted(true);
       setFieldErrors(errors);
-      const firstError = Object.values(errors)[0];
-      showToast("error", "Validation Error", firstError);
+      showToast("error", "Validation Error", Object.values(errors)[0]);
       return;
     }
 
     const conflictCheck = await checkUserConflict();
     if (conflictCheck?.conflict) {
       showToast(
-        "error",
-        "Time Conflict Detected",
-        `You already have a ${String(conflictCheck.status).toLowerCase()} reservation for "${conflictCheck.existingRoom}" on ${conflictCheck.existingDate} from ${conflictCheck.existingStart} to ${conflictCheck.existingEnd}. Please choose a different time.`
+        "error", "Time Conflict Detected",
+        `You already have a ${String(conflictCheck.status).toLowerCase()} reservation for "${conflictCheck.existingRoom}" on ${conflictCheck.existingDate} from ${conflictCheck.existingStart} to ${conflictCheck.existingEnd}.`
       );
       return;
     }
@@ -789,7 +754,6 @@ function FacultySubmitReservation() {
 
     const userRef = doc(db, "users", auth.currentUser.uid);
     const userSnap = await getDoc(userRef);
-
     let facultyName = "";
     let userData = {};
     if (userSnap.exists()) {
@@ -801,19 +765,14 @@ function FacultySubmitReservation() {
     if (purpose === "Other Activity") {
       finalPurpose = customPurposeText.trim() || "Other Activity";
     }
-
     const finalCourse = course === "Others" ? customCourse.trim() : course;
 
     const conflictSnapshot = (selectedRoom?.conflicts || []).map((c) => ({
-      kind: c.kind,
-      scheduleId: c.scheduleId || null,
-      roomId: c.roomId || null,
-      roomName: c.roomName || null,
-      title: c.title,
-      section: c.section || "",
+      kind: c.kind, scheduleId: c.scheduleId || null,
+      roomId: c.roomId || null, roomName: c.roomName || null,
+      title: c.title, section: c.section || "",
       faculty: c.faculty || "",
-      startTime: c.startTime,
-      endTime: c.endTime,
+      startTime: c.startTime, endTime: c.endTime,
     }));
 
     try {
@@ -824,9 +783,7 @@ function FacultySubmitReservation() {
         roomName: selectedRoom.roomName,
         audienceType,
         attendees: {
-          course: finalCourse,
-          yearSectionGroup,
-          organization,
+          course: finalCourse, yearSectionGroup, organization,
           customAudience: audienceType === "Others" ? customAudience.trim() : "",
           customPurpose: customPurposeText,
         },
@@ -834,9 +791,7 @@ function FacultySubmitReservation() {
         purpose: finalPurpose,
         requiredEquipment: selectedEquipmentLabels,
         studentRange,
-        date,
-        startTime,
-        endTime,
+        date, startTime, endTime,
         status: "Pending",
         submittedWithConflicts: conflictSnapshot.length > 0,
         conflictSnapshot,
@@ -859,17 +814,62 @@ function FacultySubmitReservation() {
         reservationRef.id
       );
 
-      // ✅ NEW: create consent docs + notify each affected faculty
+      // ── CONSENT CREATION (FIXED with fallback) ──────────────
       for (const conflict of scheduleConflicts) {
         try {
           const affectedFaculty = await findFacultyByName(conflict.faculty);
+
+          // ── FALLBACK: faculty name could not be resolved ──
           if (!affectedFaculty) {
             console.warn(
-              `[FacultySubmitReservation] Could not find faculty user for "${conflict.faculty}" — skipping consent.`
+              `[FacultySubmitReservation] Unresolved faculty "${conflict.faculty}" — escalating to admins.`
             );
+
+            await addDoc(collection(db, "reservationConflictConsents"), {
+              reservationId: reservationRef.id,
+              reservationType: "online",
+              scheduleId: conflict.scheduleId,
+              roomId: selectedRoom.id,
+              roomName: selectedRoom.roomName,
+              facultyId: null,
+              facultyName: conflict.faculty,
+              requestedById: auth.currentUser.uid,
+              requestedByName: facultyName,
+              courseTitle,
+              purpose: finalPurpose,
+              date, startTime, endTime,
+              conflictStartTime: conflict.startTime,
+              conflictEndTime: conflict.endTime,
+              conflictSubject: conflict.title,
+              conflictSection: conflict.section || "",
+              status: "pending",
+              unresolvedFaculty: true,
+              respondedAt: null,
+              respondedBy: null,
+              createdAt: serverTimestamp(),
+            });
+
+            // Alert admins
+            const usersAll = await getDocs(collection(db, "users"));
+            for (const uDoc of usersAll.docs) {
+              const u = uDoc.data();
+              const role = String(u.role || "").toLowerCase();
+              if (role !== "admin") continue;
+              await addDoc(collection(db, "notifications"), {
+                userId: uDoc.id,
+                ownerType: "admin",
+                reservationId: reservationRef.id,
+                title: "⚠️ Conflict — Faculty Not Resolved",
+                message: `${facultyName}'s reservation for ${selectedRoom.roomName} on ${date} conflicts with "${conflict.title}" (Faculty: ${conflict.faculty}). Could not match faculty to a user account — please resolve manually.`,
+                type: "reservation-conflict-unresolved",
+                unread: true, archived: false, badge: "URGENT",
+                createdAt: serverTimestamp(),
+              });
+            }
             continue;
           }
 
+          // ── NORMAL: create consent + notify faculty ──
           const consentRef = await addDoc(
             collection(db, "reservationConflictConsents"),
             {
@@ -884,9 +884,7 @@ function FacultySubmitReservation() {
               requestedByName: facultyName,
               courseTitle,
               purpose: finalPurpose,
-              date,
-              startTime,
-              endTime,
+              date, startTime, endTime,
               conflictStartTime: conflict.startTime,
               conflictEndTime: conflict.endTime,
               conflictSubject: conflict.title,
@@ -904,11 +902,11 @@ function FacultySubmitReservation() {
             conflictConsentId: consentRef.id,
             reservationId: reservationRef.id,
             title: "Reservation Conflicts with Your Class",
-            message: `${facultyName} submitted a reservation for ${selectedRoom.roomName} on ${date} (${startTime} - ${endTime}) that overlaps with your class "${conflict.title}"${conflict.section ? ` (${conflict.section})` : ""}. Please respond — accept to release your room, or decline to keep your class.`,
+            message: `${facultyName} submitted a reservation for ${selectedRoom.roomName} on ${date} (${startTime} - ${endTime}) that overlaps with your class "${conflict.title}"${
+              conflict.section ? ` (${conflict.section})` : ""
+            }. Please respond — accept to release your room, or decline to keep your class.`,
             type: "reservation-conflict",
-            unread: true,
-            archived: false,
-            badge: "ACTION",
+            unread: true, archived: false, badge: "ACTION",
             createdAt: serverTimestamp(),
           });
         } catch (err) {
@@ -926,9 +924,7 @@ function FacultySubmitReservation() {
         title: "Reservation Submitted",
         message: `Your reservation request for ${selectedRoom.roomName} on ${date} (${startTime} - ${endTime}) has been submitted successfully and is waiting for approval.`,
         type: "reservation-submitted",
-        unread: true,
-        archived: false,
-        badge: "INFO",
+        unread: true, archived: false, badge: "INFO",
         createdAt: serverTimestamp(),
       });
 
@@ -941,14 +937,9 @@ function FacultySubmitReservation() {
         target: `${selectedRoom.roomName} | ${courseTitle}`,
         status: "SUCCESS",
         details: {
-          courseTitle,
-          room: selectedRoom.roomName,
-          date,
-          startTime,
-          endTime,
-          purpose: finalPurpose,
-          audienceType,
-          customAudience,
+          courseTitle, room: selectedRoom.roomName,
+          date, startTime, endTime, purpose: finalPurpose,
+          audienceType, customAudience,
           requiredEquipment: selectedEquipmentLabels,
           conflictCount: conflictSnapshot.length,
         },
@@ -956,45 +947,22 @@ function FacultySubmitReservation() {
       });
 
       setShowPreview(false);
-
       setSubmittedReservation({
-        courseTitle,
-        roomName: selectedRoom.roomName,
-        floor: selectedRoom.floor,
-        date,
-        startTime,
-        endTime,
-        purpose: finalPurpose,
-        audienceType,
-        course: finalCourse,
-        yearSectionGroup,
-        organization,
-        customAudience,
+        courseTitle, roomName: selectedRoom.roomName,
+        floor: selectedRoom.floor, date, startTime, endTime,
+        purpose: finalPurpose, audienceType, course: finalCourse,
+        yearSectionGroup, organization, customAudience,
         requiredEquipment: selectedEquipmentLabels,
       });
-
       setToast((prev) => ({ ...prev, show: false }));
       setShowSuccessModal(true);
 
-      setCourseTitle("");
-      setAudienceType("Class");
-      setCourse("BSIT");
-      setCustomCourse("");
-      setYearSectionGroup("");
-      setOrganization("");
-      setCustomAudience("");
-      setCustomPurposeText("");
-      setPurpose("");
-      setDate("");
-      setStartTime("");
-      setEndTime("");
-      setSelectedRoom(null);
-      setRooms([]);
-      resetEquipmentChecklist();
-      setStudentRange("");
-      setShowCustomTime(false);
-      setValidationAttempted(false);
-      setFieldErrors({});
+      setCourseTitle(""); setAudienceType("Class"); setCourse("BSIT");
+      setCustomCourse(""); setYearSectionGroup(""); setOrganization("");
+      setCustomAudience(""); setCustomPurposeText(""); setPurpose("");
+      setDate(""); setStartTime(""); setEndTime(""); setSelectedRoom(null);
+      setRooms([]); resetEquipmentChecklist(); setStudentRange("");
+      setShowCustomTime(false); setValidationAttempted(false); setFieldErrors({});
     } catch (err) {
       console.error(err);
       showToast("error", "Firestore Error", err.message);
@@ -1009,86 +977,60 @@ function FacultySubmitReservation() {
     const errors = validateFields();
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
-      const firstError = Object.values(errors)[0];
-      showToast("error", "Validation Error", firstError);
+      showToast("error", "Validation Error", Object.values(errors)[0]);
       return;
     }
-
     const conflicts = selectedRoom?.conflicts || [];
     if (selectedRoom && !selectedRoom.available && !selectedRoom.maintenance && conflicts.length > 0) {
       setShowConflictWarning(true);
       return;
     }
-
     setShowPreview(true);
   };
 
   const hasErrors = Object.keys(fieldErrors).length > 0;
-
-  const isPresetActive = (slot) =>
-    slot.start === startTime && slot.end === endTime;
+  const isPresetActive = (slot) => slot.start === startTime && slot.end === endTime;
 
   const handlePresetClick = (slot) => {
-    setStartTime(slot.start);
-    setEndTime(slot.end);
-    setShowCustomTime(false);
-    revalidate();
+    setStartTime(slot.start); setEndTime(slot.end);
+    setShowCustomTime(false); revalidate();
   };
 
-  const handleCustomStartChange = (value) => {
-    setStartTime(value);
-    revalidate();
-  };
-  const handleCustomEndChange = (value) => {
-    setEndTime(value);
-    revalidate();
-  };
+  const handleCustomStartChange = (value) => { setStartTime(value); revalidate(); };
+  const handleCustomEndChange = (value) => { setEndTime(value); revalidate(); };
 
   const isDateToday = date === toDateInputValue(nowTick);
   const liveCurrentMinutes = nowTick.getHours() * 60 + nowTick.getMinutes();
-
   const isPastStartValue = (value) =>
     isDateToday && convertToMinutes(value) <= liveCurrentMinutes;
-
   const isPastPreset = (slot) =>
     isDateToday && convertToMinutes(slot.start) <= liveCurrentMinutes;
 
   useEffect(() => {
     if (isDateToday && startTime && convertToMinutes(startTime) <= liveCurrentMinutes) {
-      setStartTime("");
-      setEndTime("");
-      revalidate();
+      setStartTime(""); setEndTime(""); revalidate();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nowTick]);
 
   const previewData = {
-    courseTitle,
-    audienceType,
+    courseTitle, audienceType,
     course: course === "Others" ? customCourse.trim() : course,
-    yearSectionGroup,
-    organization,
-    customAudience,
-    purpose:
-      purpose === "Other Activity"
-        ? customPurposeText.trim() || "Other Activity"
-        : purpose,
+    yearSectionGroup, organization, customAudience,
+    purpose: purpose === "Other Activity"
+      ? customPurposeText.trim() || "Other Activity" : purpose,
     roomName: selectedRoom?.roomName || "—",
     roomFloor: selectedRoom?.floor || "",
     roomCapacity: selectedRoom?.capacity || "",
-    date,
-    startTime,
-    endTime,
+    date, startTime, endTime,
     equipment: selectedEquipmentLabels.join(", "),
     studentRange,
   };
 
   const selectedConflicts = selectedRoom?.conflicts || [];
-
-  const rangeLabel =
-    audienceType === "Class"
-      ? "Estimated Number of Students"
-      : "Estimated Number of Attendees";
+  const rangeLabel = audienceType === "Class"
+    ? "Estimated Number of Students"
+    : "Estimated Number of Attendees";
 
   return (
     <>
@@ -1100,28 +1042,21 @@ function FacultySubmitReservation() {
 
         <div className="faculty-submit-box">
           <div className="faculty-submit-sections">
-            {/* ═══════════════════════════════════════════════════════
-                LEFT SIDE — form
-                ═══════════════════════════════════════════════════════ */}
+            {/* LEFT SIDE — form */}
             <div className="faculty-submit-section">
-              {/* Course Title */}
               <div className="faculty-submit-form-group">
                 <label>Course Title</label>
                 <input
                   className={`faculty-submit-input ${validationAttempted && fieldErrors.courseTitle ? "error" : ""}`}
                   placeholder="Enter course title"
                   value={courseTitle}
-                  onChange={(e) => {
-                    setCourseTitle(e.target.value);
-                    revalidate();
-                  }}
+                  onChange={(e) => { setCourseTitle(e.target.value); revalidate(); }}
                 />
                 {validationAttempted && fieldErrors.courseTitle && (
                   <span className="field-error-message">{fieldErrors.courseTitle}</span>
                 )}
               </div>
 
-              {/* Audience Type */}
               <div className="faculty-submit-form-group">
                 <label>Audience Type</label>
                 <div className="faculty-submit-dropdown-wrapper">
@@ -1129,16 +1064,11 @@ function FacultySubmitReservation() {
                     className={`faculty-submit-input faculty-submit-dropdown ${validationAttempted && fieldErrors.audienceType ? "error" : ""}`}
                     value={audienceType}
                     onChange={(e) => {
-                      setAudienceType(e.target.value);
-                      setPurpose("");
-                      resetEquipmentChecklist();
-                      setStudentRange("");
-                      setCourse("BSIT");
-                      setCustomCourse("");
-                      setYearSectionGroup("");
-                      setOrganization("");
-                      setCustomAudience("");
-                      setCustomPurposeText("");
+                      setAudienceType(e.target.value); setPurpose("");
+                      resetEquipmentChecklist(); setStudentRange("");
+                      setCourse("BSIT"); setCustomCourse("");
+                      setYearSectionGroup(""); setOrganization("");
+                      setCustomAudience(""); setCustomPurposeText("");
                       revalidate();
                     }}
                   >
@@ -1175,33 +1105,25 @@ function FacultySubmitReservation() {
                       {validationAttempted && fieldErrors.course && (
                         <span className="field-error-message">{fieldErrors.course}</span>
                       )}
-
                       {course === "Others" && (
                         <input
                           className={`faculty-submit-input faculty-submit-custom-course ${validationAttempted && fieldErrors.customCourse ? "error" : ""}`}
                           placeholder="Specify course..."
                           value={customCourse}
-                          onChange={(e) => {
-                            setCustomCourse(e.target.value);
-                            revalidate();
-                          }}
+                          onChange={(e) => { setCustomCourse(e.target.value); revalidate(); }}
                         />
                       )}
                       {course === "Others" && validationAttempted && fieldErrors.customCourse && (
                         <span className="field-error-message">{fieldErrors.customCourse}</span>
                       )}
                     </div>
-
                     <div className="faculty-submit-form-group">
                       <label>Year / Section Group</label>
                       <input
                         className={`faculty-submit-input ${validationAttempted && fieldErrors.yearSectionGroup ? "error" : ""}`}
                         placeholder="Ex. 3F-G2"
                         value={yearSectionGroup}
-                        onChange={(e) => {
-                          setYearSectionGroup(e.target.value);
-                          revalidate();
-                        }}
+                        onChange={(e) => { setYearSectionGroup(e.target.value); revalidate(); }}
                       />
                       {validationAttempted && fieldErrors.yearSectionGroup && (
                         <span className="field-error-message">{fieldErrors.yearSectionGroup}</span>
@@ -1217,10 +1139,7 @@ function FacultySubmitReservation() {
                       className={`faculty-submit-input ${validationAttempted && fieldErrors.organization ? "error" : ""}`}
                       placeholder="Computer Society"
                       value={organization}
-                      onChange={(e) => {
-                        setOrganization(e.target.value);
-                        revalidate();
-                      }}
+                      onChange={(e) => { setOrganization(e.target.value); revalidate(); }}
                     />
                     {validationAttempted && fieldErrors.organization && (
                       <span className="field-error-message">{fieldErrors.organization}</span>
@@ -1233,12 +1152,9 @@ function FacultySubmitReservation() {
                     <label>Specify Audience Type</label>
                     <input
                       className={`faculty-submit-input ${validationAttempted && fieldErrors.customAudience ? "error" : ""}`}
-                      placeholder="Ex. Guest Lecturers, Seminar Participants..."
+                      placeholder="Ex. Guest Lecturers..."
                       value={customAudience}
-                      onChange={(e) => {
-                        setCustomAudience(e.target.value);
-                        revalidate();
-                      }}
+                      onChange={(e) => { setCustomAudience(e.target.value); revalidate(); }}
                     />
                     {validationAttempted && fieldErrors.customAudience && (
                       <span className="field-error-message">{fieldErrors.customAudience}</span>
@@ -1247,7 +1163,6 @@ function FacultySubmitReservation() {
                 )}
               </div>
 
-              {/* Purpose */}
               <div className="faculty-submit-form-group">
                 <label>Purpose</label>
                 <div className="faculty-submit-dropdown-wrapper">
@@ -1256,10 +1171,8 @@ function FacultySubmitReservation() {
                     value={purpose}
                     onChange={(e) => {
                       setPurpose(e.target.value);
-                      resetEquipmentChecklist();
-                      setStudentRange("");
-                      setCustomPurposeText("");
-                      revalidate();
+                      resetEquipmentChecklist(); setStudentRange("");
+                      setCustomPurposeText(""); revalidate();
                     }}
                   >
                     <option value="">Select Purpose</option>
@@ -1297,7 +1210,6 @@ function FacultySubmitReservation() {
                 )}
               </div>
 
-              {/* Additional Required Equipment — CHECKLIST */}
               {purpose === "Hands-on" && (
                 <div className="faculty-submit-form-group">
                   <label>
@@ -1308,19 +1220,12 @@ function FacultySubmitReservation() {
                       </span>
                     )}
                   </label>
-
                   <p className="equipment-help-text">
                     <i className="fa-solid fa-circle-info"></i>
                     Specify any extra equipment you'll need. This does not filter
-                    available rooms — it will be included in your request for the
-                    Clerk/Admin to review.
+                    available rooms — it will be included in your request.
                   </p>
-
-                  <div
-                    className={`equipment-checklist ${
-                      validationAttempted && fieldErrors.selectedEquipment ? "has-error" : ""
-                    }`}
-                  >
+                  <div className={`equipment-checklist ${validationAttempted && fieldErrors.selectedEquipment ? "has-error" : ""}`}>
                     {equipmentChecklist.map((item) => (
                       <label
                         key={item.id}
@@ -1338,19 +1243,14 @@ function FacultySubmitReservation() {
                           <button
                             type="button"
                             className="equipment-check-remove"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              handleRemoveCustomEquipment(item.id);
-                            }}
+                            onClick={(e) => { e.preventDefault(); handleRemoveCustomEquipment(item.id); }}
                             aria-label={`Remove ${item.label}`}
-                            title="Remove"
                           >
                             <i className="fa-solid fa-xmark"></i>
                           </button>
                         )}
                       </label>
                     ))}
-
                     {showAddEquipment ? (
                       <div className="equipment-add-row">
                         <input
@@ -1360,14 +1260,8 @@ function FacultySubmitReservation() {
                           value={newEquipmentText}
                           onChange={(e) => setNewEquipmentText(e.target.value)}
                           onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              handleAddCustomEquipment();
-                            }
-                            if (e.key === "Escape") {
-                              setShowAddEquipment(false);
-                              setNewEquipmentText("");
-                            }
+                            if (e.key === "Enter") { e.preventDefault(); handleAddCustomEquipment(); }
+                            if (e.key === "Escape") { setShowAddEquipment(false); setNewEquipmentText(""); }
                           }}
                           autoFocus
                           maxLength={50}
@@ -1383,10 +1277,7 @@ function FacultySubmitReservation() {
                         <button
                           type="button"
                           className="equipment-add-cancel"
-                          onClick={() => {
-                            setShowAddEquipment(false);
-                            setNewEquipmentText("");
-                          }}
+                          onClick={() => { setShowAddEquipment(false); setNewEquipmentText(""); }}
                         >
                           Cancel
                         </button>
@@ -1401,30 +1292,22 @@ function FacultySubmitReservation() {
                       </button>
                     )}
                   </div>
-
                   {validationAttempted && fieldErrors.selectedEquipment && (
                     <span className="field-error-message">{fieldErrors.selectedEquipment}</span>
                   )}
                 </div>
               )}
 
-              {/* Range — shown for non-Hands-on purposes */}
-              {(purpose === "Lecture" ||
-                purpose === "Examination" ||
-                purpose === "Workshop" ||
-                purpose === "Training" ||
-                purpose === "Meeting" ||
-                purpose === "Other Activity") && (
+              {(purpose === "Lecture" || purpose === "Examination" ||
+                purpose === "Workshop" || purpose === "Training" ||
+                purpose === "Meeting" || purpose === "Other Activity") && (
                 <div className="faculty-submit-form-group">
                   <label>{rangeLabel}</label>
                   <div className="faculty-submit-dropdown-wrapper">
                     <select
                       className={`faculty-submit-input faculty-submit-dropdown ${validationAttempted && fieldErrors.studentRange ? "error" : ""}`}
                       value={studentRange}
-                      onChange={(e) => {
-                        setStudentRange(e.target.value);
-                        revalidate();
-                      }}
+                      onChange={(e) => { setStudentRange(e.target.value); revalidate(); }}
                     >
                       <option value="">Select Range</option>
                       {audienceType === "Class" || purpose === "Lecture" || purpose === "Examination" ? (
@@ -1452,7 +1335,6 @@ function FacultySubmitReservation() {
                 </div>
               )}
 
-              {/* Other Activity custom text */}
               {purpose === "Other Activity" && (
                 <div className="faculty-submit-form-group">
                   <label>Specify Activity</label>
@@ -1460,10 +1342,7 @@ function FacultySubmitReservation() {
                     className={`faculty-submit-input ${validationAttempted && fieldErrors.customPurposeText ? "error" : ""}`}
                     placeholder="Describe the activity..."
                     value={customPurposeText}
-                    onChange={(e) => {
-                      setCustomPurposeText(e.target.value);
-                      revalidate();
-                    }}
+                    onChange={(e) => { setCustomPurposeText(e.target.value); revalidate(); }}
                   />
                   {validationAttempted && fieldErrors.customPurposeText && (
                     <span className="field-error-message">{fieldErrors.customPurposeText}</span>
@@ -1471,12 +1350,10 @@ function FacultySubmitReservation() {
                 </div>
               )}
 
-              {/* Date */}
               <div className="faculty-submit-form-group">
                 <div className="dt-section-header">
                   <label>Date</label>
                 </div>
-
                 <div className="fsr-datepicker">
                   <button
                     type="button"
@@ -1491,38 +1368,29 @@ function FacultySubmitReservation() {
                     <span>{date ? formatDateLong(date) : "Select a date"}</span>
                     <i className={`fa-solid fa-chevron-down fsr-date-caret ${showDatePicker ? "open" : ""}`}></i>
                   </button>
-
                   {showDatePicker && (
                     <>
                       <div className="fsr-date-clickaway" onClick={() => setShowDatePicker(false)}></div>
                       <div className="fsr-date-popover">
                         <span className="fsr-date-popover-arrow"></span>
-
                         <div className="fsr-date-quick-row">
                           <button
                             type="button"
                             className={date === toDateInputValue(new Date()) ? "active" : ""}
                             onClick={() => {
                               setDate(toDateInputValue(new Date()));
-                              setShowDatePicker(false);
-                              revalidate();
+                              setShowDatePicker(false); revalidate();
                             }}
-                          >
-                            Today
-                          </button>
+                          >Today</button>
                           <button
                             type="button"
                             className={date === addDaysLocal(toDateInputValue(new Date()), 1) ? "active" : ""}
                             onClick={() => {
                               setDate(addDaysLocal(toDateInputValue(new Date()), 1));
-                              setShowDatePicker(false);
-                              revalidate();
+                              setShowDatePicker(false); revalidate();
                             }}
-                          >
-                            Tomorrow
-                          </button>
+                          >Tomorrow</button>
                         </div>
-
                         <div className="fsr-cal-header">
                           <button
                             type="button"
@@ -1533,9 +1401,7 @@ function FacultySubmitReservation() {
                                 return m < 0 ? { year: c.year - 1, month: 11 } : { year: c.year, month: m };
                               })
                             }
-                          >
-                            <i className="fa-solid fa-chevron-left"></i>
-                          </button>
+                          ><i className="fa-solid fa-chevron-left"></i></button>
                           <span className="fsr-cal-title">
                             {MONTH_NAMES[calendarCursor.month]} {calendarCursor.year}
                           </span>
@@ -1548,17 +1414,11 @@ function FacultySubmitReservation() {
                                 return m > 11 ? { year: c.year + 1, month: 0 } : { year: c.year, month: m };
                               })
                             }
-                          >
-                            <i className="fa-solid fa-chevron-right"></i>
-                          </button>
+                          ><i className="fa-solid fa-chevron-right"></i></button>
                         </div>
-
                         <div className="fsr-cal-weekdays">
-                          {WEEKDAY_LABELS.map((w) => (
-                            <span key={w}>{w}</span>
-                          ))}
+                          {WEEKDAY_LABELS.map((w) => <span key={w}>{w}</span>)}
                         </div>
-
                         <div className="fsr-cal-grid">
                           {buildCalendarGrid(calendarCursor.year, calendarCursor.month).map((cell, i) => {
                             const cellStr = toDateInputValue(cell.date);
@@ -1576,13 +1436,9 @@ function FacultySubmitReservation() {
                                 ].filter(Boolean).join(" ")}
                                 disabled={isPast}
                                 onClick={() => {
-                                  setDate(cellStr);
-                                  setShowDatePicker(false);
-                                  revalidate();
+                                  setDate(cellStr); setShowDatePicker(false); revalidate();
                                 }}
-                              >
-                                {cell.day}
-                              </button>
+                              >{cell.day}</button>
                             );
                           })}
                         </div>
@@ -1590,13 +1446,11 @@ function FacultySubmitReservation() {
                     </>
                   )}
                 </div>
-
                 {validationAttempted && fieldErrors.date && (
                   <span className="field-error-message">{fieldErrors.date}</span>
                 )}
               </div>
 
-              {/* Time */}
               <div className="faculty-submit-form-group">
                 <div className="dt-section-header">
                   <label>Time</label>
@@ -1607,7 +1461,6 @@ function FacultySubmitReservation() {
                     </span>
                   )}
                 </div>
-
                 <div className="time-preset-grid">
                   {PRESET_SLOTS.map((slot) => {
                     const disabled = isPastPreset(slot);
@@ -1616,19 +1469,13 @@ function FacultySubmitReservation() {
                         key={slot.label}
                         type="button"
                         className={`time-preset-chip ${isPresetActive(slot) ? "active" : ""} ${disabled ? "disabled" : ""}`}
-                        onClick={() => {
-                          if (disabled) return;
-                          handlePresetClick(slot);
-                        }}
+                        onClick={() => { if (disabled) return; handlePresetClick(slot); }}
                         disabled={disabled}
                         title={disabled ? "This time slot has already passed today" : undefined}
-                      >
-                        {slot.label}
-                      </button>
+                      >{slot.label}</button>
                     );
                   })}
                 </div>
-
                 <button
                   type="button"
                   className={`time-custom-toggle ${showCustomTime ? "open" : ""}`}
@@ -1638,7 +1485,6 @@ function FacultySubmitReservation() {
                   {showCustomTime ? "Hide custom time" : "Set a custom time instead"}
                   <i className={`fa-solid fa-chevron-down time-custom-chev ${showCustomTime ? "open" : ""}`}></i>
                 </button>
-
                 {showCustomTime && (
                   <div className="time-custom-grid">
                     <div className="time-custom-field">
@@ -1656,7 +1502,6 @@ function FacultySubmitReservation() {
                           <span>{startTime ? format12Hour(startTime) : "Select time"}</span>
                           <i className={`fa-solid fa-chevron-down fsr-time-caret ${showStartTimePicker ? "open" : ""}`}></i>
                         </button>
-
                         {showStartTimePicker && (
                           <>
                             <div className="fsr-time-clickaway" onClick={() => setShowStartTimePicker(false)}></div>
@@ -1687,11 +1532,9 @@ function FacultySubmitReservation() {
                         )}
                       </div>
                     </div>
-
                     <div className="time-custom-arrow">
                       <i className="fa-solid fa-arrow-right"></i>
                     </div>
-
                     <div className="time-custom-field">
                       <span className="time-custom-label">End Time</span>
                       <div className="fsr-timepicker">
@@ -1707,7 +1550,6 @@ function FacultySubmitReservation() {
                           <span>{endTime ? format12Hour(endTime) : "Select time"}</span>
                           <i className={`fa-solid fa-chevron-down fsr-time-caret ${showEndTimePicker ? "open" : ""}`}></i>
                         </button>
-
                         {showEndTimePicker && (
                           <>
                             <div className="fsr-time-clickaway" onClick={() => setShowEndTimePicker(false)}></div>
@@ -1728,9 +1570,7 @@ function FacultySubmitReservation() {
                                         handleCustomEndChange(t.value);
                                         setShowEndTimePicker(false);
                                       }}
-                                    >
-                                      {t.label}
-                                    </button>
+                                    >{t.label}</button>
                                   );
                                 })}
                               </div>
@@ -1741,7 +1581,6 @@ function FacultySubmitReservation() {
                     </div>
                   </div>
                 )}
-
                 {validationAttempted && fieldErrors.startTime && (
                   <span className="field-error-message">{fieldErrors.startTime}</span>
                 )}
@@ -1751,46 +1590,33 @@ function FacultySubmitReservation() {
               </div>
             </div>
 
-            {/* ═══════════════════════════════════════════════════════
-                RIGHT SIDE — Rooms
-                ═══════════════════════════════════════════════════════ */}
+            {/* RIGHT SIDE — rooms */}
             <div className="faculty-submit-section">
               <div className="faculty-submit-venue-header">
                 <span className="faculty-submit-venue-title">Rooms</span>
-
                 <div className="faculty-submit-venue-filters">
                   <div className="faculty-filter-tabs">
                     <button
                       type="button"
                       className={`faculty-filter-tab ${roomStatusFilter === "all" ? "active" : ""}`}
                       onClick={() => setRoomStatusFilter("all")}
-                    >
-                      All
-                    </button>
+                    >All</button>
                     <button
                       type="button"
                       className={`faculty-filter-tab ${roomStatusFilter === "available" ? "active" : ""}`}
                       onClick={() => setRoomStatusFilter("available")}
-                    >
-                      Available
-                    </button>
+                    >Available</button>
                     <button
                       type="button"
                       className={`faculty-filter-tab ${roomStatusFilter === "occupied" ? "active" : ""}`}
                       onClick={() => setRoomStatusFilter("occupied")}
-                    >
-                      Occupied
-                    </button>
+                    >Occupied</button>
                   </div>
-
                   <div className="faculty-submit-venue-dropdown-wrapper">
                     <select
                       className="faculty-submit-venue-dropdown"
                       value={selectedFloor}
-                      onChange={(e) => {
-                        setSelectedFloor(e.target.value);
-                        revalidate();
-                      }}
+                      onChange={(e) => { setSelectedFloor(e.target.value); revalidate(); }}
                     >
                       <option value="">All Floors</option>
                       <option value="1st">1st Floor</option>
@@ -1812,9 +1638,7 @@ function FacultySubmitReservation() {
               ) : filteredRooms.length === 0 ? (
                 <div className="faculty-empty">
                   <i className="fa-solid fa-circle-xmark"></i>
-                  <p>
-                    No {roomStatusFilter === "available" ? "available" : roomStatusFilter === "occupied" ? "occupied" : ""} rooms match your filters.
-                  </p>
+                  <p>No {roomStatusFilter === "available" ? "available" : roomStatusFilter === "occupied" ? "occupied" : ""} rooms match your filters.</p>
                 </div>
               ) : (
                 <>
@@ -1823,7 +1647,6 @@ function FacultySubmitReservation() {
                       const isSelected = selectedRoom?.id === room.id;
                       const isError = validationAttempted && fieldErrors.selectedRoom && !isSelected;
                       const conflictCount = room.conflicts?.length || 0;
-
                       return (
                         <div
                           key={room.id}
@@ -1833,10 +1656,7 @@ function FacultySubmitReservation() {
                             ${isSelected ? "selected" : ""}
                             ${isError ? "error" : ""}
                           `}
-                          onClick={() => {
-                            setSelectedRoom(room);
-                            revalidate();
-                          }}
+                          onClick={() => { setSelectedRoom(room); revalidate(); }}
                         >
                           <div className="room-name">
                             <i className="fa-solid fa-door-open"></i> {room.roomName}
@@ -1865,7 +1685,6 @@ function FacultySubmitReservation() {
                       );
                     })}
                   </div>
-
                   {totalRoomPages > 1 && (
                     <div className="room-pagination">
                       <button
@@ -1874,35 +1693,24 @@ function FacultySubmitReservation() {
                         disabled={safeRoomPage === 1}
                         onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
                         aria-label="Previous page"
-                      >
-                        <i className="fa-solid fa-chevron-left"></i>
-                      </button>
-
+                      ><i className="fa-solid fa-chevron-left"></i></button>
                       {Array.from({ length: totalRoomPages }, (_, i) => i + 1).map((p) => (
                         <button
                           type="button"
                           key={p}
                           className={`room-page-btn ${safeRoomPage === p ? "active" : ""}`}
                           onClick={() => setCurrentPage(p)}
-                        >
-                          {p}
-                        </button>
+                        >{p}</button>
                       ))}
-
                       <button
                         type="button"
                         className="room-page-nav"
                         disabled={safeRoomPage === totalRoomPages}
                         onClick={() => setCurrentPage((p) => Math.min(totalRoomPages, p + 1))}
                         aria-label="Next page"
-                      >
-                        <i className="fa-solid fa-chevron-right"></i>
-                      </button>
-
+                      ><i className="fa-solid fa-chevron-right"></i></button>
                       <span className="room-page-info">
-                        Showing {roomStartIdx + 1}–
-                        {Math.min(roomStartIdx + ROOMS_PER_PAGE, filteredRooms.length)} of{" "}
-                        {filteredRooms.length}
+                        Showing {roomStartIdx + 1}–{Math.min(roomStartIdx + ROOMS_PER_PAGE, filteredRooms.length)} of {filteredRooms.length}
                       </span>
                     </div>
                   )}
@@ -1934,30 +1742,17 @@ function FacultySubmitReservation() {
 
         {/* CONFLICT WARNING MODAL */}
         {showConflictWarning && selectedRoom && (
-          <div
-            className="faculty-conflict-warning-overlay"
-            onClick={() => setShowConflictWarning(false)}
-          >
-            <div
-              className="faculty-conflict-warning-modal"
-              onClick={(e) => e.stopPropagation()}
-            >
+          <div className="faculty-conflict-warning-overlay" onClick={() => setShowConflictWarning(false)}>
+            <div className="faculty-conflict-warning-modal" onClick={(e) => e.stopPropagation()}>
               <div className="faculty-conflict-warning-icon">
                 <i className="fa-solid fa-triangle-exclamation"></i>
               </div>
-              <h3 className="faculty-conflict-warning-title">
-                Room Is Currently Occupied
-              </h3>
+              <h3 className="faculty-conflict-warning-title">Room Is Currently Occupied</h3>
               <p className="faculty-conflict-warning-text">
                 <strong>{selectedRoom.roomName}</strong> has{" "}
-                <strong>
-                  {selectedConflicts.length} conflicting booking
-                  {selectedConflicts.length > 1 ? "s" : ""}
-                </strong>{" "}
-                during your selected time. If you submit, the Clerk/Admin will
-                see this conflict and decide whether to approve or deny.
+                <strong>{selectedConflicts.length} conflicting booking{selectedConflicts.length > 1 ? "s" : ""}</strong>{" "}
+                during your selected time. If you submit, the Clerk/Admin will see this conflict and decide.
               </p>
-
               <div className="faculty-conflict-warning-list">
                 {selectedConflicts.map((c, i) => (
                   <div key={i} className="faculty-conflict-warning-item">
@@ -1966,8 +1761,7 @@ function FacultySubmitReservation() {
                     </span>
                     <div className="faculty-conflict-warning-item-body">
                       <div className="faculty-conflict-warning-item-title">
-                        {c.title}
-                        {c.section ? ` (${c.section})` : ""}
+                        {c.title}{c.section ? ` (${c.section})` : ""}
                       </div>
                       <div className="faculty-conflict-warning-item-time">
                         {format12Hour(c.startTime)} – {format12Hour(c.endTime)}
@@ -1977,31 +1771,22 @@ function FacultySubmitReservation() {
                   </div>
                 ))}
               </div>
-
               <div className="faculty-conflict-warning-note">
                 <i className="fa-solid fa-circle-info"></i>
                 <span>
-                  Your reservation will still be submitted as{" "}
-                  <strong>Pending</strong>. The Clerk will review the conflict
-                  before approving.
+                  Your reservation will still be submitted as <strong>Pending</strong>. The Clerk will review the conflict before approving.
                 </span>
               </div>
-
               <div className="faculty-conflict-warning-actions">
                 <button
                   type="button"
                   className="faculty-conflict-warning-cancel"
                   onClick={() => setShowConflictWarning(false)}
-                >
-                  Cancel
-                </button>
+                >Cancel</button>
                 <button
                   type="button"
                   className="faculty-conflict-warning-confirm"
-                  onClick={() => {
-                    setShowConflictWarning(false);
-                    setShowPreview(true);
-                  }}
+                  onClick={() => { setShowConflictWarning(false); setShowPreview(true); }}
                 >
                   <i className="fa-solid fa-check"></i> Yes, Proceed Anyway
                 </button>
@@ -2012,30 +1797,20 @@ function FacultySubmitReservation() {
 
         {/* PREVIEW MODAL */}
         {showPreview && (
-          <div
-            className="fsr-preview-overlay"
-            onClick={() => !submitting && setShowPreview(false)}
-          >
-            <div
-              className="fsr-preview-modal"
-              onClick={(e) => e.stopPropagation()}
-            >
+          <div className="fsr-preview-overlay" onClick={() => !submitting && setShowPreview(false)}>
+            <div className="fsr-preview-modal" onClick={(e) => e.stopPropagation()}>
               <div className="fsr-preview-header">
                 <div className="fsr-preview-icon">
                   <i className="fa-solid fa-clipboard-check"></i>
                 </div>
                 <h3>Review Your Request</h3>
-                <p className="fsr-preview-subtitle">
-                  Please check the details below before submitting.
-                </p>
+                <p className="fsr-preview-subtitle">Please check the details below before submitting.</p>
               </div>
-
               <div className="fsr-preview-body">
                 <div className="fsr-preview-row">
                   <span className="fsr-preview-label">Course Title</span>
                   <span className="fsr-preview-value">{previewData.courseTitle || "—"}</span>
                 </div>
-
                 <div className="fsr-preview-row">
                   <span className="fsr-preview-label">Audience</span>
                   <span className="fsr-preview-value">
@@ -2043,22 +1818,18 @@ function FacultySubmitReservation() {
                     {previewData.audienceType === "Class" && previewData.course && (
                       <> — {previewData.course} {previewData.yearSectionGroup}</>
                     )}
-                    {previewData.audienceType === "Organization" &&
-                      previewData.organization && (
-                        <> — {previewData.organization}</>
-                      )}
-                    {previewData.audienceType === "Others" &&
-                      previewData.customAudience && (
-                        <> — {previewData.customAudience}</>
-                      )}
+                    {previewData.audienceType === "Organization" && previewData.organization && (
+                      <> — {previewData.organization}</>
+                    )}
+                    {previewData.audienceType === "Others" && previewData.customAudience && (
+                      <> — {previewData.customAudience}</>
+                    )}
                   </span>
                 </div>
-
                 <div className="fsr-preview-row">
                   <span className="fsr-preview-label">Purpose</span>
                   <span className="fsr-preview-value">{previewData.purpose || "—"}</span>
                 </div>
-
                 <div className="fsr-preview-row">
                   <span className="fsr-preview-label">Room</span>
                   <span className="fsr-preview-value">
@@ -2067,33 +1838,28 @@ function FacultySubmitReservation() {
                     {previewData.roomCapacity ? ` (${previewData.roomCapacity} Seats)` : ""}
                   </span>
                 </div>
-
                 <div className="fsr-preview-row">
                   <span className="fsr-preview-label">Date</span>
                   <span className="fsr-preview-value">{formatDateLong(previewData.date)}</span>
                 </div>
-
                 <div className="fsr-preview-row">
                   <span className="fsr-preview-label">Time</span>
                   <span className="fsr-preview-value">
                     {format12Hour(previewData.startTime)} – {format12Hour(previewData.endTime)}
                   </span>
                 </div>
-
                 {previewData.equipment && (
                   <div className="fsr-preview-row">
                     <span className="fsr-preview-label">Additional Equipment</span>
                     <span className="fsr-preview-value">{previewData.equipment}</span>
                   </div>
                 )}
-
                 {previewData.studentRange && (
                   <div className="fsr-preview-row">
                     <span className="fsr-preview-label">{rangeLabel}</span>
                     <span className="fsr-preview-value">{previewData.studentRange}</span>
                   </div>
                 )}
-
                 {selectedConflicts.length > 0 && (
                   <div className="fsr-preview-conflicts">
                     <div className="fsr-preview-conflicts-header">
@@ -2111,8 +1877,7 @@ function FacultySubmitReservation() {
                           </span>
                           <div className="fsr-preview-conflict-item-body">
                             <div className="fsr-preview-conflict-title">
-                              {c.title}
-                              {c.section ? ` (${c.section})` : ""}
+                              {c.title}{c.section ? ` (${c.section})` : ""}
                             </div>
                             <div className="fsr-preview-conflict-time">
                               {format12Hour(c.startTime)} – {format12Hour(c.endTime)}
@@ -2124,31 +1889,24 @@ function FacultySubmitReservation() {
                     </div>
                     <div className="fsr-preview-conflict-note">
                       <i className="fa-solid fa-circle-info"></i>
-                      <span>
-                        The Clerk will review this conflict before approving
-                        your request.
-                      </span>
+                      <span>The Clerk will review this conflict before approving your request.</span>
                     </div>
                   </div>
                 )}
-
                 <div className="fsr-preview-note">
                   <i className="fa-solid fa-circle-info"></i>
                   <span>
-                    After submitting, your request will be marked as{" "}
-                    <strong>Pending</strong> and sent to the Clerk/Admin for approval.
+                    After submitting, your request will be marked as <strong>Pending</strong> and sent to the Clerk/Admin for approval.
                   </span>
                 </div>
               </div>
-
               <div className="fsr-preview-actions">
                 <button
                   className="fsr-preview-back-btn"
                   onClick={() => setShowPreview(false)}
                   disabled={submitting}
                 >
-                  <i className="fa-solid fa-pen-to-square"></i>
-                  Edit Details
+                  <i className="fa-solid fa-pen-to-square"></i> Edit Details
                 </button>
                 <button
                   className={`fsr-preview-confirm-btn ${submitting ? "disabled" : ""}`}
@@ -2156,13 +1914,9 @@ function FacultySubmitReservation() {
                   disabled={submitting}
                 >
                   {submitting ? (
-                    <>
-                      <i className="fa-solid fa-spinner fa-spin"></i> Submitting...
-                    </>
+                    <><i className="fa-solid fa-spinner fa-spin"></i> Submitting...</>
                   ) : (
-                    <>
-                      <i className="fa-solid fa-circle-check"></i> Confirm & Submit
-                    </>
+                    <><i className="fa-solid fa-circle-check"></i> Confirm & Submit</>
                   )}
                 </button>
               </div>
@@ -2177,12 +1931,10 @@ function FacultySubmitReservation() {
               <div className="rs-success-icon">
                 <i className="fa-solid fa-circle-check"></i>
               </div>
-
               <h3>Reservation Submitted!</h3>
               <p className="rs-success-subtitle">
                 Your request has been sent for approval. You'll get a notification once it's reviewed.
               </p>
-
               <div className="rs-success-details">
                 <div className="rs-success-row">
                   <span className="rs-success-label">Course Title</span>
@@ -2239,7 +1991,6 @@ function FacultySubmitReservation() {
                   </span>
                 </div>
               </div>
-
               <div className="rs-success-actions">
                 <button
                   className="rs-success-secondary"
@@ -2247,9 +1998,7 @@ function FacultySubmitReservation() {
                     setShowSuccessModal(false);
                     setSubmittedReservation(null);
                   }}
-                >
-                  Submit Another
-                </button>
+                >Submit Another</button>
                 <button className="rs-success-primary" onClick={() => navigate("/faculty")}>
                   Back to Dashboard
                 </button>

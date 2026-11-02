@@ -1,0 +1,318 @@
+/* ═══════════════════════════════════════════════════════════════
+   FACULTY RESERVATION CONFLICT — Enhanced UI
+   ═══════════════════════════════════════════════════════════════ */
+
+.frc-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid #f0ece8;
+  margin-bottom: 24px;
+}
+
+.frc-header-icon {
+  width: 52px;
+  height: 52px;
+  flex-shrink: 0;
+  border-radius: 14px;
+  background: #FEF0E7;
+  color: #f57c00;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+}
+
+.frc-header-text { flex: 1; min-width: 0; }
+.frc-header-text h1 { margin: 0; font-size: 24px; color: #1f2937; }
+.frc-header-text p { margin: 6px 0 0; color: #6b7280; font-size: 13.5px; }
+
+.frc-pending-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: #FEF0E7;
+  border: 1px solid #fed7aa;
+  color: #c2410c;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  animation: frc-pulse 2s ease-in-out infinite;
+}
+
+@keyframes frc-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 124, 0, 0.25); }
+  50%      { box-shadow: 0 0 0 6px rgba(245, 124, 0, 0); }
+}
+
+.frc-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.frc-status-badge.is-accepted {
+  background: #ecfdf5;
+  border: 1px solid #bbf7d0;
+  color: #065f46;
+}
+
+.frc-status-badge.is-declined {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+}
+
+.frc-requester-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  background: linear-gradient(135deg, #f8fafc 0%, #fff 100%);
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  margin-bottom: 24px;
+}
+
+.frc-requester-avatar {
+  width: 52px;
+  height: 52px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #FEF0E7;
+  border: 2px solid #f57c00;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  font-weight: 800;
+  color: #f57c00;
+  overflow: hidden;
+}
+
+.frc-requester-avatar img {
+  width: 100%; height: 100%; object-fit: cover;
+}
+
+.frc-requester-info { flex: 1; min-width: 0; }
+.frc-requester-name {
+  font-size: 15px; font-weight: 800; color: #16213e;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.frc-requester-role {
+  font-size: 12px; color: #6b7280; margin-top: 3px;
+  display: flex; align-items: center; gap: 6px;
+}
+.frc-requester-role i { color: #f57c00; }
+
+.frc-requester-meta { flex-shrink: 0; }
+
+.frc-meta-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.frc-meta-pill.is-warn {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fcd34d;
+}
+
+.frc-equipment-block {
+  margin-top: 16px;
+  padding: 14px 16px;
+  background: #fffbf5;
+  border: 1px solid #fed7aa;
+  border-radius: 12px;
+}
+
+.frc-equipment-label {
+  font-size: 12px;
+  font-weight: 800;
+  color: #92400e;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.frc-equipment-label i { color: #f57c00; }
+
+.frc-equipment-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.frc-equipment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  background: #fff;
+  border: 1px solid #fed7aa;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #c2410c;
+}
+
+.frc-equipment-chip i {
+  color: #16a34a;
+  font-size: 10px;
+}
+
+.frc-next-steps {
+  margin-top: 30px;
+  padding: 18px 20px;
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+}
+
+.frc-next-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 800;
+  color: #374151;
+  margin-bottom: 14px;
+}
+
+.frc-next-title i { color: #f57c00; }
+
+.frc-next-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.frc-next-item {
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid;
+}
+
+.frc-next-item.is-accept {
+  background: #ecfdf5;
+  border-color: #bbf7d0;
+}
+
+.frc-next-item.is-decline {
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.frc-next-badge {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.frc-next-item.is-accept .frc-next-badge { color: #065f46; }
+.frc-next-item.is-decline .frc-next-badge { color: #991b1b; }
+
+.frc-next-item p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #374151;
+}
+
+.frc-accept-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 12px;
+  margin-bottom: 16px;
+}
+
+.frc-accept-summary-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  color: #0c4a6e;
+  line-height: 1.5;
+}
+
+.frc-accept-summary-row i {
+  color: #0284c7;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.frc-quick-reason-block {
+  margin-bottom: 16px;
+}
+
+.frc-quick-reason-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #374151;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.frc-quick-reason-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.frc-quick-reason {
+  padding: 9px 13px;
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 9px;
+  font-size: 12.5px;
+  color: #4b5563;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+
+.frc-quick-reason:hover {
+  background: #FEF0E7;
+  border-color: #f57c00;
+  color: #c2410c;
+}
+
+.frc-quick-reason.is-active {
+  background: #FEF0E7;
+  border-color: #f57c00;
+  color: #c2410c;
+  font-weight: 700;
+}
+
+@media (max-width: 768px) {
+  .frc-header { flex-wrap: wrap; }
+  .frc-pending-badge,
+  .frc-status-badge { order: 3; margin-left: 68px; }
+  .frc-next-grid { grid-template-columns: 1fr; }
+  .frc-requester-card { flex-wrap: wrap; }
+  .frc-requester-meta { width: 100%; margin-left: 66px; }
+}
